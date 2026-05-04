@@ -2,8 +2,10 @@ import streamlit as st
 import pandas as pd
 import re
 
+# CONFIG
 st.set_page_config(layout="wide", page_title="Book de Energia")
 
+# FUNÇÕES
 def formatar_cnpj(cnpj):
     if pd.isna(cnpj) or cnpj == "":
         return ""
@@ -20,6 +22,9 @@ def limpar_modulacao(texto):
     if "GERA" in t: return "Geração"
     return texto
 
+def limpar_chave(valor):
+    return str(valor).strip() if pd.notna(valor) else ""
+
 # SIDEBAR
 st.sidebar.title("Configurações")
 
@@ -29,10 +34,11 @@ arquivo_vendedor = st.sidebar.file_uploader("3. Base Vendedor/Comprador", type=[
 
 st.title("📑 Book de Energia")
 
-# BASE MÊS ANTERIOR
+# BASE ANTERIOR
 dict_mes_anterior = {}
 if arquivo_anterior:
     df_apoio = pd.read_excel(arquivo_anterior)
+    df_apoio.iloc[:, 0] = df_apoio.iloc[:, 0].apply(limpar_chave)
     dict_mes_anterior = pd.Series(df_apoio.iloc[:, 1].values, index=df_apoio.iloc[:, 0].values).to_dict()
 
 # BASE VENDEDOR / COMPRADOR
@@ -41,26 +47,26 @@ dict_vendedor, dict_comprador = {}, {}
 if arquivo_vendedor:
     df_vend = pd.read_excel(arquivo_vendedor)
 
-    # 🔥 padroniza chave
-    df_vend.iloc[:, 3] = df_vend.iloc[:, 3].astype(str)
+    # D = Boleta
+    df_vend.iloc[:, 3] = df_vend.iloc[:, 3].apply(limpar_chave)
 
     dict_vendedor = pd.Series(df_vend.iloc[:, 2].values, index=df_vend.iloc[:, 3].values).to_dict()
     dict_comprador = pd.Series(df_vend.iloc[:, 1].values, index=df_vend.iloc[:, 3].values).to_dict()
 
     st.sidebar.success("✅ Base Vendedor/Comprador carregada!")
 
-# PROCESSAMENTO
+# PROCESSAMENTO PRINCIPAL
 if arquivo_subido:
 
     df_bruto = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
 
-    # 🔥 padroniza boleta
-    df_bruto.iloc[:, 0] = df_bruto.iloc[:, 0].astype(str)
+    # 🔥 CORREÇÃO PRINCIPAL (sem erro de dtype)
+    df_bruto.iloc[:, 0] = df_bruto.iloc[:, 0].apply(limpar_chave)
 
-    # 🔥 CRIA BASE ÚNICA (ESSA É A MELHORIA PRINCIPAL)
+    # 🚀 OTIMIZAÇÃO (base única)
     df_base = df_bruto.drop_duplicates(subset=[df_bruto.columns[0]]).set_index(df_bruto.columns[0])
 
-    # colunas
+    # COLUNAS
     col_operacao = df_bruto.columns[1]
     col_cnpj = df_bruto.columns[4]
     col_energia = df_bruto.columns[5]
@@ -75,7 +81,7 @@ if arquivo_subido:
 
     df_conferencia = pd.DataFrame(df_base.index, columns=['Boleta'])
 
-    # 🚀 AGORA TUDO VEM DIRETO (rápido)
+    # DADOS
     df_conferencia['Operação'] = df_base[col_operacao].values
 
     trad_en = {
@@ -91,7 +97,6 @@ if arquivo_subido:
     df_conferencia['Contraparte'] = df_base[col_contraparte].values
     df_conferencia['CNPJ Contraparte'] = df_base[col_cnpj].apply(formatar_cnpj).values
 
-    # cálculo otimizado
     df_conferencia['Volume MWm'] = (
         (df_base[col_volume_mwh] / df_base[col_horas_mes])
         .fillna(0)
@@ -106,16 +111,27 @@ if arquivo_subido:
 
     df_conferencia['Contrato CliqCCEE mês anterior'] = df_conferencia['Boleta'].map(dict_mes_anterior).fillna("-")
 
-    # 🔥 vendedor/comprador
+    # 🔥 NOVO (Vendedor / Comprador)
     df_conferencia['Vendedor'] = df_conferencia['Boleta'].map(dict_vendedor).fillna("-")
     df_conferencia['Comprador'] = df_conferencia['Boleta'].map(dict_comprador).fillna("-")
 
     # FILTROS
-    op = st.selectbox("Operação", ["Todos"] + sorted(df_conferencia['Operação'].unique()))
+    st.write("### Filtros")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        op = st.selectbox("Operação", ["Todos"] + sorted(df_conferencia['Operação'].astype(str).unique()))
+
+    with col2:
+        parte = st.selectbox("Parte", ["Todos"] + sorted(df_conferencia['Parte'].astype(str).unique()))
+
     df_filtrado = df_conferencia.copy()
 
     if op != "Todos":
         df_filtrado = df_filtrado[df_filtrado['Operação'] == op]
+
+    if parte != "Todos":
+        df_filtrado = df_filtrado[df_filtrado['Parte'] == parte]
 
     # EXIBIÇÃO
     st.dataframe(
@@ -123,7 +139,7 @@ if arquivo_subido:
         use_container_width=True
     )
 
-    st.caption(f"{len(df_filtrado)} linhas exibidas")
+    st.caption(f"Mostrando {len(df_filtrado)} registros")
 
 else:
     st.info("Aguardando upload das bases.")
