@@ -78,7 +78,7 @@ anos = [str(a) for a in range(2024, 2031)]
 ano_sel = st.sidebar.selectbox("Ano", anos, index=2)
 
 st.sidebar.markdown("---")
-arquivo_subido   = st.sidebar.file_uploader("1. Base do Mes Atual (Excel)", type=['xlsx', 'xlsm'])
+arquivo_subido   = st.sidebar.file_uploader("1. Contratos Aprovados (Excel)", type=['xlsx', 'xlsm'])
 arquivo_anterior = st.sidebar.file_uploader("2. Mes Anterior_3.xlsx", type=['xlsx'])
 arquivo_pessoas  = st.sidebar.file_uploader("3. RelPers_858 (4).xlsx", type=['xlsx'])
 
