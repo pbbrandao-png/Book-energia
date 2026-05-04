@@ -36,13 +36,13 @@ arquivo_pessoas = st.sidebar.file_uploader("Upload RelPers_858 (4).xlsx", type=[
 
 st.title("📑 Book de Energia")
 
-# 4. PROCESSAMENTO DA BASE ANTERIOR
+# 4. PROCESSAMENTO DA BASE ANTERIOR (CliqCCEE)
 dict_mes_anterior = {}
 if arquivo_anterior:
     try:
         df_apoio = pd.read_excel(arquivo_anterior)
-        # Garantindo que a chave do dicionário seja string para o de/para
-        df_apoio.iloc[:, 0] = df_apoio.iloc[:, 0].astype(str).str.strip()
+        # CORREÇÃO: Forçar Boleta para String e remover decimais se houver (.0)
+        df_apoio.iloc[:, 0] = df_apoio.iloc[:, 0].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
         dict_mes_anterior = pd.Series(df_apoio.iloc[:, 1].values, index=df_apoio.iloc[:, 0].values).to_dict()
         st.sidebar.success("✅ Base Mês Anterior carregada!")
     except Exception as e:
@@ -54,8 +54,8 @@ dict_comprador = {}
 if arquivo_pessoas:
     try:
         df_pers = pd.read_excel(arquivo_pessoas)
-        # IMPORTANTE: Convertendo Boleta (Col D / Index 3) para String para evitar o N/A
-        df_pers.iloc[:, 3] = df_pers.iloc[:, 3].astype(str).str.strip()
+        # CORREÇÃO: Forçar Boleta (Col D / Index 3) para String e remover decimais
+        df_pers.iloc[:, 3] = df_pers.iloc[:, 3].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
         
         dict_comprador = pd.Series(df_pers.iloc[:, 1].values, index=df_pers.iloc[:, 3].values).to_dict()
         dict_vendedor = pd.Series(df_pers.iloc[:, 2].values, index=df_pers.iloc[:, 3].values).to_dict()
@@ -68,7 +68,6 @@ if arquivo_subido:
     try:
         df_bruto = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
         
-        # Mapeamento de Colunas
         col_boleta = df_bruto.columns[0]
         col_operacao = df_bruto.columns[1]
         col_cnpj = df_bruto.columns[4]
@@ -82,21 +81,16 @@ if arquivo_subido:
         col_parte = df_bruto.columns[62]
         col_mod_wbc = df_bruto.columns[63]
 
-        # Criando a DF de conferência e limpando a Boleta
         df_conferencia = df_bruto[[col_boleta]].drop_duplicates()
-        df_conferencia['Boleta_Key'] = df_conferencia[col_boleta].astype(str).str.strip()
+        # CHAVE UNIFICADA: Texto, sem espaços e sem .0
+        df_conferencia['Boleta_Key'] = df_conferencia[col_boleta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
         df_conferencia = df_conferencia.sort_values(by='Boleta_Key')
 
-        # Função de busca interna
         df_temp_busca = df_bruto.drop_duplicates(subset=[col_boleta]).set_index(col_boleta)
 
-        # Preenchimento de dados
+        # Preenchimento
         df_conferencia['Operação'] = df_conferencia[col_boleta].map(df_temp_busca[col_operacao]).astype(str)
         
-        # Buscando Comprador e Vendedor usando a chave String
-        df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(dict_comprador).fillna("Não Encontrado")
-        df_conferencia['Vendedor'] = df_conferencia['Boleta_Key'].map(dict_vendedor).fillna("Não Encontrado")
-
         trad_en = {"Incentivada-50%": "Incentivada-I5", "Incentivada-CQ50%": "Incentivada-CQ5", "Incentivada-100%": "Incentivada-I1", "Incentivada-0%": "Incentivada-I0", "Convencional": "Convencional"}
         df_conferencia['Tipo de Energia'] = df_conferencia[col_boleta].map(df_temp_busca[col_energia]).replace(trad_en)
         df_conferencia['Parte'] = df_conferencia[col_boleta].map(df_temp_busca[col_parte]).astype(str)
@@ -111,39 +105,30 @@ if arquivo_subido:
         df_conferencia['Modulação WBC'] = df_conferencia[col_boleta].map(df_temp_busca[col_mod_wbc]).apply(limpar_modulacao)
         df_conferencia['Modulação Mínima'] = df_conferencia[col_boleta].map(df_temp_busca[col_mod_min])
         df_conferencia['Modulação Máxima'] = df_conferencia[col_boleta].map(df_temp_busca[col_mod_max])
+        
+        # BUSCAS NAS BASES DE APOIO (USANDO A CHAVE CORRIGIDA)
         df_conferencia['Contrato CliqCCEE mês anterior'] = df_conferencia['Boleta_Key'].map(dict_mes_anterior).fillna("-")
+        df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(dict_comprador).fillna("N/A")
+        df_conferencia['Vendedor'] = df_conferencia['Boleta_Key'].map(dict_vendedor).fillna("N/A")
 
-        # --- 7. ÁREA DE FILTROS ---
+        # --- Filtros ---
         st.write("### Filtros da Tabela")
         f1, f2, f3, f4 = st.columns(4)
+        with f1: op_selected = st.selectbox("Operação", ["Todos"] + sorted(df_conferencia['Operação'].unique().tolist()))
+        with f2: parte_selected = st.selectbox("Parte", ["Todos"] + sorted(df_conferencia['Parte'].unique().tolist()))
+        with f3: vol_selected = st.selectbox("Volume MWm Específico", ["Todos"] + sorted([str(v) for v in df_conferencia['Volume MWm'].unique()], key=float))
+        with f4: mod_selected = st.selectbox("Modulação", ["Todos"] + sorted(df_conferencia['Modulação WBC'].unique().tolist()))
 
-        with f1:
-            op_selected = st.selectbox("Operação", ["Todos"] + sorted(df_conferencia['Operação'].unique().tolist()))
-        with f2:
-            parte_selected = st.selectbox("Parte", ["Todos"] + sorted(df_conferencia['Parte'].unique().tolist()))
-        with f3:
-            vol_list = ["Todos"] + sorted([str(v) for v in df_conferencia['Volume MWm'].unique()], key=float)
-            vol_selected = st.selectbox("Volume MWm Específico", vol_list)
-        with f4:
-            mod_selected = st.selectbox("Modulação", ["Todos"] + sorted(df_conferencia['Modulação WBC'].unique().tolist()))
-
-        remover_zerados = st.checkbox("Ocultar Volumes Zerados (0.0000)", value=False)
-
-        # Filtros
         df_filtrado = df_conferencia.copy()
-        if remover_zerados: df_filtrado = df_filtrado[df_filtrado['Volume MWm'] != 0]
         if op_selected != "Todos": df_filtrado = df_filtrado[df_filtrado['Operação'] == op_selected]
         if parte_selected != "Todos": df_filtrado = df_filtrado[df_filtrado['Parte'] == parte_selected]
         if vol_selected != "Todos": df_filtrado = df_filtrado[df_filtrado['Volume MWm'] == float(vol_selected)]
         if mod_selected != "Todos": df_filtrado = df_filtrado[df_filtrado['Modulação WBC'] == mod_selected]
 
-        # --- 8. EXIBIÇÃO E ORDEM DE COLUNAS ---
-        # DEFINA A ORDEM AQUI (O Python seguirá exatamente esta lista)
+        # --- 8. ORDEM DAS COLUNAS (ATUALIZADO) ---
         colunas_exibicao = [
-            col_boleta,       # Boleta Original
+            col_boleta, 
             'Operação', 
-            'Comprador',      # Agora no começo
-            'Vendedor',       # Agora no começo
             'Tipo de Energia', 
             'Parte', 
             'Contraparte', 
@@ -153,7 +138,9 @@ if arquivo_subido:
             'Modulação WBC', 
             'Modulação Mínima', 
             'Modulação Máxima', 
-            'Contrato CliqCCEE mês anterior'
+            'Contrato CliqCCEE mês anterior', # Cliq Anterior antes
+            'Comprador',                      # Agora por último
+            'Vendedor'                        # Agora por último
         ]
 
         st.markdown("---")
