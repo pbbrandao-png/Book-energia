@@ -42,30 +42,36 @@ def carregar_csv_cliq(arquivo):
     except Exception:
         return None
 
-def buscar_cliq_ccee(codigo_cliq, codigo_cliq_alt, parte_concatenada, df_cliq):
+def buscar_cliq_ccee(cod_paradigma, cod_mes_anterior, df_cliq):
+    """
+    Regras:
+    1. Tenta o codigo do Paradigma primeiro (prioridade)
+    2. Se nao encontrar ou situacao for RASCUNHO, tenta o codigo do Mes Anterior
+    3. Se nenhum funcionar, retorna 'Verificar'
+    Condicoes para um codigo ser valido:
+      - Existe em CODIGO_CONTRATO no CSV
+      - SITUACAO_CONTRATO != 'RASCUNHO'
+    """
     if df_cliq is None:
-        return "-"
+        return "Verificar"
 
-    def tentar_codigo(codigo):
+    def checar(codigo):
         codigo = tratar_chave(codigo)
-        if not codigo or codigo not in df_cliq.index:
-            return "Verificar"
+        if not codigo:
+            return False
+        if codigo not in df_cliq.index:
+            return False
         row = df_cliq.loc[codigo]
         if isinstance(row, pd.DataFrame):
             row = row.iloc[0]
-        agente = str(row.get('SIGLA_AGENTE_VENDEDOR', '') or '').strip().upper()
         situacao = str(row.get('SITUACAO_CONTRATO', '') or '').strip().upper()
-        parte_upper = str(parte_concatenada or '').strip().upper()
-        if agente == parte_upper and situacao != 'RASCUNHO':
-            return codigo
-        return "Verificar"
+        return situacao != 'RASCUNHO'
 
-    resultado = tentar_codigo(codigo_cliq)
-    if resultado == "Verificar":
-        resultado = tentar_codigo(codigo_cliq_alt)
-    if resultado == "Verificar":
-        return "-"
-    return resultado
+    if checar(cod_paradigma):
+        return tratar_chave(cod_paradigma)
+    if checar(cod_mes_anterior):
+        return tratar_chave(cod_mes_anterior)
+    return "Verificar"
 
 # 3. INTERFACE LATERAL
 st.sidebar.title("Configuracoes")
@@ -186,10 +192,10 @@ if arquivo_subido:
 
             def resolver_cliq(row):
                 parte = str(row['Parte']).strip().upper()
-                cod_principal = row['CliqCCEE Paradigma']
-                cod_alt = row['_cliq_alt']
-                db = db_bismut if parte == BISMUT_SIGLA.upper() else db_matrix
-                return buscar_cliq_ccee(cod_principal, cod_alt, parte, db)
+                cod_paradigma    = row['CliqCCEE Paradigma']
+                cod_mes_anterior = row['Contrato CliqCCEE mes anterior']
+                db = db_bismut if 'BISMUT' in parte else db_matrix
+                return buscar_cliq_ccee(cod_paradigma, cod_mes_anterior, db)
 
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
 
