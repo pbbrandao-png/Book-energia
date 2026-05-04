@@ -24,11 +24,15 @@ def limpar_modulacao(texto):
 
 # 3. INTERFACE LATERAL
 st.sidebar.title("Configurações")
+
 st.sidebar.subheader("1. Base do Mês Atual")
 arquivo_subido = st.sidebar.file_uploader("Upload da Base Bruta (Excel)", type=['xlsx', 'xlsm'], key="atual")
 
-st.sidebar.subheader("2. Base de Apoio")
-arquivo_anterior = st.sidebar.file_uploader("Upload Mês Anterior (CliqCCEE)", type=['xlsx'], key="anterior")
+st.sidebar.subheader("2. Base de Apoio (CliqCCEE)")
+arquivo_anterior = st.sidebar.file_uploader("Upload Mês Anterior", type=['xlsx'], key="anterior")
+
+st.sidebar.subheader("3. Relatório de Pessoas")
+arquivo_pessoas = st.sidebar.file_uploader("Upload RelPers_858 (4).xlsx", type=['xlsx'], key="pessoas")
 
 st.title("📑 Book de Energia")
 
@@ -42,12 +46,25 @@ if arquivo_anterior:
     except Exception as e:
         st.sidebar.error(f"Erro na base anterior: {e}")
 
+# --- NOVO: PROCESSAMENTO DA BASE DE PESSOAS (RelPers_858) ---
+dict_vendedor = {}
+dict_comprador = {}
+if arquivo_pessoas:
+    try:
+        # Coluna B (index 1) = Comprador | Coluna C (index 2) = Vendedor | Coluna D (index 3) = Boleta
+        df_pers = pd.read_excel(arquivo_pessoas)
+        dict_comprador = pd.Series(df_pers.iloc[:, 1].values, index=df_pers.iloc[:, 3].values).to_dict()
+        dict_vendedor = pd.Series(df_pers.iloc[:, 2].values, index=df_pers.iloc[:, 3].values).to_dict()
+        st.sidebar.success("✅ Relatório de Pessoas carregado!")
+    except Exception as e:
+        st.sidebar.error(f"Erro no Relatório de Pessoas: {e}")
+
 # 5. PROCESSAMENTO DA BASE PRINCIPAL
 if arquivo_subido:
     try:
         df_bruto = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
         
-        # Mapeamento de Colunas
+        # Mapeamento de Colunas Originais
         col_boleta = df_bruto.columns[0]
         col_operacao = df_bruto.columns[1]
         col_cnpj = df_bruto.columns[4]
@@ -87,6 +104,10 @@ if arquivo_subido:
         df_conferencia['Modulação Máxima'] = df_conferencia['Boleta'].map(buscar(col_mod_max))
         df_conferencia['Contrato CliqCCEE mês anterior'] = df_conferencia['Boleta'].map(dict_mes_anterior).fillna("-")
 
+        # --- NOVAS COLUNAS: Vendedor e Comprador ---
+        df_conferencia['Comprador'] = df_conferencia['Boleta'].map(dict_comprador).fillna("N/A")
+        df_conferencia['Vendedor'] = df_conferencia['Boleta'].map(dict_vendedor).fillna("N/A")
+
         # --- 6. ÁREA DE FILTROS ---
         st.write("### Filtros da Tabela")
         f1, f2, f3, f4 = st.columns(4)
@@ -100,14 +121,15 @@ if arquivo_subido:
             parte_selected = st.selectbox("Parte", parte_list)
 
         with f3:
-            vol_list = ["Todos"] + sorted(df_conferencia['Volume MWm'].unique().astype(str).tolist(), key=float)
+            # Filtrar volumes para evitar erros de conversão no selectbox
+            vol_unique = df_conferencia['Volume MWm'].unique()
+            vol_list = ["Todos"] + sorted([str(v) for v in vol_unique], key=float)
             vol_selected = st.selectbox("Volume MWm Específico", vol_list)
 
         with f4:
             mod_list = ["Todos"] + sorted(df_conferencia['Modulação WBC'].unique().tolist())
             mod_selected = st.selectbox("Modulação", mod_list)
 
-        # CHECKBOX PARA REMOVER ZERADOS (Novo!)
         remover_zerados = st.checkbox("Ocultar Volumes Zerados (0.0000)", value=False)
 
         # --- APLICANDO OS FILTROS ---
@@ -115,23 +137,38 @@ if arquivo_subido:
         
         if remover_zerados:
             df_filtrado = df_filtrado[df_filtrado['Volume MWm'] != 0]
-        
         if op_selected != "Todos":
             df_filtrado = df_filtrado[df_filtrado['Operação'] == op_selected]
-        
         if parte_selected != "Todos":
             df_filtrado = df_filtrado[df_filtrado['Parte'] == parte_selected]
-            
         if vol_selected != "Todos":
             df_filtrado = df_filtrado[df_filtrado['Volume MWm'] == float(vol_selected)]
-            
         if mod_selected != "Todos":
             df_filtrado = df_filtrado[df_filtrado['Modulação WBC'] == mod_selected]
 
-        # --- 7. EXIBIÇÃO ---
+        # --- 7. MÉTRICAS ---
+        st.write("### Resumo do Portfólio")
+        m1, m2, m3, m4 = st.columns(4)
+        
+        compras = df_filtrado[df_filtrado['Operação'].str.contains('Compra', case=False, na=False)]['Volume MWm'].sum()
+        vendas = df_filtrado[df_filtrado['Operação'].str.contains('Venda', case=False, na=False)]['Volume MWm'].sum()
+        saldo = compras - vendas
+
+        m1.metric("Total de Boletas", len(df_filtrado))
+        m2.metric("Volume Compra (MWm)", f"{compras:.4f}")
+        m3.metric("Volume Venda (MWm)", f"{vendas:.4f}")
+        m4.metric("Saldo Líquido", f"{saldo:.4f}")
+
+        # --- 8. EXIBIÇÃO ---
         st.markdown("---")
+        
+        col_download, col_info = st.columns([1, 4])
+        with col_download:
+            csv = df_filtrado.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📥 Baixar Excel (CSV)", data=csv, file_name="book_energia.csv", mime="text/csv")
+
         colunas_exibicao = [
-            'Boleta', 'Operação', 'Tipo de Energia', 'Parte', 
+            'Boleta', 'Operação', 'Comprador', 'Vendedor', 'Tipo de Energia', 'Parte', 
             'Contraparte', 'CNPJ Contraparte', 'Volume MWm', 
             'CliqCCEE Paradigma', 'Modulação WBC', 'Modulação Mínima', 
             'Modulação Máxima', 'Contrato CliqCCEE mês anterior'
