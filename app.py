@@ -30,32 +30,27 @@ def limpar_modulacao(texto):
 # 3. INTERFACE LATERAL
 st.sidebar.title("Configurações")
 
-# --- NOVO: SELETOR DE MÊS E ANO (Vigência) ---
 st.sidebar.subheader("📅 Período de Referência")
-meses = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]
+meses_nomes = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", 
+               "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+mes_nome_sel = st.sidebar.selectbox("Mês", meses_nomes, index=datetime.now().month - 1)
+# Converte nome para número (Janeiro = 1, Abril = 4)
+mes_num_sel = meses_nomes.index(mes_nome_sel) + 1 
+
 anos = [str(a) for a in range(2024, 2031)]
+ano_sel = st.sidebar.selectbox("Ano", anos, index=2) # Index 2 costuma ser 2026 na lista
 
-col_mes, col_ano = st.sidebar.columns(2)
-mes_sel = col_mes.selectbox("Mês", meses, index=datetime.now().month - 1)
-ano_sel = col_ano.selectbox("Ano", anos, index=0)
-
-vigencia_referencia = f"{mes_sel}/{ano_sel}" # Formato MM/AAAA para o match
+# Formato para o Match no CliqCCEE (T+U+L)
+vigencia_match_ccee = f"{str(mes_num_sel).zfill(2)}/{ano_sel}" 
 
 # Uploads
 st.sidebar.markdown("---")
 arquivo_subido = st.sidebar.file_uploader("1. Base do Mês Atual", type=['xlsx', 'xlsm'])
-arquivo_anterior = st.sidebar.file_uploader("2. Mês Anterior.xlsx", type=['xlsx'])
-arquivo_pessoas = st.sidebar.file_uploader("3. RelPers_858 (4).xlsx", type=['xlsx'])
+# ... (outros uploaders aqui)
 
-st.sidebar.subheader("Bases Cliq CCEE")
-arq_matrix = st.sidebar.file_uploader("Cliq Matrix", type=['xlsx'])
-arq_bismut = st.sidebar.file_uploader("Cliq Bismut", type=['xlsx'])
-arq_cbr = st.sidebar.file_uploader("Cliq CBR", type=['xlsx'])
-arq_lee = st.sidebar.file_uploader("Cliq LEE", type=['xlsx'])
+st.title(f"📑 Book de Energia - {mes_nome_sel}/{ano_sel}")
 
-st.title(f"📑 Book de Energia - {vigencia_referencia}")
-
-# 4. CARREGAMENTO DAS BASES CCEE
+# 4. CARREGAMENTO DAS BASES CCEE (Mantendo a lógica anterior)
 def carregar_cliq(arquivo):
     if arquivo:
         try:
@@ -65,65 +60,56 @@ def carregar_cliq(arquivo):
         except: return None
     return None
 
-db_matrix = carregar_cliq(arq_matrix)
-db_bismut = carregar_cliq(arq_bismut)
-db_cbr = carregar_cliq(arq_cbr)
-db_lee = carregar_cliq(arq_lee)
+# Supondo que você carregou as bases arq_matrix, etc.
+# db_matrix = carregar_cliq(arq_matrix) ...
 
 # 5. PROCESSAMENTO PRINCIPAL
 if arquivo_subido:
     try:
+        # Carregando a aba específica
         df_bruto = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
         
-        # Mapeamento de colunas
+        # Mapeamento de Colunas
         col_boleta = df_bruto.columns[0]
-        col_vigencia_original = df_bruto.columns[11] # Col L
+        col_mes_suprimento = df_bruto.columns[14] # Coluna O (índice 14)
         
-        # FILTRO INICIAL: Só processa o que for do Mês/Ano selecionado
-        # Nota: Ajuste a lógica de conversão da Col L se ela não for string/data padrão
-        df_bruto['vigencia_aux'] = df_bruto[col_vigencia_original].astype(str).str.strip()
+        # --- FILTRO POR MÊS (COLUNA O) ---
+        # Convertemos a coluna O para numérico para não ter erro de comparação
+        df_bruto[col_mes_suprimento] = pd.to_numeric(df_bruto[col_mes_suprimento], errors='coerce')
         
-        # Filtramos a base bruta antes de tudo
-        df_filtrada_periodo = df_bruto[df_bruto['vigencia_aux'].str.contains(vigencia_referencia, na=False)].copy()
+        # Filtramos apenas o mês selecionado no seletor
+        df_filtrada_periodo = df_bruto[df_bruto[col_mes_suprimento] == mes_num_sel].copy()
 
         if df_filtrada_periodo.empty:
-            st.warning(f"Nenhuma operação encontrada para {vigencia_referencia} na base subida.")
+            st.warning(f"Nenhuma operação encontrada para o mês {mes_num_sel} na coluna O.")
         else:
             df_conferencia = df_filtrada_periodo[[col_boleta]].drop_duplicates()
             df_conferencia['Boleta_Key'] = df_conferencia[col_boleta].apply(tratar_chave)
             
+            # Helper para busca rápida
             df_lookup = df_filtrada_periodo.drop_duplicates(subset=[col_boleta]).set_index(col_boleta)
 
-            # Lógica de Busca CCEE
+            # Lógica de Busca CCEE (Match T + U + L)
             def buscar_cliq_ccee(row):
                 boleta = row['Boleta_Key']
                 orig = df_lookup.loc[row[col_boleta]]
                 
-                # Monta validação T + U + L (L agora vem do seletor fixo)
-                t = str(orig.iloc[19]).strip() 
-                u = str(orig.iloc[20]).strip()
-                l = vigencia_referencia 
+                # Dados para o match
+                t = str(orig.iloc[19]).strip() # Col T
+                u = str(orig.iloc[20]).strip() # Col U
+                l = vigencia_match_ccee        # Usa o formato "04/2026"
+                
                 validacao_local = f"{t}{u}{l}"
                 
                 parte = str(orig.iloc[7]).upper()
-                bases = [db_bismut] if "BISMUT" in parte else [db_matrix, db_cbr, db_lee]
-                
-                for db in bases:
-                    if db is not None and boleta in db.index:
-                        info = db.loc[boleta]
-                        if isinstance(info, pd.DataFrame): info = info.iloc[0]
-                        if str(info.iloc[2]).strip() == validacao_local and str(info.iloc[10]) != "Rascunho":
-                            return boleta
-                return "Verificar"
+                # (Lógica de seleção de bases: db_bismut ou [db_matrix, db_cbr, db_lee])
+                # ... busca nas bases como fizemos antes ...
+                return "Verificar" # Exemplo simplificado
 
             df_conferencia['Contrato Cliq CCEE'] = df_conferencia.apply(buscar_cliq_ccee, axis=1)
-            
-            # (Adicione aqui as outras colunas como Operação, Tipo de Energia, etc., mapeando da df_lookup)
-            df_conferencia['Operação'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[1]])
 
-            # Exibição
-            colunas_exibicao = [col_boleta, 'Operação', 'Contrato Cliq CCEE'] # Adicione as demais aqui
-            st.dataframe(df_conferencia[colunas_exibicao], hide_index=True, use_container_width=True)
+            # --- EXIBIÇÃO ---
+            st.dataframe(df_conferencia, use_container_width=True)
 
     except Exception as e:
-        st.error(f"Erro: {e}")
+        st.error(f"Erro ao processar: {e}")
