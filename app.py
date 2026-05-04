@@ -106,7 +106,6 @@ db_matrix = pd.concat(dfs_matrix) if dfs_matrix else None
 df_b = carregar_csv_cliq(arq_cceal2)
 db_bismut = df_b if df_b is not None else None
 
-# CORRECAO: leitura robusta do mes anterior
 dict_mes_anterior = {}
 if arquivo_anterior:
     try:
@@ -191,7 +190,8 @@ if arquivo_subido:
                 db = db_bismut if parte == BISMUT_SIGLA.upper() else db_matrix
                 return buscar_cliq_ccee(cod_principal, cod_alt, parte, db)
 
-            df_conferencia['CliqCCEE Encontrado'] = df_conferencia.apply(resolver_cliq, axis=1)
+            # Alterado nome da coluna aqui
+            df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
 
             lista_op = sorted([str(x) for x in df_conferencia['Operacao'].unique() if pd.notna(x)])
             lista_pa = sorted([str(x) for x in df_conferencia['Parte'].unique() if pd.notna(x)])
@@ -213,6 +213,7 @@ if arquivo_subido:
             if rem_zero:
                 df_final = df_final[df_final['Volume MWm'] != 0]
 
+            # Reordenado para colocar 'Contrato CliqCCEE' por último
             ordem = [
                 col_boleta,
                 'Operacao',
@@ -221,13 +222,13 @@ if arquivo_subido:
                 'CNPJ Contraparte',
                 'Volume MWm',
                 'CliqCCEE Paradigma',
-                'CliqCCEE Encontrado',
                 'Modulacao WBC',
                 'Modulacao Minima',
                 'Modulacao Maxima',
                 'Contrato CliqCCEE mes anterior',
                 'Comprador',
                 'Vendedor',
+                'Contrato CliqCCEE',  # Agora por último e com nome novo
             ]
             st.dataframe(df_final[ordem], hide_index=True, use_container_width=True)
 
