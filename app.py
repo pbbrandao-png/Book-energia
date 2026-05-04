@@ -82,12 +82,12 @@ arquivo_subido   = st.sidebar.file_uploader("1. Contratos Aprovados (Excel)", ty
 arquivo_anterior = st.sidebar.file_uploader("2. Base Mes Anterior.xlsx", type=['xlsx'])
 arquivo_pessoas  = st.sidebar.file_uploader("3. Exportador (4).xlsx", type=['xlsx'])
 
-st.sidebar.subheader("Bases Cliq CCEE - Matrix/CBR/CCEAR (101457)")
+st.sidebar.subheader("Bases Cliq CCEE - Matrix/CBR/CCEAR")
 arq_ccear  = st.sidebar.file_uploader("Cliq CCEAR_Q",             type=['xlsx', 'csv'])
 arq_cbr    = st.sidebar.file_uploader("Cliq CBR Mercado",         type=['xlsx', 'csv'])
 arq_cceal1 = st.sidebar.file_uploader("Cliq Matrix",  type=['xlsx', 'csv'])
 
-st.sidebar.subheader("Bases Cliq CCEE - Bismut (101475)")
+st.sidebar.subheader("Bases Cliq CCEE - Bismut")
 arq_cceal2 = st.sidebar.file_uploader("Cliq Bismut",  type=['xlsx', 'csv'])
 
 st.title(f"Book de Energia - {mes_nome_sel}/{ano_sel}")
