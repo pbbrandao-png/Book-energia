@@ -36,30 +36,22 @@ def carregar_csv_cliq(arquivo):
             df = pd.read_csv(arquivo, sep='\t', encoding='latin-1', skiprows=1, dtype=str)
         else:
             df = pd.read_excel(arquivo, dtype=str)
-        df['CODIGO_CONTRATO'] = df['CODIGO_CONTRATO'].apply(tratar_chave)
-        df = df.set_index('CODIGO_CONTRATO')
-        return df
+        
+        if 'CODIGO_CONTRATO' in df.columns:
+            df['CODIGO_CONTRATO'] = df['CODIGO_CONTRATO'].apply(tratar_chave)
+            df = df.set_index('CODIGO_CONTRATO')
+            return df
+        return None
     except Exception:
         return None
 
 def buscar_cliq_ccee(cod_paradigma, cod_mes_anterior, df_cliq):
-    """
-    Regras:
-    1. Tenta o codigo do Paradigma primeiro (prioridade)
-    2. Se nao encontrar ou situacao for RASCUNHO, tenta o codigo do Mes Anterior
-    3. Se nenhum funcionar, retorna 'Verificar'
-    Condicoes para um codigo ser valido:
-      - Existe em CODIGO_CONTRATO no CSV
-      - SITUACAO_CONTRATO != 'RASCUNHO'
-    """
     if df_cliq is None:
         return "Verificar"
 
     def checar(codigo):
         codigo = tratar_chave(codigo)
-        if not codigo:
-            return False
-        if codigo not in df_cliq.index:
+        if not codigo or codigo not in df_cliq.index:
             return False
         row = df_cliq.loc[codigo]
         if isinstance(row, pd.DataFrame):
@@ -74,21 +66,21 @@ def buscar_cliq_ccee(cod_paradigma, cod_mes_anterior, df_cliq):
     return "Verificar"
 
 # 3. INTERFACE LATERAL
-st.sidebar.title("Configuracoes")
+st.sidebar.title("Configurações")
 
-st.sidebar.subheader("Periodo de Referencia")
+st.sidebar.subheader("Período de Referência")
 meses_nomes = [
-    "Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho",
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
     "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
 ]
-mes_nome_sel = st.sidebar.selectbox("Mes", meses_nomes, index=datetime.now().month - 1)
+mes_nome_sel = st.sidebar.selectbox("Mês", meses_nomes, index=datetime.now().month - 1)
 mes_num_sel = meses_nomes.index(mes_nome_sel) + 1
 anos = [str(a) for a in range(2024, 2031)]
 ano_sel = st.sidebar.selectbox("Ano", anos, index=2)
 
 st.sidebar.markdown("---")
-arquivo_subido   = st.sidebar.file_uploader("1. Base do Mes Atual (Excel)", type=['xlsx', 'xlsm'])
-arquivo_anterior = st.sidebar.file_uploader("2. Mes Anterior_3.xlsx", type=['xlsx'])
+arquivo_subido   = st.sidebar.file_uploader("1. Base do Mês Atual (Excel)", type=['xlsx', 'xlsm'])
+arquivo_anterior = st.sidebar.file_uploader("2. Mês Anterior_3.xlsx", type=['xlsx'])
 arquivo_pessoas  = st.sidebar.file_uploader("3. RelPers_858 (4).xlsx", type=['xlsx'])
 
 st.sidebar.subheader("Bases Cliq CCEE - Matrix/CBR/CCEAR (101457)")
@@ -112,7 +104,7 @@ db_matrix = pd.concat(dfs_matrix) if dfs_matrix else None
 df_b = carregar_csv_cliq(arq_cceal2)
 db_bismut = df_b if df_b is not None else None
 
-# CORRECAO: leitura robusta do mes anterior
+# Leitura do mês anterior
 dict_mes_anterior = {}
 if arquivo_anterior:
     try:
@@ -127,8 +119,9 @@ if arquivo_anterior:
             index=df_apoio.iloc[:, 0].values
         ).to_dict()
     except Exception as e:
-        st.warning(f"Erro ao carregar mes anterior: {e}")
+        st.warning(f"Erro ao carregar mês anterior: {e}")
 
+# Leitura de pessoas (Comprador/Vendedor)
 dict_vendedor, dict_comprador = {}, {}
 if arquivo_pessoas:
     try:
@@ -140,14 +133,14 @@ if arquivo_pessoas:
         pass
 
 # 5. PROCESSAMENTO DA BASE PRINCIPAL
-BISMUT_SIGLA = "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A."
-
 if arquivo_subido:
     try:
         df_bruto = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
 
+        # MAPEAMENTO DE COLUNAS POR ÍNDICE
         col_boleta         = df_bruto.columns[0]
         col_operacao       = df_bruto.columns[1]
+        col_tipo_energia   = df_bruto.columns[5]   # COLUNA F
         col_cnpj           = df_bruto.columns[4]
         col_contraparte    = df_bruto.columns[6]
         col_parte_bk       = df_bruto.columns[62]
@@ -164,27 +157,27 @@ if arquivo_subido:
         df_filtrada = df_bruto[df_bruto[col_mes_suprimento] == mes_num_sel].copy()
 
         if df_filtrada.empty:
-            st.warning(f"Nenhuma operacao encontrada para o mes {mes_num_sel}.")
+            st.warning(f"Nenhuma operação encontrada para o mês {mes_num_sel}.")
         else:
             df_conferencia = df_filtrada[[col_boleta]].drop_duplicates()
             df_conferencia['Boleta_Key'] = df_conferencia[col_boleta].apply(tratar_chave)
             df_lookup = df_filtrada.drop_duplicates(subset=[col_boleta]).set_index(col_boleta)
 
-            df_conferencia['Operacao']         = df_conferencia[col_boleta].map(df_lookup[col_operacao]).astype(str)
-            df_conferencia['Parte']            = df_conferencia[col_boleta].map(df_lookup[col_parte_bk]).astype(str).str.strip()
+            # Preenchimento dos dados com base na Boleta
+            df_conferencia['Operação']        = df_conferencia[col_boleta].map(df_lookup[col_operacao]).astype(str)
+            df_conferencia['Tipo de Energia'] = df_conferencia[col_boleta].map(df_lookup[col_tipo_energia]).fillna("N/A")
+            df_conferencia['Parte']           = df_conferencia[col_boleta].map(df_lookup[col_parte_bk]).astype(str).str.strip()
             df_conferencia['Contraparte']      = df_conferencia[col_boleta].map(df_lookup[col_contraparte])
             df_conferencia['CNPJ Contraparte'] = df_conferencia[col_boleta].map(df_lookup[col_cnpj]).apply(formatar_cnpj)
 
             v_mwh = df_conferencia[col_boleta].map(df_lookup[col_volume_mwh])
             h_mes = df_conferencia[col_boleta].map(df_lookup[col_horas_mes])
-            df_conferencia['Volume MWm'] = (v_mwh / h_mes).fillna(0).round(4)
+            df_conferencia['Volume MWm'] = (v_mwh / h_mes.astype(float)).fillna(0).round(4)
 
             df_conferencia['CliqCCEE Paradigma'] = df_conferencia[col_boleta].map(df_lookup[col_cliq_para]).apply(tratar_chave)
-            df_conferencia['_cliq_alt']          = df_conferencia[col_boleta].map(df_lookup[col_cliq_alt]).apply(tratar_chave)
-
-            df_conferencia['Modulacao WBC']    = df_conferencia[col_boleta].map(df_lookup[col_mod_wbc]).apply(limpar_modulacao)
-            df_conferencia['Modulacao Minima'] = df_conferencia[col_boleta].map(df_lookup[col_mod_min])
-            df_conferencia['Modulacao Maxima'] = df_conferencia[col_boleta].map(df_lookup[col_mod_max])
+            df_conferencia['Modulação WBC']      = df_conferencia[col_boleta].map(df_lookup[col_mod_wbc]).apply(limpar_modulacao)
+            df_conferencia['Modulação Miníma']   = df_conferencia[col_boleta].map(df_lookup[col_mod_min])
+            df_conferencia['Modulação Máxima']   = df_conferencia[col_boleta].map(df_lookup[col_mod_max])
 
             df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(dict_mes_anterior).fillna("-")
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(dict_comprador).fillna("N/A")
@@ -199,13 +192,14 @@ if arquivo_subido:
 
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
 
-            lista_op = sorted([str(x) for x in df_conferencia['Operacao'].unique() if pd.notna(x)])
+            # Filtros
+            lista_op = sorted([str(x) for x in df_conferencia['Operação'].unique() if pd.notna(x)])
             lista_pa = sorted([str(x) for x in df_conferencia['Parte'].unique() if pd.notna(x)])
 
-            st.write("### Filtros Rapidos")
+            st.write("### Filtros Rápidos")
             f1, f2, f3 = st.columns(3)
             with f1:
-                op_f = st.selectbox("Operacao", ["Todos"] + lista_op)
+                op_f = st.selectbox("Operação", ["Todos"] + lista_op)
             with f2:
                 parte_f = st.selectbox("Parte", ["Todos"] + lista_pa)
             with f3:
@@ -213,28 +207,31 @@ if arquivo_subido:
 
             df_final = df_conferencia.copy()
             if op_f != "Todos":
-                df_final = df_final[df_final['Operacao'] == op_f]
+                df_final = df_final[df_final['Operação'] == op_f]
             if parte_f != "Todos":
                 df_final = df_final[df_final['Parte'] == parte_f]
             if rem_zero:
                 df_final = df_final[df_final['Volume MWm'] != 0]
 
+            # ORDEM DAS COLUNAS (Tipo de Energia como 3ª coluna)
             ordem = [
                 col_boleta,
-                'Operacao',
+                'Operação',
+                'Tipo de Energia',
                 'Parte',
                 'Contraparte',
                 'CNPJ Contraparte',
                 'Volume MWm',
                 'CliqCCEE Paradigma',
-                'Modulacao WBC',
-                'Modulacao Minima',
-                'Modulacao Maxima',
+                'Modulação WBC',
+                'Modulação Miníma',
+                'Modulação Máxima',
                 'Contrato CliqCCEE mes anterior',
                 'Comprador',
                 'Vendedor',
                 'Contrato CliqCCEE',
             ]
+            
             st.dataframe(df_final[ordem], hide_index=True, use_container_width=True)
 
     except Exception as e:
