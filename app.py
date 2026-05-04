@@ -43,15 +43,6 @@ def carregar_csv_cliq(arquivo):
         return None
 
 def buscar_cliq_ccee(cod_paradigma, cod_mes_anterior, df_cliq):
-    """
-    Regras:
-    1. Tenta o codigo do Paradigma primeiro (prioridade)
-    2. Se nao encontrar ou situacao for RASCUNHO, tenta o codigo do Mes Anterior
-    3. Se nenhum funcionar, retorna 'Verificar'
-    Condicoes para um codigo ser valido:
-      - Existe em CODIGO_CONTRATO no CSV
-      - SITUACAO_CONTRATO != 'RASCUNHO'
-    """
     if df_cliq is None:
         return "Verificar"
 
@@ -101,51 +92,95 @@ arq_cceal2 = st.sidebar.file_uploader("Cliq CCEAL Firme 101475",  type=['xlsx', 
 
 st.title(f"Book de Energia - {mes_nome_sel}/{ano_sel}")
 
-# 4. CARREGAMENTO DOS CSVs CLIQ
-dfs_matrix = []
-for arq in [arq_ccear, arq_cbr, arq_cceal1]:
-    df = carregar_csv_cliq(arq)
-    if df is not None:
-        dfs_matrix.append(df)
-db_matrix = pd.concat(dfs_matrix) if dfs_matrix else None
+# 4. CACHE DE ARQUIVOS NO SESSION STATE
+# Cada arquivo so e reprocessado quando um novo e subido (id diferente)
 
-df_b = carregar_csv_cliq(arq_cceal2)
-db_bismut = df_b if df_b is not None else None
+def get_file_id(arq):
+    """Retorna um identificador unico para o arquivo subido."""
+    if arq is None:
+        return None
+    return (arq.name, arq.size)
 
-# CORRECAO: leitura robusta do mes anterior
-dict_mes_anterior = {}
-if arquivo_anterior:
-    try:
-        df_apoio = pd.read_excel(arquivo_anterior, header=0, dtype=str)
-        primeira_celula = str(df_apoio.iloc[0, 0]).strip().upper()
-        if primeira_celula in ["BOLETA", "ID", "CHAVE"]:
-            df_apoio = df_apoio.iloc[1:].reset_index(drop=True)
-        df_apoio.iloc[:, 0] = df_apoio.iloc[:, 0].apply(tratar_chave)
-        df_apoio.iloc[:, 1] = df_apoio.iloc[:, 1].apply(tratar_chave)
-        dict_mes_anterior = pd.Series(
-            df_apoio.iloc[:, 1].values,
-            index=df_apoio.iloc[:, 0].values
-        ).to_dict()
-    except Exception as e:
-        st.warning(f"Erro ao carregar mes anterior: {e}")
+# --- Base principal ---
+fid_subido = get_file_id(arquivo_subido)
+if fid_subido != st.session_state.get('fid_subido'):
+    st.session_state['fid_subido'] = fid_subido
+    if arquivo_subido:
+        try:
+            st.session_state['df_bruto'] = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
+        except Exception as e:
+            st.session_state['df_bruto'] = None
+            st.error(f"Erro ao carregar base principal: {e}")
+    else:
+        st.session_state['df_bruto'] = None
 
-dict_vendedor, dict_comprador = {}, {}
-if arquivo_pessoas:
-    try:
-        df_pers = pd.read_excel(arquivo_pessoas)
-        df_pers['chave'] = df_pers.iloc[:, 3].apply(tratar_chave)
-        dict_comprador = pd.Series(df_pers.iloc[:, 1].values, index=df_pers['chave'].values).to_dict()
-        dict_vendedor  = pd.Series(df_pers.iloc[:, 2].values, index=df_pers['chave'].values).to_dict()
-    except Exception:
-        pass
+# --- Mes anterior ---
+fid_anterior = get_file_id(arquivo_anterior)
+if fid_anterior != st.session_state.get('fid_anterior'):
+    st.session_state['fid_anterior'] = fid_anterior
+    dict_ma = {}
+    if arquivo_anterior:
+        try:
+            df_apoio = pd.read_excel(arquivo_anterior, header=0, dtype=str)
+            primeira_celula = str(df_apoio.iloc[0, 0]).strip().upper()
+            if primeira_celula in ["BOLETA", "ID", "CHAVE"]:
+                df_apoio = df_apoio.iloc[1:].reset_index(drop=True)
+            df_apoio.iloc[:, 0] = df_apoio.iloc[:, 0].apply(tratar_chave)
+            df_apoio.iloc[:, 1] = df_apoio.iloc[:, 1].apply(tratar_chave)
+            dict_ma = pd.Series(df_apoio.iloc[:, 1].values, index=df_apoio.iloc[:, 0].values).to_dict()
+        except Exception as e:
+            st.warning(f"Erro ao carregar mes anterior: {e}")
+    st.session_state['dict_mes_anterior'] = dict_ma
+
+# --- Pessoas ---
+fid_pessoas = get_file_id(arquivo_pessoas)
+if fid_pessoas != st.session_state.get('fid_pessoas'):
+    st.session_state['fid_pessoas'] = fid_pessoas
+    dict_v, dict_c = {}, {}
+    if arquivo_pessoas:
+        try:
+            df_pers = pd.read_excel(arquivo_pessoas)
+            df_pers['chave'] = df_pers.iloc[:, 3].apply(tratar_chave)
+            dict_c = pd.Series(df_pers.iloc[:, 1].values, index=df_pers['chave'].values).to_dict()
+            dict_v = pd.Series(df_pers.iloc[:, 2].values, index=df_pers['chave'].values).to_dict()
+        except Exception:
+            pass
+    st.session_state['dict_comprador'] = dict_c
+    st.session_state['dict_vendedor']  = dict_v
+
+# --- CSVs Cliq Matrix ---
+fid_ccear  = get_file_id(arq_ccear)
+fid_cbr    = get_file_id(arq_cbr)
+fid_cceal1 = get_file_id(arq_cceal1)
+chave_matrix = (fid_ccear, fid_cbr, fid_cceal1)
+if chave_matrix != st.session_state.get('chave_matrix'):
+    st.session_state['chave_matrix'] = chave_matrix
+    dfs = []
+    for arq in [arq_ccear, arq_cbr, arq_cceal1]:
+        df = carregar_csv_cliq(arq)
+        if df is not None:
+            dfs.append(df)
+    st.session_state['db_matrix'] = pd.concat(dfs) if dfs else None
+
+# --- CSV Cliq Bismut ---
+fid_cceal2 = get_file_id(arq_cceal2)
+if fid_cceal2 != st.session_state.get('fid_cceal2'):
+    st.session_state['fid_cceal2'] = fid_cceal2
+    st.session_state['db_bismut'] = carregar_csv_cliq(arq_cceal2)
+
+# Recupera do cache
+df_bruto         = st.session_state.get('df_bruto')
+dict_mes_anterior = st.session_state.get('dict_mes_anterior', {})
+dict_comprador   = st.session_state.get('dict_comprador', {})
+dict_vendedor    = st.session_state.get('dict_vendedor', {})
+db_matrix        = st.session_state.get('db_matrix')
+db_bismut        = st.session_state.get('db_bismut')
 
 # 5. PROCESSAMENTO DA BASE PRINCIPAL
 BISMUT_SIGLA = "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A."
 
-if arquivo_subido:
+if df_bruto is not None:
     try:
-        df_bruto = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
-
         col_boleta         = df_bruto.columns[0]
         col_operacao       = df_bruto.columns[1]
         col_cnpj           = df_bruto.columns[4]
@@ -158,11 +193,11 @@ if arquivo_subido:
         col_mod_min        = df_bruto.columns[28]
         col_mod_max        = df_bruto.columns[29]
         col_cliq_para      = df_bruto.columns[60]
-        col_cliq_alt       = df_bruto.columns[14]
         col_mod_wbc        = df_bruto.columns[63]
 
-        df_bruto[col_mes_suprimento] = pd.to_numeric(df_bruto[col_mes_suprimento], errors='coerce')
-        df_filtrada = df_bruto[df_bruto[col_mes_suprimento] == mes_num_sel].copy()
+        df_num = df_bruto.copy()
+        df_num[col_mes_suprimento] = pd.to_numeric(df_num[col_mes_suprimento], errors='coerce')
+        df_filtrada = df_num[df_num[col_mes_suprimento] == mes_num_sel].copy()
 
         if df_filtrada.empty:
             st.warning(f"Nenhuma operacao encontrada para o mes {mes_num_sel}.")
@@ -172,9 +207,21 @@ if arquivo_subido:
             df_lookup = df_filtrada.drop_duplicates(subset=[col_boleta]).set_index(col_boleta)
 
             df_conferencia['Operacao']         = df_conferencia[col_boleta].map(df_lookup[col_operacao]).astype(str)
-            df_conferencia['Parte']            = df_conferencia[col_boleta].map(df_lookup[col_parte_bk]).astype(str).str.strip()
             df_conferencia['Tipo Energia']     = df_conferencia[col_boleta].map(df_lookup[col_energia]).astype(str).str.strip()
+            df_conferencia.loc[df_conferencia['Boleta_Key'].isin(
+                df_lookup[df_lookup[col_parte_bk].astype(str).str.upper().str.contains('UFV JACARANDA 1', na=False)].index.astype(str)
+            ), 'Tipo Energia'] = 'Incentivada-I5'
+            df_conferencia['Parte']            = df_conferencia[col_boleta].map(df_lookup[col_parte_bk]).astype(str).str.strip()
             df_conferencia.loc[df_conferencia['Parte'].str.upper().str.contains('UFV JACARANDA 1', na=False), 'Tipo Energia'] = 'Incentivada-I5'
+            mapa_energia = {
+                'INCENTIVADA-50%':   'Incentivada-I5',
+                'INCENTIVADA-CQ50%': 'Incentivada-CQ5',
+                'INCENTIVADA-100%':  'Incentivada-I1',
+                'INCENTIVADA-0%':    'Incentivada-I0',
+            }
+            df_conferencia['Tipo Energia'] = df_conferencia['Tipo Energia'].apply(
+                lambda v: mapa_energia.get(str(v).strip().upper(), v)
+            )
             df_conferencia['Contraparte']      = df_conferencia[col_boleta].map(df_lookup[col_contraparte])
             df_conferencia['CNPJ Contraparte'] = df_conferencia[col_boleta].map(df_lookup[col_cnpj]).apply(formatar_cnpj)
 
@@ -183,11 +230,9 @@ if arquivo_subido:
             df_conferencia['Volume MWm'] = (v_mwh / h_mes).fillna(0).round(4)
 
             df_conferencia['CliqCCEE Paradigma'] = df_conferencia[col_boleta].map(df_lookup[col_cliq_para]).apply(tratar_chave)
-            df_conferencia['_cliq_alt']          = df_conferencia[col_boleta].map(df_lookup[col_cliq_alt]).apply(tratar_chave)
-
-            df_conferencia['Modulacao WBC']    = df_conferencia[col_boleta].map(df_lookup[col_mod_wbc]).apply(limpar_modulacao)
-            df_conferencia['Modulacao Minima'] = df_conferencia[col_boleta].map(df_lookup[col_mod_min])
-            df_conferencia['Modulacao Maxima'] = df_conferencia[col_boleta].map(df_lookup[col_mod_max])
+            df_conferencia['Modulacao WBC']      = df_conferencia[col_boleta].map(df_lookup[col_mod_wbc]).apply(limpar_modulacao)
+            df_conferencia['Modulacao Minima']   = df_conferencia[col_boleta].map(df_lookup[col_mod_min])
+            df_conferencia['Modulacao Maxima']   = df_conferencia[col_boleta].map(df_lookup[col_mod_max])
 
             df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(dict_mes_anterior).fillna("-")
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(dict_comprador).fillna("N/A")
@@ -202,6 +247,7 @@ if arquivo_subido:
 
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
 
+            # Ordena por boleta numericamente
             df_conferencia['_boleta_num'] = pd.to_numeric(df_conferencia['Boleta_Key'], errors='coerce')
             df_conferencia = df_conferencia.sort_values('_boleta_num').drop(columns=['_boleta_num'])
 
