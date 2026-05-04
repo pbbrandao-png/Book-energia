@@ -7,10 +7,9 @@ from datetime import datetime
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(layout="wide", page_title="Book de Energia")
 
-# 2. FUNÇÕES COM CACHE (Otimização de Performance)
+# 2. FUNÇÕES COM CACHE
 @st.cache_data
 def carregar_csv_cliq_cached(arquivo_lista):
-    """Lê e concatena as bases CCEE apenas quando os arquivos mudam."""
     dfs = []
     for arquivo in arquivo_lista:
         if arquivo is not None:
@@ -53,7 +52,6 @@ def limpar_modulacao(texto):
 st.sidebar.title("Configurações")
 
 meses_nomes = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
-# Define o índice 3 (Abril) como padrão conforme solicitado
 mes_nome_sel = st.sidebar.selectbox("Mês de Referência", meses_nomes, index=3)
 mes_num_sel = meses_nomes.index(mes_nome_sel) + 1
 ano_sel = st.sidebar.selectbox("Ano", [str(a) for a in range(2024, 2031)], index=2)
@@ -69,23 +67,20 @@ arq_cbr    = st.sidebar.file_uploader("Cliq CBR Mercado", type=['xlsx', 'csv'])
 arq_cceal1 = st.sidebar.file_uploader("Cliq CCEAL Firme 101457", type=['xlsx', 'csv'])
 arq_cceal2 = st.sidebar.file_uploader("Cliq CCEAL Firme 101475 (Bismut)", type=['xlsx', 'csv'])
 
-# BOTÃO DE PROCESSAMENTO (Evita que o app rode a cada alteração de arquivo)
 processar = st.sidebar.button("🚀 Processar Dados", use_container_width=True)
 
 # 4. EXECUÇÃO
 st.title(f"Book de Energia - {mes_nome_sel}/{ano_sel}")
 
 if processar and arquivo_subido:
-    with st.spinner('Processando bases... Isso pode levar alguns segundos.'):
+    with st.spinner('Processando bases e ordenando boletas...'):
         try:
-            # Carregamento cacheado das bases CCEE
             db_matrix = carregar_csv_cliq_cached([arq_ccear, arq_cbr, arq_cceal1])
             db_bismut = carregar_csv_cliq_cached([arq_cceal2])
 
-            # Leitura da base principal
             df_bruto = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
             
-            # Mapeamento de colunas por índice (mantendo a estrutura original)
+            # Índices de colunas
             col_boleta = df_bruto.columns[0]
             col_operacao = df_bruto.columns[1]
             col_cnpj = df_bruto.columns[4]
@@ -105,7 +100,6 @@ if processar and arquivo_subido:
             if df_filtrada.empty:
                 st.warning(f"Nenhuma operação encontrada para o mês {mes_num_sel}.")
             else:
-                # Dicionários de apoio (Pessoas e Mês Anterior)
                 dict_mes_ant, dict_comp, dict_vend = {}, {}, {}
                 
                 if arquivo_anterior:
@@ -118,7 +112,7 @@ if processar and arquivo_subido:
                     dict_comp = pd.Series(df_pers.iloc[:, 1].values, index=df_pers['chave'].values).to_dict()
                     dict_vend = pd.Series(df_pers.iloc[:, 2].values, index=df_pers['chave'].values).to_dict()
 
-                # Construção do DataFrame final com TODAS as colunas solicitadas anteriormente
+                # Construção do DataFrame
                 df_res = pd.DataFrame()
                 df_res['Boleta'] = df_filtrada[col_boleta].apply(tratar_chave)
                 df_res['Operacao'] = df_filtrada[col_operacao].astype(str)
@@ -134,12 +128,10 @@ if processar and arquivo_subido:
                 df_res['Comprador'] = df_res['Boleta'].map(dict_comp).fillna("N/A")
                 df_res['Vendedor'] = df_res['Boleta'].map(dict_vend).fillna("N/A")
 
-                # Lógica de validação do contrato na CCEE
+                # Validação CCEE
                 def validar_cliq(row):
                     db = db_bismut if 'BISMUT' in str(row['Parte']).upper() else db_matrix
                     if db is None: return "Verificar"
-                    
-                    # Testa primeiro o paradigma, depois o mês anterior
                     for cod in [row['CliqCCEE Paradigma'], row['Contrato CliqCCEE mes anterior']]:
                         c = tratar_chave(cod)
                         if c and c in db.index:
@@ -149,12 +141,15 @@ if processar and arquivo_subido:
 
                 df_res['Contrato CliqCCEE'] = df_res.apply(validar_cliq, axis=1)
 
+                # --- ORDENAÇÃO DECRESCENTE PELA BOLETA ---
+                # Convertemos para numérico apenas para ordenar corretamente (ex: 10 vir depois de 2)
+                df_res['Boleta_Num'] = pd.to_numeric(df_res['Boleta'], errors='coerce')
+                df_res = df_res.sort_values(by='Boleta_Num', ascending=False).drop(columns=['Boleta_Num'])
+
                 # --- EXIBIÇÃO ---
                 pendentes = len(df_res[df_res['Contrato CliqCCEE'] == "Verificar"])
                 st.metric("Contratos Pendentes", pendentes, delta=f"{pendentes} verificar", delta_color="inverse")
 
-                # Estilização: destaque em vermelho para "Verificar"
-                # Usando .map() para compatibilidade com versões novas do Pandas Styler
                 def style_cliq(val):
                     return 'color: red; font-weight: bold' if val == "Verificar" else ''
 
@@ -164,7 +159,6 @@ if processar and arquivo_subido:
                     use_container_width=True
                 )
 
-                # Opção de Download
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                     df_res.to_excel(writer, index=False, sheet_name='Conferencia')
@@ -174,4 +168,4 @@ if processar and arquivo_subido:
             st.error(f"Erro no processamento: {e}")
 else:
     if not processar:
-        st.info("Configure os arquivos na lateral e clique em 'Processar Dados' para gerar o relatório.")
+        st.info("Configure os arquivos na lateral e clique em 'Processar Dados'. As boletas serão exibidas em ordem decrescente.")
