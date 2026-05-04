@@ -191,7 +191,7 @@ if arquivo_subido:
                 db = db_bismut if parte == BISMUT_SIGLA.upper() else db_matrix
                 return buscar_cliq_ccee(cod_principal, cod_alt, parte, db)
 
-            df_conferencia['CliqCCEE Encontrado'] = df_conferencia.apply(resolver_cliq, axis=1)
+            df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
 
             lista_op = sorted([str(x) for x in df_conferencia['Operacao'].unique() if pd.notna(x)])
             lista_pa = sorted([str(x) for x in df_conferencia['Parte'].unique() if pd.notna(x)])
@@ -221,13 +221,13 @@ if arquivo_subido:
                 'CNPJ Contraparte',
                 'Volume MWm',
                 'CliqCCEE Paradigma',
-                'CliqCCEE Encontrado',
                 'Modulacao WBC',
                 'Modulacao Minima',
                 'Modulacao Maxima',
                 'Contrato CliqCCEE mes anterior',
                 'Comprador',
                 'Vendedor',
+                'Contrato CliqCCEE',
             ]
             st.dataframe(df_final[ordem], hide_index=True, use_container_width=True)
 
