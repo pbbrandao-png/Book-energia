@@ -3,10 +3,10 @@ import pandas as pd
 import re
 from datetime import datetime
 
-# 1. CONFIGURACAO DA PAGINA
+# 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(layout="wide", page_title="Book de Energia")
 
-# 2. FUNCOES DE APOIO
+# 2. FUNÇÕES DE APOIO
 def formatar_cnpj(cnpj):
     if pd.isna(cnpj) or cnpj == "": return ""
     apenas_numeros = re.sub(r'\D', '', str(cnpj)).zfill(14)
@@ -28,99 +28,100 @@ def tratar_chave(valor):
     return s
 
 def carregar_csv_cliq(arquivo):
-    if arquivo is None:
-        return None
+    if arquivo is None: return None
     try:
         nome = arquivo.name if hasattr(arquivo, 'name') else str(arquivo)
         if nome.endswith('.csv'):
             df = pd.read_csv(arquivo, sep='\t', encoding='latin-1', skiprows=1, dtype=str)
         else:
             df = pd.read_excel(arquivo, dtype=str)
-        df['CODIGO_CONTRATO'] = df['CODIGO_CONTRATO'].apply(tratar_chave)
-        df = df.set_index('CODIGO_CONTRATO')
+        
+        # Ajuste o nome da coluna de índice conforme o cabeçalho real do seu CSV
+        col_id = 'CODIGO_CONTRATO' 
+        if col_id in df.columns:
+            df[col_id] = df[col_id].apply(tratar_chave)
+            df = df.set_index(col_id)
         return df
     except Exception:
         return None
 
-def buscar_cliq_ccee(codigo_cliq, codigo_cliq_alt, parte_concatenada, df_cliq):
-    if df_cliq is None:
-        return "-"
+def buscar_cliq_complexo(row, db_matrix, db_bismut):
+    """
+    Replica a lógica da fórmula: 
+    - Escolhe a base (Bismut vs Matrix/CBR/LEE)
+    - Tenta Cod_Principal e Cod_Alt
+    - Valida se Status != RASCUNHO
+    - Valida se Chave Concatenada (T+U+L) bate com a SIGLA_AGENTE na base
+    """
+    parte = str(row.get('Parte', '')).strip().upper()
+    chave_validacao = str(row.get('Chave_Concatenada', '')).strip().upper()
+    
+    # Define o banco de dados alvo
+    # Se na 'Parte' houver BISMUT, usa a base bismut, senão usa a matrix
+    db_alvo = db_bismut if "BISMUT" in parte else db_matrix
+    
+    if db_alvo is None: return "-"
 
-    def tentar_codigo(codigo):
-        codigo = tratar_chave(codigo)
-        if not codigo or codigo not in df_cliq.index:
-            return "Verificar"
-        row = df_cliq.loc[codigo]
-        if isinstance(row, pd.DataFrame):
-            row = row.iloc[0]
-        agente = str(row.get('SIGLA_AGENTE_VENDEDOR', '') or '').strip().upper()
-        situacao = str(row.get('SITUACAO_CONTRATO', '') or '').strip().upper()
-        parte_upper = str(parte_concatenada or '').strip().upper()
-        if agente == parte_upper and situacao != 'RASCUNHO':
-            return codigo
-        return "Verificar"
-
-    resultado = tentar_codigo(codigo_cliq)
-    if resultado == "Verificar":
-        resultado = tentar_codigo(codigo_cliq_alt)
-    if resultado == "Verificar":
-        return "-"
-    return resultado
+    # Tenta os dois códigos (S12 e O12 da sua fórmula)
+    codigos_para_testar = [row.get('CliqCCEE Paradigma'), row.get('_cliq_alt')]
+    
+    for cod in codigos_para_testar:
+        cod_str = tratar_chave(cod)
+        if cod_str and cod_str in db_alvo.index:
+            dados_cliq = db_alvo.loc[cod_str]
+            if isinstance(dados_cliq, pd.DataFrame):
+                dados_cliq = dados_cliq.iloc[0]
+            
+            # Critérios da fórmula:
+            status = str(dados_cliq.get('SITUACAO_CONTRATO', '')).strip().upper()
+            # No Excel você concatena T+U+L e compara com a coluna C da CLIQ
+            agente_base = str(dados_cliq.get('SIGLA_AGENTE_COMPRADOR', '')).strip().upper()
+            
+            if status != "RASCUNHO" and agente_base == chave_validacao:
+                return cod_str
+                
+    return "Verificar"
 
 # 3. INTERFACE LATERAL
-st.sidebar.title("Configuracoes")
+st.sidebar.title("Configurações")
 
-st.sidebar.subheader("Periodo de Referencia")
-meses_nomes = [
-    "Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho",
-    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
-]
-mes_nome_sel = st.sidebar.selectbox("Mes", meses_nomes, index=datetime.now().month - 1)
+st.sidebar.subheader("Período de Referência")
+meses_nomes = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+mes_nome_sel = st.sidebar.selectbox("Mês", meses_nomes, index=datetime.now().month - 1)
 mes_num_sel = meses_nomes.index(mes_nome_sel) + 1
-anos = [str(a) for a in range(2024, 2031)]
-ano_sel = st.sidebar.selectbox("Ano", anos, index=2)
+ano_sel = st.sidebar.selectbox("Ano", [str(a) for a in range(2024, 2031)], index=2)
 
 st.sidebar.markdown("---")
-arquivo_subido   = st.sidebar.file_uploader("1. Base do Mes Atual (Excel)", type=['xlsx', 'xlsm'])
-arquivo_anterior = st.sidebar.file_uploader("2. Mes Anterior_3.xlsx", type=['xlsx'])
-arquivo_pessoas  = st.sidebar.file_uploader("3. RelPers_858 (4).xlsx", type=['xlsx'])
+arquivo_subido   = st.sidebar.file_uploader("1. Base do Mês Atual (Excel)", type=['xlsx', 'xlsm'])
+arquivo_anterior = st.sidebar.file_uploader("2. Mês Anterior (Opcional)", type=['xlsx'])
+arquivo_pessoas  = st.sidebar.file_uploader("3. RelPers_858 (Pessoas)", type=['xlsx'])
 
-st.sidebar.subheader("Bases Cliq CCEE - Matrix/CBR/CCEAR (101457)")
-arq_ccear  = st.sidebar.file_uploader("Cliq CCEAR_Q",             type=['xlsx', 'csv'])
-arq_cbr    = st.sidebar.file_uploader("Cliq CBR Mercado",         type=['xlsx', 'csv'])
-arq_cceal1 = st.sidebar.file_uploader("Cliq CCEAL Firme 101457",  type=['xlsx', 'csv'])
+st.sidebar.subheader("Bases Cliq CCEE - Matrix/CBR/LEE")
+arq_ccear  = st.sidebar.file_uploader("Cliq CCEAR_Q_101457", type=['xlsx', 'csv'])
+arq_cbr    = st.sidebar.file_uploader("Cliq CBR Mercado_101457", type=['xlsx', 'csv'])
+arq_cceal1 = st.sidebar.file_uploader("Cliq CCEAL Firme_101457", type=['xlsx', 'csv'])
 
-st.sidebar.subheader("Bases Cliq CCEE - Bismut (101475)")
-arq_cceal2 = st.sidebar.file_uploader("Cliq CCEAL Firme 101475",  type=['xlsx', 'csv'])
+st.sidebar.subheader("Bases Cliq CCEE - Bismut")
+arq_cceal2 = st.sidebar.file_uploader("Cliq CCEAL Firme_101475 (Bismut)", type=['xlsx', 'csv'])
 
-st.title(f"Book de Energia - {mes_nome_sel}/{ano_sel}")
-
-# 4. CARREGAMENTO DOS CSVs CLIQ
+# 4. CARREGAMENTO E CONSOLIDAÇÃO DAS BASES CLIQ
+# Matrix / CBR / LEE
 dfs_matrix = []
 for arq in [arq_ccear, arq_cbr, arq_cceal1]:
-    df = carregar_csv_cliq(arq)
-    if df is not None:
-        dfs_matrix.append(df)
+    df_temp = carregar_csv_cliq(arq)
+    if df_temp is not None: dfs_matrix.append(df_temp)
 db_matrix = pd.concat(dfs_matrix) if dfs_matrix else None
 
-df_b = carregar_csv_cliq(arq_cceal2)
-db_bismut = df_b if df_b is not None else None
+# Bismut
+db_bismut = carregar_csv_cliq(arq_cceal2)
 
+# Dicionários Auxiliares
 dict_mes_anterior = {}
 if arquivo_anterior:
     try:
-        df_apoio = pd.read_excel(arquivo_anterior, header=0, dtype=str)
-        primeira_celula = str(df_apoio.iloc[0, 0]).strip().upper()
-        if primeira_celula in ["BOLETA", "ID", "CHAVE"]:
-            df_apoio = df_apoio.iloc[1:].reset_index(drop=True)
-        df_apoio.iloc[:, 0] = df_apoio.iloc[:, 0].apply(tratar_chave)
-        df_apoio.iloc[:, 1] = df_apoio.iloc[:, 1].apply(tratar_chave)
-        dict_mes_anterior = pd.Series(
-            df_apoio.iloc[:, 1].values,
-            index=df_apoio.iloc[:, 0].values
-        ).to_dict()
-    except Exception as e:
-        st.warning(f"Erro ao carregar mes anterior: {e}")
+        df_ant = pd.read_excel(arquivo_anterior, dtype=str)
+        dict_mes_anterior = pd.Series(df_ant.iloc[:, 1].values, index=df_ant.iloc[:, 0].apply(tratar_chave).values).to_dict()
+    except: pass
 
 dict_vendedor, dict_comprador = {}, {}
 if arquivo_pessoas:
@@ -129,108 +130,54 @@ if arquivo_pessoas:
         df_pers['chave'] = df_pers.iloc[:, 3].apply(tratar_chave)
         dict_comprador = pd.Series(df_pers.iloc[:, 1].values, index=df_pers['chave'].values).to_dict()
         dict_vendedor  = pd.Series(df_pers.iloc[:, 2].values, index=df_pers['chave'].values).to_dict()
-    except Exception:
-        pass
+    except: pass
 
-# 5. PROCESSAMENTO DA BASE PRINCIPAL
-BISMUT_SIGLA = "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A."
+# 5. PROCESSAMENTO PRINCIPAL
+st.title(f"Book de Energia - {mes_nome_sel}/{ano_sel}")
 
 if arquivo_subido:
     try:
         df_bruto = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
+        
+        # Mapeamento Dinâmico de Colunas (ajuste os índices se a planilha mudar)
+        # Note: Usei os nomes que você forneceu no código anterior
+        col_boleta = df_bruto.columns[0]
+        df_bruto[df_bruto.columns[14]] = pd.to_numeric(df_bruto[df_bruto.columns[14]], errors='coerce')
+        df_filtrada = df_bruto[df_bruto[df_bruto.columns[14]] == mes_num_sel].copy()
 
-        col_boleta         = df_bruto.columns[0]
-        col_operacao       = df_bruto.columns[1]
-        col_cnpj           = df_bruto.columns[4]
-        col_contraparte    = df_bruto.columns[6]
-        col_parte_bk       = df_bruto.columns[62]
-        col_mes_suprimento = df_bruto.columns[14]
-        col_horas_mes      = df_bruto.columns[15]
-        col_volume_mwh     = df_bruto.columns[20]
-        col_mod_min        = df_bruto.columns[28]
-        col_mod_max        = df_bruto.columns[29]
-        col_cliq_para      = df_bruto.columns[60]
-        col_cliq_alt       = df_bruto.columns[14]
-        col_mod_wbc        = df_bruto.columns[63]
+        if not df_filtrada.empty:
+            df_conferencia = pd.DataFrame()
+            df_conferencia['Boleta'] = df_filtrada[col_boleta].apply(tratar_chave)
+            
+            # Campos Básicos
+            df_conferencia['Operacao'] = df_filtrada[df_bruto.columns[1]].astype(str)
+            df_conferencia['Parte'] = df_filtrada[df_bruto.columns[62]].astype(str).str.strip()
+            df_conferencia['Contraparte'] = df_filtrada[df_bruto.columns[6]]
+            df_conferencia['CNPJ Contraparte'] = df_filtrada[df_bruto.columns[4]].apply(formatar_cnpj)
+            
+            # Chave Concatenada (T + U + L do Excel)
+            # Substitua pelos nomes ou índices reais das colunas T, U e L
+            col_T = df_bruto.columns[19] # Exemplo
+            col_U = df_bruto.columns[20] # Exemplo
+            col_L = df_bruto.columns[11] # Exemplo
+            df_conferencia['Chave_Concatenada'] = (
+                df_filtrada[col_T].astype(str) + 
+                df_filtrada[col_U].astype(str) + 
+                df_filtrada[col_L].astype(str)
+            )
 
-        df_bruto[col_mes_suprimento] = pd.to_numeric(df_bruto[col_mes_suprimento], errors='coerce')
-        df_filtrada = df_bruto[df_bruto[col_mes_suprimento] == mes_num_sel].copy()
+            # IDs de busca para o Cliq
+            df_conferencia['CliqCCEE Paradigma'] = df_filtrada[df_bruto.columns[60]].apply(tratar_chave)
+            df_conferencia['_cliq_alt'] = df_filtrada[df_bruto.columns[14]].apply(tratar_chave)
 
-        if df_filtrada.empty:
-            st.warning(f"Nenhuma operacao encontrada para o mes {mes_num_sel}.")
-        else:
-            df_conferencia = df_filtrada[[col_boleta]].drop_duplicates()
-            df_conferencia['Boleta_Key'] = df_conferencia[col_boleta].apply(tratar_chave)
-            df_lookup = df_filtrada.drop_duplicates(subset=[col_boleta]).set_index(col_boleta)
+            # Aplicação da Lógica Complexa (Substitui a fórmula da Coluna V)
+            df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(
+                lambda r: buscar_cliq_complexo(r, db_matrix, db_bismut), axis=1
+            )
 
-            df_conferencia['Operacao']         = df_conferencia[col_boleta].map(df_lookup[col_operacao]).astype(str)
-            df_conferencia['Parte']            = df_conferencia[col_boleta].map(df_lookup[col_parte_bk]).astype(str).str.strip()
-            df_conferencia['Contraparte']      = df_conferencia[col_boleta].map(df_lookup[col_contraparte])
-            df_conferencia['CNPJ Contraparte'] = df_conferencia[col_boleta].map(df_lookup[col_cnpj]).apply(formatar_cnpj)
-
-            v_mwh = df_conferencia[col_boleta].map(df_lookup[col_volume_mwh])
-            h_mes = df_conferencia[col_boleta].map(df_lookup[col_horas_mes])
-            df_conferencia['Volume MWm'] = (v_mwh / h_mes).fillna(0).round(4)
-
-            df_conferencia['CliqCCEE Paradigma'] = df_conferencia[col_boleta].map(df_lookup[col_cliq_para]).apply(tratar_chave)
-            df_conferencia['_cliq_alt']          = df_conferencia[col_boleta].map(df_lookup[col_cliq_alt]).apply(tratar_chave)
-
-            df_conferencia['Modulacao WBC']    = df_conferencia[col_boleta].map(df_lookup[col_mod_wbc]).apply(limpar_modulacao)
-            df_conferencia['Modulacao Minima'] = df_conferencia[col_boleta].map(df_lookup[col_mod_min])
-            df_conferencia['Modulacao Maxima'] = df_conferencia[col_boleta].map(df_lookup[col_mod_max])
-
-            df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(dict_mes_anterior).fillna("-")
-            df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(dict_comprador).fillna("N/A")
-            df_conferencia['Vendedor']  = df_conferencia['Boleta_Key'].map(dict_vendedor).fillna("N/A")
-
-            def resolver_cliq(row):
-                parte = str(row['Parte']).strip().upper()
-                cod_principal = row['CliqCCEE Paradigma']
-                cod_alt = row['_cliq_alt']
-                db = db_bismut if parte == BISMUT_SIGLA.upper() else db_matrix
-                return buscar_cliq_ccee(cod_principal, cod_alt, parte, db)
-
-            # Alterado nome da coluna aqui
-            df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
-
-            lista_op = sorted([str(x) for x in df_conferencia['Operacao'].unique() if pd.notna(x)])
-            lista_pa = sorted([str(x) for x in df_conferencia['Parte'].unique() if pd.notna(x)])
-
-            st.write("### Filtros Rapidos")
-            f1, f2, f3 = st.columns(3)
-            with f1:
-                op_f = st.selectbox("Operacao", ["Todos"] + lista_op)
-            with f2:
-                parte_f = st.selectbox("Parte", ["Todos"] + lista_pa)
-            with f3:
-                rem_zero = st.checkbox("Ocultar Zerados", value=False)
-
-            df_final = df_conferencia.copy()
-            if op_f != "Todos":
-                df_final = df_final[df_final['Operacao'] == op_f]
-            if parte_f != "Todos":
-                df_final = df_final[df_final['Parte'] == parte_f]
-            if rem_zero:
-                df_final = df_final[df_final['Volume MWm'] != 0]
-
-            # Reordenado para colocar 'Contrato CliqCCEE' por último
-            ordem = [
-                col_boleta,
-                'Operacao',
-                'Parte',
-                'Contraparte',
-                'CNPJ Contraparte',
-                'Volume MWm',
-                'CliqCCEE Paradigma',
-                'Modulacao WBC',
-                'Modulacao Minima',
-                'Modulacao Maxima',
-                'Contrato CliqCCEE mes anterior',
-                'Comprador',
-                'Vendedor',
-                'Contrato CliqCCEE',  # Agora por último e com nome novo
-            ]
-            st.dataframe(df_final[ordem], hide_index=True, use_container_width=True)
-
+            # Exibição
+            st.write("### Resultado da Conferência")
+            st.dataframe(df_conferencia.drop(columns=['Chave_Concatenada', '_cliq_alt']), use_container_width=True)
+            
     except Exception as e:
-        st.error(f"Erro ao processar base principal: {e}")
+        st.error(f"Erro no processamento: {e}")
