@@ -149,6 +149,7 @@ if arquivo_subido:
         col_boleta         = df_bruto.columns[0]
         col_operacao       = df_bruto.columns[1]
         col_cnpj           = df_bruto.columns[4]
+        col_energia        = df_bruto.columns[5]
         col_contraparte    = df_bruto.columns[6]
         col_parte_bk       = df_bruto.columns[62]
         col_mes_suprimento = df_bruto.columns[14]
@@ -172,6 +173,8 @@ if arquivo_subido:
 
             df_conferencia['Operacao']         = df_conferencia[col_boleta].map(df_lookup[col_operacao]).astype(str)
             df_conferencia['Parte']            = df_conferencia[col_boleta].map(df_lookup[col_parte_bk]).astype(str).str.strip()
+            df_conferencia['Tipo Energia']     = df_conferencia[col_boleta].map(df_lookup[col_energia]).astype(str).str.strip()
+            df_conferencia.loc[df_conferencia['Parte'].str.upper().str.contains('UFV JACARANDA 1', na=False), 'Tipo Energia'] = 'Incentivada-I5'
             df_conferencia['Contraparte']      = df_conferencia[col_boleta].map(df_lookup[col_contraparte])
             df_conferencia['CNPJ Contraparte'] = df_conferencia[col_boleta].map(df_lookup[col_cnpj]).apply(formatar_cnpj)
 
@@ -199,6 +202,9 @@ if arquivo_subido:
 
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
 
+            df_conferencia['_boleta_num'] = pd.to_numeric(df_conferencia['Boleta_Key'], errors='coerce')
+            df_conferencia = df_conferencia.sort_values('_boleta_num').drop(columns=['_boleta_num'])
+
             lista_op = sorted([str(x) for x in df_conferencia['Operacao'].unique() if pd.notna(x)])
             lista_pa = sorted([str(x) for x in df_conferencia['Parte'].unique() if pd.notna(x)])
 
@@ -222,6 +228,7 @@ if arquivo_subido:
             ordem = [
                 col_boleta,
                 'Operacao',
+                'Tipo Energia',
                 'Parte',
                 'Contraparte',
                 'CNPJ Contraparte',
