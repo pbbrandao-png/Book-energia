@@ -1,129 +1,156 @@
 import streamlit as st
 import pandas as pd
 import re
-from datetime import datetime
 
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(layout="wide", page_title="Book de Energia")
 
 # 2. FUNÇÕES DE APOIO
 def formatar_cnpj(cnpj):
-    if pd.isna(cnpj) or cnpj == "": return ""
-    apenas_numeros = re.sub(r'\D', '', str(cnpj)).zfill(14)
-    return f"{apenas_numeros[:2]}.{apenas_numeros[2:5]}.{apenas_numeros[5:8]}/{apenas_numeros[8:12]}-{apenas_numeros[12:]}"
-
-def tratar_chave(valor):
-    if pd.isna(valor): return ""
-    s = str(valor).strip()
-    if s.endswith('.0'): s = s[:-2]
-    return s
+    if pd.isna(cnpj) or cnpj == "":
+        return ""
+    apenas_numeros = re.sub(r'\D', '', str(cnpj))
+    apenas_numeros = apenas_numeros.zfill(14)
+    return f"{apenas_numeros[:2]}.{apenas_numeros[2:5]}.{apenas_numeros[5:8]}/{apenas_numeros[8:12]}-{apenas_numeros[12:]}"
 
 def limpar_modulacao(texto):
-    if pd.isna(texto): return ""
-    t = str(texto).upper()
-    if "FLAT" in t: return "Flat"
-    if "CARGA" in t: return "Carga"
-    if "DECLARADO" in t or "INFORMADO" in t: return "Declarado"
-    if "GERA" in t: return "Geração"
-    return texto
+    if pd.isna(texto): return ""
+    t = str(texto).upper()
+    if "FLAT" in t: return "Flat"
+    if "CARGA" in t: return "Carga"
+    if "DECLARADO" in t or "INFORMADO" in t: return "Declarado"
+    if "GERA" in t: return "Geração"
+    return texto
 
 # 3. INTERFACE LATERAL
 st.sidebar.title("Configurações")
+st.sidebar.subheader("1. Base do Mês Atual")
+arquivo_subido = st.sidebar.file_uploader("Upload da Base Bruta (Excel)", type=['xlsx', 'xlsm'], key="atual")
 
-# --- NOVO: SELETOR DE MÊS E ANO (Vigência) ---
-st.sidebar.subheader("📅 Período de Referência")
-meses = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]
-anos = [str(a) for a in range(2024, 2031)]
+st.sidebar.subheader("2. Base de Apoio")
+arquivo_anterior = st.sidebar.file_uploader("Upload Mês Anterior (CliqCCEE)", type=['xlsx'], key="anterior")
 
-col_mes, col_ano = st.sidebar.columns(2)
-mes_sel = col_mes.selectbox("Mês", meses, index=datetime.now().month - 1)
-ano_sel = col_ano.selectbox("Ano", anos, index=0)
+st.title("📑 Book de Energia")
 
-vigencia_referencia = f"{mes_sel}/{ano_sel}" # Formato MM/AAAA para o match
+# 4. PROCESSAMENTO DA BASE ANTERIOR
+dict_mes_anterior = {}
+if arquivo_anterior:
+    try:
+        df_apoio = pd.read_excel(arquivo_anterior)
+        dict_mes_anterior = pd.Series(df_apoio.iloc[:, 1].values, index=df_apoio.iloc[:, 0].values).to_dict()
+        st.sidebar.success("✅ Base Mês Anterior carregada!")
+    except Exception as e:
+        st.sidebar.error(f"Erro na base anterior: {e}")
 
-# Uploads
-st.sidebar.markdown("---")
-arquivo_subido = st.sidebar.file_uploader("1. Base do Mês Atual", type=['xlsx', 'xlsm'])
-arquivo_anterior = st.sidebar.file_uploader("2. Mês Anterior.xlsx", type=['xlsx'])
-arquivo_pessoas = st.sidebar.file_uploader("3. RelPers_858 (4).xlsx", type=['xlsx'])
-
-st.sidebar.subheader("Bases Cliq CCEE")
-arq_matrix = st.sidebar.file_uploader("Cliq Matrix", type=['xlsx'])
-arq_bismut = st.sidebar.file_uploader("Cliq Bismut", type=['xlsx'])
-arq_cbr = st.sidebar.file_uploader("Cliq CBR", type=['xlsx'])
-arq_lee = st.sidebar.file_uploader("Cliq LEE", type=['xlsx'])
-
-st.title(f"📑 Book de Energia - {vigencia_referencia}")
-
-# 4. CARREGAMENTO DAS BASES CCEE
-def carregar_cliq(arquivo):
-    if arquivo:
-        try:
-            df = pd.read_excel(arquivo)
-            df['chave_boleta'] = df.iloc[:, 3].apply(tratar_chave)
-            return df.set_index('chave_boleta')
-        except: return None
-    return None
-
-db_matrix = carregar_cliq(arq_matrix)
-db_bismut = carregar_cliq(arq_bismut)
-db_cbr = carregar_cliq(arq_cbr)
-db_lee = carregar_cliq(arq_lee)
-
-# 5. PROCESSAMENTO PRINCIPAL
+# 5. PROCESSAMENTO DA BASE PRINCIPAL
 if arquivo_subido:
-    try:
-        df_bruto = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
-        
-        # Mapeamento de colunas
-        col_boleta = df_bruto.columns[0]
-        col_vigencia_original = df_bruto.columns[11] # Col L
-        
-        # FILTRO INICIAL: Só processa o que for do Mês/Ano selecionado
-        # Nota: Ajuste a lógica de conversão da Col L se ela não for string/data padrão
-        df_bruto['vigencia_aux'] = df_bruto[col_vigencia_original].astype(str).str.strip()
-        
-        # Filtramos a base bruta antes de tudo
-        df_filtrada_periodo = df_bruto[df_bruto['vigencia_aux'].str.contains(vigencia_referencia, na=False)].copy()
+    try:
+        df_bruto = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
+        
+        # Mapeamento de Colunas
+        col_boleta = df_bruto.columns[0]
+        col_operacao = df_bruto.columns[1]
+        col_cnpj = df_bruto.columns[4]
+        col_energia = df_bruto.columns[5]
+        col_contraparte = df_bruto.columns[6]
+        col_horas_mes = df_bruto.columns[15]
+        col_volume_mwh = df_bruto.columns[20]
+        col_mod_min = df_bruto.columns[28]
+        col_mod_max = df_bruto.columns[29]
+        col_cliq_para = df_bruto.columns[60]
+        col_parte = df_bruto.columns[62]
+        col_mod_wbc = df_bruto.columns[63]
 
-        if df_filtrada_periodo.empty:
-            st.warning(f"Nenhuma operação encontrada para {vigencia_referencia} na base subida.")
-        else:
-            df_conferencia = df_filtrada_periodo[[col_boleta]].drop_duplicates()
-            df_conferencia['Boleta_Key'] = df_conferencia[col_boleta].apply(tratar_chave)
-            
-            df_lookup = df_filtrada_periodo.drop_duplicates(subset=[col_boleta]).set_index(col_boleta)
+        df_conferencia = df_bruto[[col_boleta]].drop_duplicates().sort_values(by=col_boleta)
+        df_conferencia.columns = ['Boleta']
 
-            # Lógica de Busca CCEE
-            def buscar_cliq_ccee(row):
-                boleta = row['Boleta_Key']
-                orig = df_lookup.loc[row[col_boleta]]
-                
-                # Monta validação T + U + L (L agora vem do seletor fixo)
-                t = str(orig.iloc[19]).strip() 
-                u = str(orig.iloc[20]).strip()
-                l = vigencia_referencia 
-                validacao_local = f"{t}{u}{l}"
-                
-                parte = str(orig.iloc[7]).upper()
-                bases = [db_bismut] if "BISMUT" in parte else [db_matrix, db_cbr, db_lee]
-                
-                for db in bases:
-                    if db is not None and boleta in db.index:
-                        info = db.loc[boleta]
-                        if isinstance(info, pd.DataFrame): info = info.iloc[0]
-                        if str(info.iloc[2]).strip() == validacao_local and str(info.iloc[10]) != "Rascunho":
-                            return boleta
-                return "Verificar"
+        def buscar(coluna_alvo):
+            return df_bruto.drop_duplicates(subset=[col_boleta]).set_index(col_boleta)[coluna_alvo]
 
-            df_conferencia['Contrato Cliq CCEE'] = df_conferencia.apply(buscar_cliq_ccee, axis=1)
-            
-            # (Adicione aqui as outras colunas como Operação, Tipo de Energia, etc., mapeando da df_lookup)
-            df_conferencia['Operação'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[1]])
+        # Preenchimento de dados
+        df_conferencia['Operação'] = df_conferencia['Boleta'].map(buscar(col_operacao)).astype(str)
+        
+        trad_en = {"Incentivada-50%": "Incentivada-I5", "Incentivada-CQ50%": "Incentivada-CQ5", "Incentivada-100%": "Incentivada-I1", "Incentivada-0%": "Incentivada-I0", "Convencional": "Convencional"}
+        df_conferencia['Tipo de Energia'] = df_conferencia['Boleta'].map(buscar(col_energia)).replace(trad_en)
+        df_conferencia['Parte'] = df_conferencia['Boleta'].map(buscar(col_parte)).astype(str)
+        df_conferencia['Contraparte'] = df_conferencia['Boleta'].map(buscar(col_contraparte))
+        df_conferencia['CNPJ Contraparte'] = df_conferencia['Boleta'].map(buscar(col_cnpj)).apply(formatar_cnpj)
+        
+        # Volume calculado e arredondado
+        v_mwh = df_conferencia['Boleta'].map(buscar(col_volume_mwh))
+        h_mes = df_conferencia['Boleta'].map(buscar(col_horas_mes))
+        df_conferencia['Volume MWm'] = (v_mwh / h_mes).fillna(0).round(4)
+        
+        df_conferencia['CliqCCEE Paradigma'] = df_conferencia['Boleta'].map(buscar(col_cliq_para))
+        df_conferencia['Modulação WBC'] = df_conferencia['Boleta'].map(buscar(col_mod_wbc)).apply(limpar_modulacao).astype(str)
+        df_conferencia['Modulação Mínima'] = df_conferencia['Boleta'].map(buscar(col_mod_min))
+        df_conferencia['Modulação Máxima'] = df_conferencia['Boleta'].map(buscar(col_mod_max))
+        df_conferencia['Contrato CliqCCEE mês anterior'] = df_conferencia['Boleta'].map(dict_mes_anterior).fillna("-")
 
-            # Exibição
-            colunas_exibicao = [col_boleta, 'Operação', 'Contrato Cliq CCEE'] # Adicione as demais aqui
-            st.dataframe(df_conferencia[colunas_exibicao], hide_index=True, use_container_width=True)
+        # --- 6. ÁREA DE FILTROS ---
+        st.write("### Filtros da Tabela")
+        f1, f2, f3, f4 = st.columns(4)
 
-    except Exception as e:
-        st.error(f"Erro: {e}")
+        with f1:
+            op_list = ["Todos"] + sorted(df_conferencia['Operação'].unique().tolist())
+            op_selected = st.selectbox("Operação", op_list)
+
+        with f2:
+            parte_list = ["Todos"] + sorted(df_conferencia['Parte'].unique().tolist())
+            parte_selected = st.selectbox("Parte", parte_list)
+
+        with f3:
+            vol_list = ["Todos"] + sorted(df_conferencia['Volume MWm'].unique().astype(str).tolist(), key=float)
+            vol_selected = st.selectbox("Volume MWm Específico", vol_list)
+
+        with f4:
+            mod_list = ["Todos"] + sorted(df_conferencia['Modulação WBC'].unique().tolist())
+            mod_selected = st.selectbox("Modulação", mod_list)
+
+        # CHECKBOX PARA REMOVER ZERADOS (Novo!)
+        remover_zerados = st.checkbox("Ocultar Volumes Zerados (0.0000)", value=False)
+
+        # --- APLICANDO OS FILTROS ---
+        df_filtrado = df_conferencia.copy()
+        
+        if remover_zerados:
+            df_filtrado = df_filtrado[df_filtrado['Volume MWm'] != 0]
+        
+        if op_selected != "Todos":
+            df_filtrado = df_filtrado[df_filtrado['Operação'] == op_selected]
+        
+        if parte_selected != "Todos":
+            df_filtrado = df_filtrado[df_filtrado['Parte'] == parte_selected]
+            
+        if vol_selected != "Todos":
+            df_filtrado = df_filtrado[df_filtrado['Volume MWm'] == float(vol_selected)]
+            
+        if mod_selected != "Todos":
+            df_filtrado = df_filtrado[df_filtrado['Modulação WBC'] == mod_selected]
+
+        # --- 7. EXIBIÇÃO ---
+        st.markdown("---")
+        colunas_exibicao = [
+            'Boleta', 'Operação', 'Tipo de Energia', 'Parte', 
+            'Contraparte', 'CNPJ Contraparte', 'Volume MWm', 
+            'CliqCCEE Paradigma', 'Modulação WBC', 'Modulação Mínima', 
+            'Modulação Máxima', 'Contrato CliqCCEE mês anterior'
+        ]
+
+        st.dataframe(
+            df_filtrado[colunas_exibicao], 
+            hide_index=True, 
+            column_config={
+                'Volume MWm': st.column_config.NumberColumn("Volume MWm", format="%.4f"),
+                'Modulação Mínima': st.column_config.NumberColumn("Mod. Mínima", format="%.2f"),
+                'Modulação Máxima': st.column_config.NumberColumn("Mod. Máxima", format="%.2f")
+            },
+            use_container_width=True
+        )
+        
+        st.caption(f"Mostrando {len(df_filtrado)} de {len(df_conferencia)} operações.")
+        
+    except Exception as e:
+        st.error(f"Erro ao processar: {e}")
+else:
+    st.info("Aguardando upload dos arquivos.")
