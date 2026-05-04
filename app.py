@@ -13,14 +13,12 @@ def carregar_csv_cliq_cached(arquivo_lista):
     for arquivo in arquivo_lista:
         if arquivo is not None:
             try:
-                # Tenta ler garantindo que tudo venha como string e removendo espaços
                 if arquivo.name.endswith('.csv'):
                     df = pd.read_csv(arquivo, sep='\t', encoding='latin-1', skiprows=1, dtype=str)
                 else:
                     df = pd.read_excel(arquivo, dtype=str)
                 
                 if 'CODIGO_CONTRATO' in df.columns:
-                    # Limpeza agressiva: remove .0, espaços e garante que é string
                     df['CODIGO_CONTRATO'] = df['CODIGO_CONTRATO'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                     df = df.set_index('CODIGO_CONTRATO')
                     dfs.append(df)
@@ -35,17 +33,7 @@ def formatar_cnpj(cnpj):
 
 def tratar_chave(valor):
     if pd.isna(valor) or str(valor).strip().lower() in ['none', 'nan', '', '-']: return ""
-    s = str(valor).strip()
-    return re.sub(r'\.0$', '', s) # Remove o .0 do final se houver
-
-def limpar_modulacao(texto):
-    if pd.isna(texto): return ""
-    t = str(texto).upper()
-    if "FLAT" in t: return "Flat"
-    if "CARGA" in t: return "Carga"
-    if "DECLARADO" in t or "INFORMADO" in t: return "Declarado"
-    if "GERA" in t: return "Geracao"
-    return texto
+    return re.sub(r'\.0$', '', str(valor).strip())
 
 # 3. INTERFACE LATERAL
 st.sidebar.title("Configurações")
@@ -67,65 +55,62 @@ arq_cceal2 = st.sidebar.file_uploader("Cliq CCEAL Firme 101475 (Bismut)", type=[
 
 processar = st.sidebar.button("🚀 Processar Dados", use_container_width=True)
 
-# 4. EXECUÇÃO
+# 4. LÓGICA DE PERSISTÊNCIA (Session State)
+if 'df_resultado' not in st.session_state:
+    st.session_state.df_resultado = None
+
+# 5. EXECUÇÃO
 st.title(f"Book de Energia - {mes_nome_sel}/{ano_sel}")
 
 if processar and arquivo_subido:
-    with st.spinner('Processando...'):
+    with st.spinner(f'Processando mais de 7.000 contratos para {mes_nome_sel}...'):
         try:
             db_matrix = carregar_csv_cliq_cached([arq_ccear, arq_cbr, arq_cceal1])
             db_bismut = carregar_csv_cliq_cached([arq_cceal2])
 
+            # Carrega a aba correta
             df_bruto = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
             
-            # Mapeamento por índice
-            indices = {
-                'boleta': 0, 'operacao': 1, 'cnpj': 4, 'contraparte': 6,
-                'mes': 14, 'horas': 15, 'vol': 20, 'mod_min': 28,
-                'mod_max': 29, 'cliq_p': 60, 'parte': 62, 'mod_wbc': 63
-            }
+            # Mapeamento por posição (garante que pegue todas as linhas)
+            indices = {'boleta': 0, 'operacao': 1, 'cnpj': 4, 'contraparte': 6, 'mes': 14, 
+                       'horas': 15, 'vol': 20, 'mod_min': 28, 'mod_max': 29, 'cliq_p': 60, 
+                       'parte': 62, 'mod_wbc': 63}
 
             df_bruto.iloc[:, indices['mes']] = pd.to_numeric(df_bruto.iloc[:, indices['mes']], errors='coerce')
             df_filtrada = df_bruto[df_bruto.iloc[:, indices['mes']] == mes_num_sel].copy()
 
             if df_filtrada.empty:
-                st.warning(f"Sem dados para o mês {mes_num_sel}.")
+                st.warning(f"Nenhuma linha encontrada para o mês {mes_num_sel}.")
             else:
+                # Apoio Pessoas e Mês Anterior
                 dict_mes_ant, dict_comp, dict_vend = {}, {}, {}
-                
                 if arquivo_anterior:
                     df_ant = pd.read_excel(arquivo_anterior, dtype=str)
                     dict_mes_ant = pd.Series(df_ant.iloc[:, 1].values, index=df_ant.iloc[:, 0].apply(tratar_chave).values).to_dict()
-
                 if arquivo_pessoas:
                     df_pers = pd.read_excel(arquivo_pessoas)
                     df_pers['chave'] = df_pers.iloc[:, 3].apply(tratar_chave)
                     dict_comp = pd.Series(df_pers.iloc[:, 1].values, index=df_pers['chave'].values).to_dict()
                     dict_vend = pd.Series(df_pers.iloc[:, 2].values, index=df_pers['chave'].values).to_dict()
 
-                # Construção do DataFrame
+                # Construção do DataFrame Final
                 df_res = pd.DataFrame()
                 df_res['Boleta'] = df_filtrada.iloc[:, indices['boleta']].apply(tratar_chave)
                 df_res['Operacao'] = df_filtrada.iloc[:, indices['operacao']].astype(str)
                 df_res['Parte'] = df_filtrada.iloc[:, indices['parte']].astype(str).str.strip()
                 df_res['Contraparte'] = df_filtrada.iloc[:, indices['contraparte']]
-                df_res['CNPJ Contraparte'] = df_filtrada.iloc[:, indices['cnpj']].apply(formatar_cnpj)
-                df_res['Volume MWm'] = (df_filtrada.iloc[:, indices['vol']] / df_filtrada.iloc[:, indices['horas']]).fillna(0).round(4)
-                df_res['CliqCCEE Paradigma'] = df_filtrada.iloc[:, indices['cliq_p']].apply(tratar_chave)
-                df_res['Modulacao WBC'] = df_filtrada.iloc[:, indices['mod_wbc']].apply(limpar_modulacao)
-                df_res['Modulacao Minima'] = df_filtrada.iloc[:, indices['mod_min']]
-                df_res['Modulacao Maxima'] = df_filtrada.iloc[:, indices['mod_max']]
-                df_res['Contrato CliqCCEE mes anterior'] = df_res['Boleta'].map(dict_mes_ant).fillna("-")
+                df_res['CNPJ'] = df_filtrada.iloc[:, indices['cnpj']].apply(formatar_cnpj)
+                df_res['Vol MWm'] = (df_filtrada.iloc[:, indices['vol']] / df_filtrada.iloc[:, indices['horas']]).fillna(0).round(4)
+                df_res['Paradigma'] = df_filtrada.iloc[:, indices['cliq_p']].apply(tratar_chave)
+                df_res['Mês Ant.'] = df_res['Boleta'].map(dict_mes_ant).fillna("-")
                 df_res['Comprador'] = df_res['Boleta'].map(dict_comp).fillna("N/A")
                 df_res['Vendedor'] = df_res['Boleta'].map(dict_vend).fillna("N/A")
 
-                # Validação com busca aprimorada
+                # Validação CCEE
                 def validar_cliq(row):
                     db = db_bismut if 'BISMUT' in str(row['Parte']).upper() else db_matrix
                     if db is None: return "Verificar"
-                    
-                    # Tenta Paradigma, depois Mês Anterior
-                    for cod in [row['CliqCCEE Paradigma'], row['Contrato CliqCCEE mes anterior']]:
+                    for cod in [row['Paradigma'], row['Mês Ant.']]:
                         c = tratar_chave(cod)
                         if c and c in db.index:
                             status = str(db.loc[c, 'SITUACAO_CONTRATO']).upper() if 'SITUACAO_CONTRATO' in db.columns else ""
@@ -133,24 +118,39 @@ if processar and arquivo_subido:
                     return "Verificar"
 
                 df_res['Contrato CliqCCEE'] = df_res.apply(validar_cliq, axis=1)
-
-                # Ordenação decrescente
+                
+                # Ordenação Decrescente
                 df_res['Boleta_Num'] = pd.to_numeric(df_res['Boleta'], errors='coerce')
                 df_res = df_res.sort_values(by='Boleta_Num', ascending=False).drop(columns=['Boleta_Num'])
 
-                # Exibição
-                pendentes = len(df_res[df_res['Contrato CliqCCEE'] == "Verificar"])
-                st.metric("Contratos Pendentes", pendentes, delta=f"{pendentes} verificar", delta_color="inverse")
-
-                st.dataframe(
-                    df_res.style.map(lambda x: 'color: red; font-weight: bold' if x == "Verificar" else '', subset=['Contrato CliqCCEE']), 
-                    hide_index=True, use_container_width=True
-                )
-
-                # Download usando o motor padrão (evita o erro do xlsxwriter)
-                buffer = io.BytesIO()
-                df_res.to_excel(buffer, index=False)
-                st.download_button("📥 Baixar Excel", buffer.getvalue(), f"Book_{mes_nome_sel}.xlsx")
+                # Salva no estado da sessão para não perder ao baixar
+                st.session_state.df_resultado = df_res
 
         except Exception as e:
             st.error(f"Erro no processamento: {e}")
+
+# 6. EXIBIÇÃO DOS DADOS SALVOS
+if st.session_state.df_resultado is not None:
+    df_mostrar = st.session_state.df_resultado
+    pendentes = len(df_mostrar[df_mostrar['Contrato CliqCCEE'] == "Verificar"])
+    
+    col1, col2 = st.columns([4, 1])
+    col1.metric("Total de Contratos Processados", len(df_mostrar))
+    col2.metric("Pendentes", pendentes, delta_color="inverse")
+
+    st.dataframe(
+        df_mostrar.style.map(lambda x: 'color: red; font-weight: bold' if x == "Verificar" else '', subset=['Contrato CliqCCEE']), 
+        hide_index=True, use_container_width=True
+    )
+
+    # Download direto da memória (Session State)
+    buffer = io.BytesIO()
+    df_mostrar.to_excel(buffer, index=False)
+    st.download_button(
+        label="📥 Baixar Book Processado",
+        data=buffer.getvalue(),
+        file_name=f"Book_Energia_{mes_nome_sel}_{ano_sel}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+else:
+    st.info("Aguardando processamento. Insira os arquivos e clique no botão lateral.")
