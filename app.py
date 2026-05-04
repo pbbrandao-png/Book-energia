@@ -123,7 +123,10 @@ if arquivo_subido:
                        "Incentivada-100%": "Incentivada-I1", "Incentivada-0%": "Incentivada-I0", 
                        "Convencional": "Convencional"}
             df_conferencia['Tipo de Energia'] = df_conferencia[col_boleta].map(df_lookup[col_energia]).replace(trad_en)
-            df_conferencia['Parte'] = df_conferencia[col_boleta].map(df_lookup[col_parte]).astype(str)
+            
+            # CORREÇÃO: Forçando 'Parte' a ser sempre string para evitar números
+            df_conferencia['Parte'] = df_conferencia[col_boleta].map(df_lookup[col_parte]).astype(str).str.strip()
+            
             df_conferencia['Contraparte'] = df_conferencia[col_boleta].map(df_lookup[col_contraparte])
             df_conferencia['CNPJ Contraparte'] = df_conferencia[col_boleta].map(df_lookup[col_cnpj]).apply(formatar_cnpj)
             
@@ -142,14 +145,13 @@ if arquivo_subido:
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(dict_comprador).fillna("N/A")
             df_conferencia['Vendedor'] = df_conferencia['Boleta_Key'].map(dict_vendedor).fillna("N/A")
 
-            # Lógica CCEE com proteção de tipo
+            # Lógica CCEE
             def buscar_cliq_ccee(row):
                 boleta = row['Boleta_Key']
                 orig = df_lookup.loc[row[col_boleta]]
-                # Concatenação T+U+L (Col 19, 20 e Vigência Seletor)
                 validacao_local = f"{str(orig.iloc[19])}{str(orig.iloc[20])}{vigencia_match_ccee}"
-                parte = str(orig.iloc[7]).upper()
-                bases = [db_bismut] if "BISMUT" in parte else [db_matrix, db_cbr, db_lee]
+                parte_str = str(orig.iloc[7]).upper()
+                bases = [db_bismut] if "BISMUT" in parte_str else [db_matrix, db_cbr, db_lee]
                 
                 for db in bases:
                     if db is not None and boleta in db.index:
@@ -161,7 +163,7 @@ if arquivo_subido:
 
             df_conferencia['Contrato Cliq CCEE'] = df_conferencia.apply(buscar_cliq_ccee, axis=1)
 
-            # Filtros Rápidos (CORRIGIDO PARA EVITAR FLOAT VS STR)
+            # Filtros Rápidos
             st.write("### Filtros Rápidos")
             f1, f2, f3 = st.columns(3)
             
@@ -185,11 +187,11 @@ if arquivo_subido:
             m2.metric("Total Compra", f"{c:.4f}")
             m3.metric("Total Venda", f"{v:.4f}")
 
-            # Ordem final das colunas
+            # ORDEM FINAL CORRIGIDA: 'Contrato Cliq CCEE' por último
             ordem = [
                 col_boleta, 'Operação', 'Tipo de Energia', 'Parte', 'Contraparte', 'CNPJ Contraparte', 
                 'Volume MWm', 'CliqCCEE Paradigma', 'Modulação WBC', 'Modulação Mínima', 'Modulação Máxima', 
-                'Contrato Cliq CCEE', 'Contrato CliqCCEE mês anterior', 'Comprador', 'Vendedor'
+                'Contrato CliqCCEE mês anterior', 'Comprador', 'Vendedor', 'Contrato Cliq CCEE'
             ]
             st.dataframe(df_final[ordem], hide_index=True, use_container_width=True)
 
