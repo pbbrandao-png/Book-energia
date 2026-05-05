@@ -98,6 +98,7 @@ if fid_subido != st.session_state['fid_subido']:
         try: st.session_state['df_bruto'] = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
         except: st.session_state['df_bruto'] = None
 
+# (Mantém lógicas de arquivos anteriores e pessoas...)
 fid_anterior = get_file_id(arquivo_anterior)
 if fid_anterior != st.session_state['fid_anterior']:
     st.session_state['fid_anterior'] = fid_anterior
@@ -146,7 +147,7 @@ if df_bruto is not None:
             df_conferencia['Boleta_Key'] = df_conferencia[col_boleta].apply(tratar_chave)
             df_lookup = df_filtrada.drop_duplicates(subset=[col_boleta]).set_index(col_boleta)
 
-            # Colunas de Negócio
+            # Colunas Base
             df_conferencia['Operacao'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[1]]).astype(str)
             df_conferencia['Tipo Energia'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[5]]).astype(str).str.strip()
             df_conferencia['Parte'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[62]]).astype(str).str.strip()
@@ -162,33 +163,36 @@ if df_bruto is not None:
             h_mes = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[15]]), errors='coerce')
             df_conferencia['Volume MWm'] = (v_mwh / h_mes).fillna(0).round(6)
 
+            # Modulações e Cliq
             df_conferencia['CliqCCEE Paradigma'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[60]]).apply(tratar_chave)
             df_conferencia['Modulacao WBC'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[63]]).apply(limpar_modulacao)
+            
+            # NOVAS COLUNAS: AC (índice 28) e AD (índice 29)
+            df_conferencia['Modulacao Minima'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[28]])
+            df_conferencia['Modulacao Maxima'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[29]])
+            
             df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mes_anterior']).fillna("-")
             
-            # Lógica de Busca Cliq
             def resolver(row):
                 db = st.session_state['db_bismut'] if 'BISMUT' in str(row['Parte']).upper() else st.session_state['db_matrix']
                 return buscar_cliq_ccee(row['CliqCCEE Paradigma'], row['Contrato CliqCCEE mes anterior'], db)
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver, axis=1)
 
-            # --- SEÇÃO DE FILTROS ---
+            # --- FILTROS ---
             st.write("### Filtros")
             f1, f2, f3, f4 = st.columns([2, 2, 2, 1])
             op_f = f1.selectbox("Operação", ["Todos"] + sorted(list(df_conferencia['Operacao'].unique())))
             parte_f = f2.selectbox("Parte", ["Todos"] + sorted(list(df_conferencia['Parte'].unique())))
-            # NOVO FILTRO: Contrato CliqCCEE
             cliq_f = f3.selectbox("Contrato CliqCCEE", ["Todos"] + sorted(list(df_conferencia['Contrato CliqCCEE'].unique())))
             rem_zero = f4.toggle("Ocultar Zero", value=False)
 
-            # Aplicação da Filtragem Combinada
             df_final = df_conferencia.copy()
             if op_f != "Todos": df_final = df_final[df_final['Operacao'] == op_f]
             if parte_f != "Todos": df_final = df_final[df_final['Parte'] == parte_f]
             if cliq_f != "Todos": df_final = df_final[df_final['Contrato CliqCCEE'] == cliq_f]
             if rem_zero: df_final = df_final[df_final['Volume MWm'] != 0]
 
-            # --- MÉTRICAS REATIVAS ---
+            # --- RESUMO ---
             st.write("### Resumo")
             m1, m2, m3 = st.columns(3)
             m1.metric("Contratos", len(df_final))
@@ -196,9 +200,12 @@ if df_bruto is not None:
             m3.metric("Vendas", len(df_final[df_final['Operacao'].str.upper() == 'VENDA']))
             st.markdown("---")
 
-            # Tabela Final
-            ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 'CNPJ Contraparte', 
-                     'Submercado', 'Montante MWh', 'Volume MWm', 'CliqCCEE Paradigma', 'Modulacao WBC', 'Contrato CliqCCEE']
+            # ORDEM DAS COLUNAS (Atualizada com Mod Mínima e Máxima depois de WBC)
+            ordem = [
+                col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 'CNPJ Contraparte', 
+                'Submercado', 'Montante MWh', 'Volume MWm', 'CliqCCEE Paradigma', 
+                'Modulacao WBC', 'Modulacao Minima', 'Modulacao Maxima', 'Contrato CliqCCEE'
+            ]
             
             st.dataframe(
                 df_final[ordem].sort_values(by=col_boleta), 
