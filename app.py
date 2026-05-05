@@ -95,8 +95,7 @@ fid_subido = get_file_id(arquivo_subido)
 if fid_subido != st.session_state['fid_subido']:
     st.session_state['fid_subido'] = fid_subido
     if arquivo_subido:
-        try:
-            st.session_state['df_bruto'] = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
+        try: st.session_state['df_bruto'] = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
         except: st.session_state['df_bruto'] = None
 
 fid_anterior = get_file_id(arquivo_anterior)
@@ -136,7 +135,6 @@ if get_file_id(arq_cceal2) != st.session_state['fid_cceal2']:
 df_bruto = st.session_state['df_bruto']
 if df_bruto is not None:
     try:
-        # Mapeamento e Filtro por Mês
         df_num = df_bruto.copy()
         col_mes = df_bruto.columns[14]
         df_num[col_mes] = pd.to_numeric(df_num[col_mes], errors='coerce')
@@ -148,7 +146,7 @@ if df_bruto is not None:
             df_conferencia['Boleta_Key'] = df_conferencia[col_boleta].apply(tratar_chave)
             df_lookup = df_filtrada.drop_duplicates(subset=[col_boleta]).set_index(col_boleta)
 
-            # Construção das colunas
+            # Colunas de Negócio
             df_conferencia['Operacao'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[1]]).astype(str)
             df_conferencia['Tipo Energia'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[5]]).astype(str).str.strip()
             df_conferencia['Parte'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[62]]).astype(str).str.strip()
@@ -168,34 +166,37 @@ if df_bruto is not None:
             df_conferencia['Modulacao WBC'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[63]]).apply(limpar_modulacao)
             df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mes_anterior']).fillna("-")
             
-            # Resolução Cliq
+            # Lógica de Busca Cliq
             def resolver(row):
                 db = st.session_state['db_bismut'] if 'BISMUT' in str(row['Parte']).upper() else st.session_state['db_matrix']
                 return buscar_cliq_ccee(row['CliqCCEE Paradigma'], row['Contrato CliqCCEE mes anterior'], db)
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver, axis=1)
 
-            # --- SEÇÃO DE FILTROS NA UI ---
-            st.write("### Filtros e Resumo")
-            f1, f2, f3 = st.columns(3)
-            op_f = f1.selectbox("Filtrar Operação", ["Todos"] + sorted(list(df_conferencia['Operacao'].unique())))
-            parte_f = f2.selectbox("Filtrar Parte", ["Todos"] + sorted(list(df_conferencia['Parte'].unique())))
-            rem_zero = f3.toggle("Ocultar Volume Zero", value=False)
+            # --- SEÇÃO DE FILTROS ---
+            st.write("### Filtros")
+            f1, f2, f3, f4 = st.columns([2, 2, 2, 1])
+            op_f = f1.selectbox("Operação", ["Todos"] + sorted(list(df_conferencia['Operacao'].unique())))
+            parte_f = f2.selectbox("Parte", ["Todos"] + sorted(list(df_conferencia['Parte'].unique())))
+            # NOVO FILTRO: Contrato CliqCCEE
+            cliq_f = f3.selectbox("Contrato CliqCCEE", ["Todos"] + sorted(list(df_conferencia['Contrato CliqCCEE'].unique())))
+            rem_zero = f4.toggle("Ocultar Zero", value=False)
 
-            # Aplicação dos Filtros ao DF Final
+            # Aplicação da Filtragem Combinada
             df_final = df_conferencia.copy()
             if op_f != "Todos": df_final = df_final[df_final['Operacao'] == op_f]
             if parte_f != "Todos": df_final = df_final[df_final['Parte'] == parte_f]
+            if cliq_f != "Todos": df_final = df_final[df_final['Contrato CliqCCEE'] == cliq_f]
             if rem_zero: df_final = df_final[df_final['Volume MWm'] != 0]
 
-            # --- MÉTRICAS REATIVAS (Ajustam conforme os filtros acima) ---
+            # --- MÉTRICAS REATIVAS ---
+            st.write("### Resumo")
             m1, m2, m3 = st.columns(3)
-            m1.metric("Contratos Listados", len(df_final))
-            m2.metric("Total Compras", len(df_final[df_final['Operacao'].str.upper() == 'COMPRA']))
-            m3.metric("Total Vendas", len(df_final[df_final['Operacao'].str.upper() == 'VENDA']))
-
+            m1.metric("Contratos", len(df_final))
+            m2.metric("Compras", len(df_final[df_final['Operacao'].str.upper() == 'COMPRA']))
+            m3.metric("Vendas", len(df_final[df_final['Operacao'].str.upper() == 'VENDA']))
             st.markdown("---")
 
-            # Exibição da Tabela
+            # Tabela Final
             ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 'CNPJ Contraparte', 
                      'Submercado', 'Montante MWh', 'Volume MWm', 'CliqCCEE Paradigma', 'Modulacao WBC', 'Contrato CliqCCEE']
             
