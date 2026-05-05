@@ -50,13 +50,6 @@ def carregar_csv_cliq(arquivo):
 # ─────────────────────────────────────────────────────────────────────────────
 # MAPEAMENTO DE COLUNAS POR BASE CLIQ
 # ─────────────────────────────────────────────────────────────────────────────
-# Usa os NOMES REAIS das colunas dos CSVs (não posição/letra Excel).
-# Inspecionando os arquivos, todas as bases têm:
-#   Vendedor  → SIGLA_AGENTE_VENDEDOR
-#   Comprador → SIGLA_AGENTE_COMPRADOR
-#
-# Se alguma base usar coluna diferente, basta alterar o valor aqui.
-# ─────────────────────────────────────────────────────────────────────────────
 COLUNAS_CLIQ = {
     'matrix': {'vendedor': 'SIGLA_PERFIL_VENDEDOR',  'comprador': 'SIGLA_PERFIL_COMPRADOR'},
     'bismut': {'vendedor': 'SIGLA_PERFIL_VENDEDOR',  'comprador': 'SIGLA_PERFIL_COMPRADOR'},
@@ -65,17 +58,7 @@ COLUNAS_CLIQ = {
 }
 
 def buscar_cliq_ccee(cod_paradigma, cod_mes_anterior, df_cliq, tipo_base,
-                     nome_vendedor, nome_comprador):
-    """
-    Busca o código do contrato na base Cliq aplicando 4 critérios:
-      1. Código existe no índice
-      2. SITUACAO_CONTRATO != 'RASCUNHO'
-      3. SIGLA_AGENTE_VENDEDOR bate com o Vendedor do Exportador (case-insensitive)
-      4. SIGLA_AGENTE_COMPRADOR bate com o Comprador do Exportador (case-insensitive)
-
-    Testa primeiro cod_paradigma; se reprovar, testa cod_mes_anterior.
-    Retorna o código aprovado ou "Verificar".
-    """
+                    nome_vendedor, nome_comprador):
     if df_cliq is None:
         return "Verificar"
 
@@ -92,19 +75,16 @@ def buscar_cliq_ccee(cod_paradigma, cod_mes_anterior, df_cliq, tipo_base,
         if isinstance(row, pd.DataFrame):
             row = row.iloc[0]
 
-        # Critério 1: não pode ser rascunho
         situacao = str(row.get('SITUACAO_CONTRATO', '') or '').strip().upper()
         if situacao == 'RASCUNHO':
             return False
 
-        # Critério 2: Vendedor deve bater (só valida se Exportador trouxe valor)
         if col_vend and col_vend in df_cliq.columns:
             vend_exp  = limpar_str(nome_vendedor)
             vend_cliq = limpar_str(row.get(col_vend, ''))
             if vend_exp and vend_cliq != vend_exp:
                 return False
 
-        # Critério 3: Comprador deve bater
         if col_comp and col_comp in df_cliq.columns:
             comp_exp  = limpar_str(nome_comprador)
             comp_cliq = limpar_str(row.get(col_comp, ''))
@@ -118,21 +98,6 @@ def buscar_cliq_ccee(cod_paradigma, cod_mes_anterior, df_cliq, tipo_base,
     if checar(cod_mes_anterior):
         return tratar_chave(cod_mes_anterior)
     return "Verificar"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# COMO ADICIONAR NOVAS COLUNAS VIA LOOKUP
-# ─────────────────────────────────────────────────────────────────────────────
-# Padrão de 3 passos:
-#   PASSO 1 (fid_pessoas): dict_nova = pd.Series(df_pers.iloc[:, IDX].values,
-#                                index=df_pers['chave'].values).to_dict()
-#                          st.session_state['dict_nova'] = dict_nova
-#   PASSO 2 (processamento): df_conferencia['Col'] = df_conferencia['Boleta_Key']
-#                                .map(st.session_state['dict_nova']).fillna("-")
-#   PASSO 3 (ordem): adicionar 'Col' na lista `ordem`
-#
-# Índices Exportador (4).xlsx:
-#   Col B (idx 1) → Comprador | Col C (idx 2) → Vendedor | Col D (idx 3) → Chave
-# ─────────────────────────────────────────────────────────────────────────────
 
 # 3. INICIALIZA SESSION STATE
 meses_nomes = ["Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho",
@@ -175,8 +140,6 @@ arq_cceal2 = st.sidebar.file_uploader("Cliq Bismut",      type=['xlsx', 'csv'])
 st.title(f"Book de Energia - {mes_nome_sel}/{ano_sel}")
 
 # 5. CARREGAMENTO DOS DADOS
-
-# ── Contratos aprovados ──────────────────────────────────────────────────────
 fid_subido = get_file_id(arquivo_subido)
 if fid_subido != st.session_state['fid_subido']:
     st.session_state['fid_subido'] = fid_subido
@@ -184,7 +147,6 @@ if fid_subido != st.session_state['fid_subido']:
         try: st.session_state['df_bruto'] = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
         except: st.session_state['df_bruto'] = None
 
-# ── Base mês anterior ────────────────────────────────────────────────────────
 fid_anterior = get_file_id(arquivo_anterior)
 if fid_anterior != st.session_state['fid_anterior']:
     st.session_state['fid_anterior'] = fid_anterior
@@ -199,7 +161,6 @@ if fid_anterior != st.session_state['fid_anterior']:
         except: pass
     st.session_state['dict_mes_anterior'] = dict_ma
 
-# ── Exportador (4).xlsx ───────────────────────────────────────────────────────
 fid_pessoas = get_file_id(arquivo_pessoas)
 if fid_pessoas != st.session_state['fid_pessoas']:
     st.session_state['fid_pessoas'] = fid_pessoas
@@ -214,8 +175,6 @@ if fid_pessoas != st.session_state['fid_pessoas']:
     st.session_state['dict_comprador'] = dict_c
     st.session_state['dict_vendedor']  = dict_v
 
-# ── Cliq CCEE ────────────────────────────────────────────────────────────────
-# Cada base carregada separadamente para preservar o mapeamento de colunas.
 if (get_file_id(arq_ccear), get_file_id(arq_cbr), get_file_id(arq_cceal1)) != st.session_state['chave_matrix']:
     st.session_state['chave_matrix'] = (get_file_id(arq_ccear), get_file_id(arq_cbr), get_file_id(arq_cceal1))
     st.session_state['db_ccear']  = carregar_csv_cliq(arq_ccear)
@@ -242,9 +201,25 @@ if df_bruto is not None:
             df_lookup = df_filtrada.drop_duplicates(subset=[col_boleta]).set_index(col_boleta)
 
             # ── Colunas Base ──────────────────────────────────────────────────
-            df_conferencia['Operacao']         = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[1]]).astype(str)
-            df_conferencia['Tipo Energia']     = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[5]]).astype(str).str.strip()
-            df_conferencia['Parte']            = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[62]]).astype(str).str.strip()
+            df_conferencia['Operacao']   = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[1]]).astype(str)
+            df_conferencia['Parte']      = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[62]]).astype(str).str.strip()
+            
+            # --- TRATAMENTO TIPO DE ENERGIA (ALTERAÇÃO SOLICITADA) ---
+            energia_original = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[5]]).astype(str).str.strip()
+            
+            mapa_energia = {
+                'Incentivada-50%': 'Incentivada-I5',
+                'Incentivada-100%': 'Incentivada-I1',
+                'Incentivada-0%': 'Incentivada-I0',
+                'Incentivada-CQ50%': 'Incentivada-CQ5'
+            }
+            df_conferencia['Tipo Energia'] = energia_original.replace(mapa_energia)
+            
+            # Regra específica para UFV JACARANDA 1
+            mask_jacaranda = df_conferencia['Parte'].str.upper() == 'UFV JACARANDA 1'
+            df_conferencia.loc[mask_jacaranda, 'Tipo Energia'] = 'Incentivada-I5'
+            # --------------------------------------------------------
+
             df_conferencia['Contraparte']      = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[6]])
             df_conferencia['CP/LP']            = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[12]])
             df_conferencia['CNPJ Contraparte'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[4]]).apply(formatar_cnpj)
@@ -271,21 +246,6 @@ if df_bruto is not None:
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
             df_conferencia['Vendedor']  = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
 
-            # ── Contrato CliqCCEE ─────────────────────────────────────────────
-            #
-            # Fluxo de decisão por linha:
-            #   - Parte contém "BISMUT" → busca APENAS em db_bismut
-            #   - Caso contrário, tenta em ordem: ccear → cbr → matrix
-            #     Retorna o primeiro código que passar em TODOS os critérios.
-            #
-            # Critérios (função buscar_cliq_ccee):
-            #   ✓ Código existe no índice da base
-            #   ✓ SITUACAO_CONTRATO != RASCUNHO
-            #   ✓ SIGLA_AGENTE_VENDEDOR == Vendedor do Exportador (case-insensitive)
-            #   ✓ SIGLA_AGENTE_COMPRADOR == Comprador do Exportador (case-insensitive)
-            #
-            # OBS: se o Exportador não trouxer nome (valor "-"), a validação de
-            # nome é ignorada para aquele campo (não gera falso Verificar).
             def resolver(row):
                 vend    = row['Vendedor']    if row['Vendedor']    != "-" else ""
                 comp    = row['Comprador']   if row['Comprador']   != "-" else ""
@@ -321,12 +281,10 @@ if df_bruto is not None:
             zerar_intra = f4.toggle("Zerar Intraportfólio", value=False)
 
             df_final = df_conferencia.copy()
-            if op_f    != "Todos": df_final = df_final[df_final['Operacao']          == op_f]
-            if parte_f != "Todos": df_final = df_final[df_final['Parte']             == parte_f]
+            if op_f    != "Todos": df_final = df_final[df_final['Operacao']           == op_f]
+            if parte_f != "Todos": df_final = df_final[df_final['Parte']              == parte_f]
             if cliq_f  != "Todos": df_final = df_final[df_final['Contrato CliqCCEE'] == cliq_f]
 
-            # Zerar Intraportfolio ANTES do ocultar zero,
-            # para que as linhas zeradas aqui tambem sejam ocultadas se necessario
             if zerar_intra:
                 mask_intra = df_final['Vendedor'].str.strip().str.lower() == df_final['Comprador'].str.strip().str.lower()
                 df_final.loc[mask_intra, 'Montante MWh'] = 0.0
