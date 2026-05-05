@@ -314,16 +314,23 @@ if df_bruto is not None:
             # ── Filtros ───────────────────────────────────────────────────────
             st.write("### Filtros")
             f1, f2, f3, f4 = st.columns([2, 2, 2, 1])
-            op_f     = f1.selectbox("Operação",          ["Todos"] + sorted(df_conferencia['Operacao'].dropna().unique().tolist()))
-            parte_f  = f2.selectbox("Parte",             ["Todos"] + sorted(df_conferencia['Parte'].dropna().unique().tolist()))
-            cliq_f   = f3.selectbox("Contrato CliqCCEE", ["Todos"] + sorted(df_conferencia['Contrato CliqCCEE'].dropna().unique().tolist()))
-            rem_zero = f4.toggle("Ocultar Zero", value=False)
+            op_f        = f1.selectbox("Operação",          ["Todos"] + sorted(df_conferencia['Operacao'].dropna().unique().tolist()))
+            parte_f     = f2.selectbox("Parte",             ["Todos"] + sorted(df_conferencia['Parte'].dropna().unique().tolist()))
+            cliq_f      = f3.selectbox("Contrato CliqCCEE", ["Todos"] + sorted(df_conferencia['Contrato CliqCCEE'].dropna().unique().tolist()))
+            rem_zero    = f4.toggle("Ocultar Zero",        value=False)
+            zerar_intra = f4.toggle("Zerar Intraportfólio", value=False)
 
             df_final = df_conferencia.copy()
             if op_f    != "Todos": df_final = df_final[df_final['Operacao']          == op_f]
             if parte_f != "Todos": df_final = df_final[df_final['Parte']             == parte_f]
             if cliq_f  != "Todos": df_final = df_final[df_final['Contrato CliqCCEE'] == cliq_f]
             if rem_zero:           df_final = df_final[df_final['Volume MWm']        != 0]
+
+            # Zerar Intraportfólio: quando Vendedor == Comprador, zera Montante e Volume
+            if zerar_intra:
+                mask_intra = df_final['Vendedor'].str.strip().str.lower() == df_final['Comprador'].str.strip().str.lower()
+                df_final.loc[mask_intra, 'Montante MWh'] = 0.0
+                df_final.loc[mask_intra, 'Volume MWm']   = 0.0
 
             # ── Resumo ────────────────────────────────────────────────────────
             st.write("### Resumo")
