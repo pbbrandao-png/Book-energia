@@ -230,8 +230,8 @@ if df_bruto is not None:
                 df_final.loc[mask, ['Montante MWh', 'Volume MWm']] = 0.0
             if rem_zero: df_final = df_final[df_final['Volume MWm'] != 0]
 
-            ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 'Situacao ERP', 'CliqCCEE Paradigma', 'Modulacao WBC', 'Contrato CliqCCEE']
-            st.dataframe(df_final[ordem].sort_values(by=col_boleta), hide_index=True, use_container_width=True,
+            ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 'CliqCCEE Paradigma', 'Modulacao WBC', 'Contrato CliqCCEE']
+            st.dataframe(df_final[ordem].sort_values(by=col_boleta, 'Situacao ERP'), hide_index=True, use_container_width=True,
                          column_config={"Montante MWh": st.column_config.NumberColumn(format="%.3f"), "Volume MWm": st.column_config.NumberColumn(format="%.6f")})
         else: st.warning(f"Sem dados para {mes_nome_sel}/{ano_sel}")
     except Exception as e: st.error(f"Erro no processamento: {e}")
