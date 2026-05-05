@@ -143,11 +143,9 @@ if get_file_id(arquivo_mapa) != st.session_state['fid_mapa']:
     if arquivo_mapa:
         try:
             df_mapa_raw = pd.read_excel(arquivo_mapa)
-            # Mapeia Codigo_WBC (Coluna B) para Situacao_ERP (Coluna U)
             st.session_state['dict_mapa'] = pd.Series(df_mapa_raw['Situacao_ERP'].values, index=df_mapa_raw['Codigo_WBC'].apply(tratar_chave).values).to_dict()
         except: st.session_state['dict_mapa'] = {}
 
-# Carregamento CLIQ CCEE
 if (get_file_id(arq_ccear), get_file_id(arq_cbr), get_file_id(arq_cceal1)) != st.session_state['chave_matrix']:
     st.session_state['chave_matrix'] = (get_file_id(arq_ccear), get_file_id(arq_cbr), get_file_id(arq_cceal1))
     st.session_state['db_ccear'], st.session_state['db_cbr'], st.session_state['db_matrix'] = carregar_csv_cliq(arq_ccear), carregar_csv_cliq(arq_cbr), carregar_csv_cliq(arq_cceal1)
@@ -170,10 +168,13 @@ if df_bruto is not None:
             df_conferencia['Boleta_Key'] = df_conferencia[col_boleta].apply(tratar_chave)
             df_lookup = df_filtrada.drop_duplicates(subset=[col_boleta]).set_index(col_boleta)
 
-            # Colunas Base e Tratamento de Energia
+            # Colunas Base
             df_conferencia['Operacao'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[1]]).astype(str)
             df_conferencia['Parte'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[62]]).astype(str).str.strip()
             
+            # Razão Social (Coluna C do Excel Original - Índice 2)
+            df_conferencia['Razao Social'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[2]]).astype(str).str.strip()
+
             # De/Para Energia e Regra Jacaranda
             mapa_energia = {'Incentivada-50%': 'Incentivada-I5', 'Incentivada-100%': 'Incentivada-I1', 'Incentivada-0%': 'Incentivada-I0', 'Incentivada-CQ50%': 'Incentivada-CQ5'}
             df_conferencia['Tipo Energia'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[5]]).astype(str).str.strip().replace(mapa_energia)
@@ -230,8 +231,16 @@ if df_bruto is not None:
                 df_final.loc[mask, ['Montante MWh', 'Volume MWm']] = 0.0
             if rem_zero: df_final = df_final[df_final['Volume MWm'] != 0]
 
-            ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 'CliqCCEE Paradigma', 'Modulacao WBC', 'Contrato CliqCCEE', 'Situacao ERP']
+            # ORDEM DAS COLUNAS (Razão Social adicionada ao final)
+            ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
+                     'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
+                     'CliqCCEE Paradigma', 'Modulacao WBC', 'Contrato CliqCCEE', 
+                     'Situacao ERP', 'Razao Social']
+            
             st.dataframe(df_final[ordem].sort_values(by=col_boleta), hide_index=True, use_container_width=True,
-                         column_config={"Montante MWh": st.column_config.NumberColumn(format="%.3f"), "Volume MWm": st.column_config.NumberColumn(format="%.6f")})
+                         column_config={
+                             "Montante MWh": st.column_config.NumberColumn(format="%.3f"), 
+                             "Volume MWm": st.column_config.NumberColumn(format="%.6f")
+                         })
         else: st.warning(f"Sem dados para {mes_nome_sel}/{ano_sel}")
     except Exception as e: st.error(f"Erro no processamento: {e}")
