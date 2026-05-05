@@ -264,11 +264,10 @@ if df_bruto is not None:
             ordem = [
                 col_boleta, 'Operacao', 'Tipo Energia', 'Parte',
                 'Contraparte', 'CP/LP', 'CNPJ Contraparte',
-                'Comprador', 'Vendedor',                          # ← novas colunas
                 'Submercado', 'Montante MWh', 'Volume MWm',
                 'CliqCCEE Paradigma',
                 'Modulacao WBC', 'Modulacao Minima', 'Modulacao Maxima',
-                'Contrato CliqCCEE mes anterior', 'Contrato CliqCCEE',
+                'Contrato CliqCCEE mes anterior','Comprador', 'Vendedor', 'Contrato CliqCCEE',
             ]
 
             st.dataframe(
