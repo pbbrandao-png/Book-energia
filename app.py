@@ -248,9 +248,9 @@ if df_bruto is not None:
             
             # Lógica de Submercado (Coluna I)
             mapa_submercado = {
-                'SE/CO': 'SUDESTE',
-                'N': 'NORTE',
-                'NE': 'NORDEESTE',
+                'SE/CO': 'Sudeste',
+                'N': 'Norte',
+                'NE': 'Nordeste',
                 'S': 'Sul'
             }
             df_conferencia['Submercado'] = df_conferencia[col_boleta].map(df_lookup[col_submercado_raw]).replace(mapa_submercado)
@@ -282,6 +282,15 @@ if df_bruto is not None:
             # Ordenação numérica por boleta
             df_conferencia['_boleta_num'] = pd.to_numeric(df_conferencia['Boleta_Key'], errors='coerce')
             df_conferencia = df_conferencia.sort_values('_boleta_num').drop(columns=['_boleta_num'])
+
+            # --- NOVO: MÉTRICAS (BALÕES) ---
+            compras_total = df_conferencia[df_conferencia['Operacao'].str.upper() == 'COMPRA'].shape[0]
+            vendas_total = df_conferencia[df_conferencia['Operacao'].str.upper() == 'VENDA'].shape[0]
+            
+            m1, m2, m3 = st.columns([1, 1, 2])
+            m1.metric("Total de Compras", compras_total)
+            m2.metric("Total de Vendas", vendas_total)
+            st.markdown("---")
 
             # Filtros na UI
             st.write("### Filtros Rápidos")
