@@ -64,50 +64,106 @@ def buscar_cliq_ccee(cod_paradigma, cod_mes_anterior, df_cliq):
         return tratar_chave(cod_mes_anterior)
     return "Verificar"
 
-# 3. INTERFACE LATERAL
-st.sidebar.title("Configuracoes")
-
-st.sidebar.subheader("Periodo de Referencia")
+# ---------------------------------------------------------------------------
+# 3. INICIALIZA SESSION STATE (apenas na primeira execucao)
+# ---------------------------------------------------------------------------
 meses_nomes = [
     "Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho",
     "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
 ]
-mes_nome_sel = st.sidebar.selectbox("Mes", meses_nomes, index=datetime.now().month - 1)
-mes_num_sel = meses_nomes.index(mes_nome_sel) + 1
 anos = [str(a) for a in range(2024, 2031)]
-ano_sel = st.sidebar.selectbox("Ano", anos, index=2)
+
+# Periodo de referencia: inicializa UMA UNICA VEZ, nao muda em reruns
+if 'mes_sel' not in st.session_state:
+    st.session_state['mes_sel'] = meses_nomes[datetime.now().month - 1]
+if 'ano_sel' not in st.session_state:
+    st.session_state['ano_sel'] = str(datetime.now().year)
+
+# Dados processados: inicializa como None
+for chave in ['df_bruto', 'dict_mes_anterior', 'dict_comprador', 'dict_vendedor',
+              'db_matrix', 'db_bismut']:
+    if chave not in st.session_state:
+        st.session_state[chave] = {} if 'dict' in chave else None
+
+# IDs dos arquivos ja carregados (para detectar mudanca sem reprocessar)
+for chave in ['fid_subido', 'fid_anterior', 'fid_pessoas',
+              'chave_matrix', 'fid_cceal2']:
+    if chave not in st.session_state:
+        st.session_state[chave] = None
+
+# ---------------------------------------------------------------------------
+# 4. INTERFACE LATERAL
+# ---------------------------------------------------------------------------
+st.sidebar.title("Configuracoes")
+
+st.sidebar.subheader("Periodo de Referencia")
+
+# on_change garante que a selecao persiste sem resetar a cada rerun
+def on_change_mes():
+    st.session_state['mes_sel'] = st.session_state['_widget_mes']
+
+def on_change_ano():
+    st.session_state['ano_sel'] = st.session_state['_widget_ano']
+
+st.sidebar.selectbox(
+    "Mes",
+    meses_nomes,
+    index=meses_nomes.index(st.session_state['mes_sel']),
+    key='_widget_mes',
+    on_change=on_change_mes,
+)
+st.sidebar.selectbox(
+    "Ano",
+    anos,
+    index=anos.index(st.session_state['ano_sel']) if st.session_state['ano_sel'] in anos else 0,
+    key='_widget_ano',
+    on_change=on_change_ano,
+)
+
+mes_nome_sel = st.session_state['mes_sel']
+mes_num_sel  = meses_nomes.index(mes_nome_sel) + 1
+ano_sel      = st.session_state['ano_sel']
 
 st.sidebar.markdown("---")
-arquivo_subido   = st.sidebar.file_uploader("1. Contratos Aprovados (Excel)", type=['xlsx', 'xlsm'])
-arquivo_anterior = st.sidebar.file_uploader("2. Base Mes Anterior.xlsx", type=['xlsx'])
-arquivo_pessoas  = st.sidebar.file_uploader("3. Exportador (4).xlsx", type=['xlsx'])
 
-st.sidebar.subheader("Bases Cliq CCEE - Matrix/CBR/CCEAR")
-arq_ccear  = st.sidebar.file_uploader("Cliq CCEAR_Q",             type=['xlsx', 'csv'])
-arq_cbr    = st.sidebar.file_uploader("Cliq CBR Mercado",         type=['xlsx', 'csv'])
-arq_cceal1 = st.sidebar.file_uploader("Cliq Matrix",  type=['xlsx', 'csv'])
-
-st.sidebar.subheader("Bases Cliq CCEE - Bismut")
-arq_cceal2 = st.sidebar.file_uploader("Cliq Bismut",  type=['xlsx', 'csv'])
-
-st.title(f"Book de Energia - {mes_nome_sel}/{ano_sel}")
-
-# 4. CACHE DE ARQUIVOS NO SESSION STATE
-# Cada arquivo so e reprocessado quando um novo e subido (id diferente)
+# ---------------------------------------------------------------------------
+# Uploaders — os arquivos ficam no session_state; so sao reprocessados
+# quando o usuario sobe um arquivo DIFERENTE (nome+tamanho mudou)
+# ---------------------------------------------------------------------------
 
 def get_file_id(arq):
-    """Retorna um identificador unico para o arquivo subido."""
     if arq is None:
         return None
     return (arq.name, arq.size)
 
+arquivo_subido   = st.sidebar.file_uploader("1. Contratos Aprovados (Excel)", type=['xlsx', 'xlsm'])
+arquivo_anterior = st.sidebar.file_uploader("2. Base Mes Anterior.xlsx",      type=['xlsx'])
+arquivo_pessoas  = st.sidebar.file_uploader("3. Exportador (4).xlsx",          type=['xlsx'])
+
+st.sidebar.subheader("Bases Cliq CCEE - Matrix/CBR/CCEAR")
+arq_ccear  = st.sidebar.file_uploader("Cliq CCEAR_Q",    type=['xlsx', 'csv'])
+arq_cbr    = st.sidebar.file_uploader("Cliq CBR Mercado", type=['xlsx', 'csv'])
+arq_cceal1 = st.sidebar.file_uploader("Cliq Matrix",      type=['xlsx', 'csv'])
+
+st.sidebar.subheader("Bases Cliq CCEE - Bismut")
+arq_cceal2 = st.sidebar.file_uploader("Cliq Bismut",      type=['xlsx', 'csv'])
+
+st.title(f"Book de Energia - {mes_nome_sel}/{ano_sel}")
+
+# ---------------------------------------------------------------------------
+# 5. CACHE DE ARQUIVOS NO SESSION STATE
+# Cada arquivo so e reprocessado quando um novo e subido (id diferente)
+# ---------------------------------------------------------------------------
+
 # --- Base principal ---
 fid_subido = get_file_id(arquivo_subido)
-if fid_subido != st.session_state.get('fid_subido'):
+if fid_subido != st.session_state['fid_subido']:
     st.session_state['fid_subido'] = fid_subido
     if arquivo_subido:
         try:
-            st.session_state['df_bruto'] = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
+            st.session_state['df_bruto'] = pd.read_excel(
+                arquivo_subido, sheet_name='Contratos_Selecionados'
+            )
         except Exception as e:
             st.session_state['df_bruto'] = None
             st.error(f"Erro ao carregar base principal: {e}")
@@ -116,7 +172,7 @@ if fid_subido != st.session_state.get('fid_subido'):
 
 # --- Mes anterior ---
 fid_anterior = get_file_id(arquivo_anterior)
-if fid_anterior != st.session_state.get('fid_anterior'):
+if fid_anterior != st.session_state['fid_anterior']:
     st.session_state['fid_anterior'] = fid_anterior
     dict_ma = {}
     if arquivo_anterior:
@@ -127,14 +183,16 @@ if fid_anterior != st.session_state.get('fid_anterior'):
                 df_apoio = df_apoio.iloc[1:].reset_index(drop=True)
             df_apoio.iloc[:, 0] = df_apoio.iloc[:, 0].apply(tratar_chave)
             df_apoio.iloc[:, 1] = df_apoio.iloc[:, 1].apply(tratar_chave)
-            dict_ma = pd.Series(df_apoio.iloc[:, 1].values, index=df_apoio.iloc[:, 0].values).to_dict()
+            dict_ma = pd.Series(
+                df_apoio.iloc[:, 1].values, index=df_apoio.iloc[:, 0].values
+            ).to_dict()
         except Exception as e:
             st.warning(f"Erro ao carregar mes anterior: {e}")
     st.session_state['dict_mes_anterior'] = dict_ma
 
 # --- Pessoas ---
 fid_pessoas = get_file_id(arquivo_pessoas)
-if fid_pessoas != st.session_state.get('fid_pessoas'):
+if fid_pessoas != st.session_state['fid_pessoas']:
     st.session_state['fid_pessoas'] = fid_pessoas
     dict_v, dict_c = {}, {}
     if arquivo_pessoas:
@@ -153,7 +211,7 @@ fid_ccear  = get_file_id(arq_ccear)
 fid_cbr    = get_file_id(arq_cbr)
 fid_cceal1 = get_file_id(arq_cceal1)
 chave_matrix = (fid_ccear, fid_cbr, fid_cceal1)
-if chave_matrix != st.session_state.get('chave_matrix'):
+if chave_matrix != st.session_state['chave_matrix']:
     st.session_state['chave_matrix'] = chave_matrix
     dfs = []
     for arq in [arq_ccear, arq_cbr, arq_cceal1]:
@@ -164,19 +222,21 @@ if chave_matrix != st.session_state.get('chave_matrix'):
 
 # --- CSV Cliq Bismut ---
 fid_cceal2 = get_file_id(arq_cceal2)
-if fid_cceal2 != st.session_state.get('fid_cceal2'):
+if fid_cceal2 != st.session_state['fid_cceal2']:
     st.session_state['fid_cceal2'] = fid_cceal2
     st.session_state['db_bismut'] = carregar_csv_cliq(arq_cceal2)
 
 # Recupera do cache
-df_bruto         = st.session_state.get('df_bruto')
-dict_mes_anterior = st.session_state.get('dict_mes_anterior', {})
-dict_comprador   = st.session_state.get('dict_comprador', {})
-dict_vendedor    = st.session_state.get('dict_vendedor', {})
-db_matrix        = st.session_state.get('db_matrix')
-db_bismut        = st.session_state.get('db_bismut')
+df_bruto          = st.session_state['df_bruto']
+dict_mes_anterior = st.session_state['dict_mes_anterior']
+dict_comprador    = st.session_state['dict_comprador']
+dict_vendedor     = st.session_state['dict_vendedor']
+db_matrix         = st.session_state['db_matrix']
+db_bismut         = st.session_state['db_bismut']
 
-# 5. PROCESSAMENTO DA BASE PRINCIPAL
+# ---------------------------------------------------------------------------
+# 6. PROCESSAMENTO DA BASE PRINCIPAL
+# ---------------------------------------------------------------------------
 BISMUT_SIGLA = "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A."
 
 if df_bruto is not None:
