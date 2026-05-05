@@ -201,6 +201,7 @@ if df_bruto is not None:
         col_boleta         = df_bruto.columns[0]
         col_operacao       = df_bruto.columns[1]
         col_cnpj           = df_bruto.columns[4]
+        col_submercado_raw = df_bruto.columns[8]  # Coluna I (Indice 8)
         col_energia        = df_bruto.columns[5]
         col_contraparte    = df_bruto.columns[6]
         col_cp_lp          = df_bruto.columns[12] # Coluna M (Indice 12)
@@ -245,6 +246,15 @@ if df_bruto is not None:
             df_conferencia['CP/LP']            = df_conferencia[col_boleta].map(df_lookup[col_cp_lp])
             df_conferencia['CNPJ Contraparte'] = df_conferencia[col_boleta].map(df_lookup[col_cnpj]).apply(formatar_cnpj)
             
+            # Lógica de Submercado (Coluna I)
+            mapa_submercado = {
+                'SE/CO': 'Sudeste',
+                'N': 'Norte',
+                'NE': 'Nordeste',
+                'S': 'Sul'
+            }
+            df_conferencia['Submercado'] = df_conferencia[col_boleta].map(df_lookup[col_submercado_raw]).replace(mapa_submercado)
+            
             # Cálculos de Volume
             df_conferencia['Montante MWh']     = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[col_montante_mwh]), errors='coerce').fillna(0).round(3)
             v_mwh = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[col_volume_mwh]), errors='coerce')
@@ -288,7 +298,7 @@ if df_bruto is not None:
             # Definição da ordem das colunas para exibição
             ordem_final = [
                 col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP',
-                'CNPJ Contraparte', 'Montante MWh', 'Volume MWm', 
+                'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
                 'CliqCCEE Paradigma', 'Modulacao WBC', 'Modulacao Minima', 
                 'Modulacao Maxima', 'Contrato CliqCCEE mes anterior', 
                 'Comprador', 'Vendedor', 'Contrato CliqCCEE'
