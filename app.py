@@ -248,9 +248,9 @@ if df_bruto is not None:
             
             # Lógica de Submercado (Coluna I)
             mapa_submercado = {
-                'SE/CO': 'Sudeste',
-                'N': 'Norte',
-                'NE': 'Nordeste',
+                'SE/CO': 'SUDESTE',
+                'N': 'NORTE',
+                'NE': 'NORDEESTE',
                 'S': 'Sul'
             }
             df_conferencia['Submercado'] = df_conferencia[col_boleta].map(df_lookup[col_submercado_raw]).replace(mapa_submercado)
