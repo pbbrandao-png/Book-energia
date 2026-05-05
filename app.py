@@ -36,9 +36,12 @@ def carregar_csv_cliq(arquivo):
             df = pd.read_csv(arquivo, sep='\t', encoding='latin-1', skiprows=1, dtype=str)
         else:
             df = pd.read_excel(arquivo, dtype=str)
-        df['CODIGO_CONTRATO'] = df['CODIGO_CONTRATO'].apply(tratar_chave)
-        df = df.set_index('CODIGO_CONTRATO')
-        return df
+        
+        if 'CODIGO_CONTRATO' in df.columns:
+            df['CODIGO_CONTRATO'] = df['CODIGO_CONTRATO'].apply(tratar_chave)
+            df = df.set_index('CODIGO_CONTRATO')
+            return df
+        return None
     except Exception:
         return None
 
@@ -48,9 +51,7 @@ def buscar_cliq_ccee(cod_paradigma, cod_mes_anterior, df_cliq):
 
     def checar(codigo):
         codigo = tratar_chave(codigo)
-        if not codigo:
-            return False
-        if codigo not in df_cliq.index:
+        if not codigo or codigo not in df_cliq.index:
             return False
         row = df_cliq.loc[codigo]
         if isinstance(row, pd.DataFrame):
@@ -91,12 +92,11 @@ for chave in ['fid_subido', 'fid_anterior', 'fid_pessoas',
 # ---------------------------------------------------------------------------
 # 4. INTERFACE LATERAL
 # ---------------------------------------------------------------------------
-st.sidebar.title("Configuracoes")
-st.sidebar.subheader("Periodo de Referencia")
+st.sidebar.title("Configurações")
+st.sidebar.subheader("Período de Referência")
 
-# Widgets de seleção direta no session_state
 mes_nome_sel = st.sidebar.selectbox(
-    "Mes", 
+    "Mês", 
     meses_nomes, 
     index=meses_nomes.index(st.session_state['mes_sel']),
     key='mes_sel'
@@ -118,7 +118,7 @@ def get_file_id(arq):
     return (arq.name, arq.size)
 
 arquivo_subido   = st.sidebar.file_uploader("1. Contratos Aprovados (Excel)", type=['xlsx', 'xlsm'])
-arquivo_anterior = st.sidebar.file_uploader("2. Base Mes Anterior.xlsx",      type=['xlsx'])
+arquivo_anterior = st.sidebar.file_uploader("2. Base Mês Anterior.xlsx",      type=['xlsx'])
 arquivo_pessoas  = st.sidebar.file_uploader("3. Exportador (4).xlsx",          type=['xlsx'])
 
 st.sidebar.subheader("Bases Cliq CCEE")
@@ -127,11 +127,10 @@ arq_cbr    = st.sidebar.file_uploader("Cliq CBR Mercado", type=['xlsx', 'csv'])
 arq_cceal1 = st.sidebar.file_uploader("Cliq Matrix",      type=['xlsx', 'csv'])
 arq_cceal2 = st.sidebar.file_uploader("Cliq Bismut",      type=['xlsx', 'csv'])
 
-# TITULO DINAMICO - Sempre reflete a seleção atual
 st.title(f"Book de Energia - {mes_nome_sel}/{ano_sel}")
 
 # ---------------------------------------------------------------------------
-# 5. CARREGAMENTO DOS DADOS (CACHE)
+# 5. CARREGAMENTO DOS DADOS
 # ---------------------------------------------------------------------------
 fid_subido = get_file_id(arquivo_subido)
 if fid_subido != st.session_state['fid_subido']:
@@ -185,6 +184,7 @@ if fid_cceal2 != st.session_state['fid_cceal2']:
     st.session_state['fid_cceal2'] = fid_cceal2
     st.session_state['db_bismut'] = carregar_csv_cliq(arq_cceal2)
 
+# Atalhos para os dados
 df_bruto = st.session_state['df_bruto']
 dict_mes_anterior = st.session_state['dict_mes_anterior']
 dict_comprador = st.session_state['dict_comprador']
@@ -197,14 +197,16 @@ db_bismut = st.session_state['db_bismut']
 # ---------------------------------------------------------------------------
 if df_bruto is not None:
     try:
+        # Mapeamento de Colunas por Índice
         col_boleta         = df_bruto.columns[0]
         col_operacao       = df_bruto.columns[1]
         col_cnpj           = df_bruto.columns[4]
         col_energia        = df_bruto.columns[5]
         col_contraparte    = df_bruto.columns[6]
+        col_cp_lp          = df_bruto.columns[12] # Coluna M (Indice 12)
         col_mes_suprimento = df_bruto.columns[14]
         col_horas_mes      = df_bruto.columns[15]
-        col_montante_mwh   = df_bruto.columns[17] # Coluna R
+        col_montante_mwh   = df_bruto.columns[17]
         col_volume_mwh     = df_bruto.columns[20]
         col_mod_min        = df_bruto.columns[28]
         col_mod_max        = df_bruto.columns[29]
@@ -221,33 +223,41 @@ if df_bruto is not None:
             df_conferencia['Boleta_Key'] = df_conferencia[col_boleta].apply(tratar_chave)
             df_lookup = df_filtrada.drop_duplicates(subset=[col_boleta]).set_index(col_boleta)
 
+            # Mapeamentos Diretos
             df_conferencia['Operacao']         = df_conferencia[col_boleta].map(df_lookup[col_operacao]).astype(str)
             df_conferencia['Tipo Energia']     = df_conferencia[col_boleta].map(df_lookup[col_energia]).astype(str).str.strip()
             df_conferencia['Parte']            = df_conferencia[col_boleta].map(df_lookup[col_parte_bk]).astype(str).str.strip()
             
+            # Lógica Especial Energia
             mask_jaca = df_conferencia['Parte'].str.upper().str.contains('UFV JACARANDA 1', na=False)
             df_conferencia.loc[mask_jaca, 'Tipo Energia'] = 'Incentivada-I5'
             
-            mapa_energia = {'INCENTIVADA-50%': 'Incentivada-I5', 'INCENTIVADA-CQ50%': 'Incentivada-CQ5', 'INCENTIVADA-100%': 'Incentivada-I1', 'INCENTIVADA-0%': 'Incentivada-I0'}
+            mapa_energia = {
+                'INCENTIVADA-50%': 'Incentivada-I5', 
+                'INCENTIVADA-CQ50%': 'Incentivada-CQ5', 
+                'INCENTIVADA-100%': 'Incentivada-I1', 
+                'INCENTIVADA-0%': 'Incentivada-I0'
+            }
             df_conferencia['Tipo Energia'] = df_conferencia['Tipo Energia'].apply(lambda v: mapa_energia.get(str(v).strip().upper(), v))
             
+            # Dados de Contraparte e CP/LP
             df_conferencia['Contraparte']      = df_conferencia[col_boleta].map(df_lookup[col_contraparte])
+            df_conferencia['CP/LP']            = df_conferencia[col_boleta].map(df_lookup[col_cp_lp])
             df_conferencia['CNPJ Contraparte'] = df_conferencia[col_boleta].map(df_lookup[col_cnpj]).apply(formatar_cnpj)
             
-            # --- FORMATAÇÃO: 3 CASAS DECIMAIS PARA MWh ---
+            # Cálculos de Volume
             df_conferencia['Montante MWh']     = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[col_montante_mwh]), errors='coerce').fillna(0).round(3)
-            
             v_mwh = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[col_volume_mwh]), errors='coerce')
             h_mes = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[col_horas_mes]), errors='coerce')
-            
-            # --- FORMATAÇÃO: 6 CASAS DECIMAIS PARA MWm ---
-            df_conferencia['Volume MWm'] = (v_mwh / h_mes).fillna(0).round(6)
+            df_conferencia['Volume MWm']       = (v_mwh / h_mes).fillna(0).round(6)
 
+            # Modulações e Cliq
             df_conferencia['CliqCCEE Paradigma'] = df_conferencia[col_boleta].map(df_lookup[col_cliq_para]).apply(tratar_chave)
             df_conferencia['Modulacao WBC']      = df_conferencia[col_boleta].map(df_lookup[col_mod_wbc]).apply(limpar_modulacao)
             df_conferencia['Modulacao Minima']   = df_conferencia[col_boleta].map(df_lookup[col_mod_min])
             df_conferencia['Modulacao Maxima']   = df_conferencia[col_boleta].map(df_lookup[col_mod_max])
 
+            # De-Para de outras bases
             df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(dict_mes_anterior).fillna("-")
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(dict_comprador).fillna("N/A")
             df_conferencia['Vendedor']  = df_conferencia['Boleta_Key'].map(dict_vendedor).fillna("N/A")
@@ -259,12 +269,14 @@ if df_bruto is not None:
 
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
 
+            # Ordenação numérica por boleta
             df_conferencia['_boleta_num'] = pd.to_numeric(df_conferencia['Boleta_Key'], errors='coerce')
             df_conferencia = df_conferencia.sort_values('_boleta_num').drop(columns=['_boleta_num'])
 
-            st.write("### Filtros Rapidos")
+            # Filtros na UI
+            st.write("### Filtros Rápidos")
             f1, f2, f3 = st.columns(3)
-            op_f = f1.selectbox("Operacao", ["Todos"] + sorted(list(df_conferencia['Operacao'].unique())))
+            op_f = f1.selectbox("Operação", ["Todos"] + sorted(list(df_conferencia['Operacao'].unique())))
             parte_f = f2.selectbox("Parte", ["Todos"] + sorted(list(df_conferencia['Parte'].unique())))
             rem_zero = f3.checkbox("Ocultar Zerados", value=False)
 
@@ -273,17 +285,17 @@ if df_bruto is not None:
             if parte_f != "Todos": df_final = df_final[df_final['Parte'] == parte_f]
             if rem_zero: df_final = df_final[df_final['Volume MWm'] != 0]
 
-            ordem = [
-                col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 
+            # Definição da ordem das colunas para exibição
+            ordem_final = [
+                col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP',
                 'CNPJ Contraparte', 'Montante MWh', 'Volume MWm', 
                 'CliqCCEE Paradigma', 'Modulacao WBC', 'Modulacao Minima', 
                 'Modulacao Maxima', 'Contrato CliqCCEE mes anterior', 
                 'Comprador', 'Vendedor', 'Contrato CliqCCEE'
             ]
             
-            # Formatação final para exibição na tabela (forçando as casas decimais)
             st.dataframe(
-                df_final[ordem], 
+                df_final[ordem_final], 
                 hide_index=True, 
                 use_container_width=True,
                 column_config={
