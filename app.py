@@ -64,7 +64,9 @@ def buscar_cliq_ccee(cod_paradigma, cod_mes_anterior, df_cliq):
         return tratar_chave(cod_mes_anterior)
     return "Verificar"
 
+# ---------------------------------------------------------------------------
 # 3. INICIALIZA SESSION STATE
+# ---------------------------------------------------------------------------
 meses_nomes = [
     "Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho",
     "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
@@ -86,22 +88,28 @@ for chave in ['fid_subido', 'fid_anterior', 'fid_pessoas',
     if chave not in st.session_state:
         st.session_state[chave] = None
 
+# ---------------------------------------------------------------------------
 # 4. INTERFACE LATERAL
+# ---------------------------------------------------------------------------
 st.sidebar.title("Configuracoes")
 st.sidebar.subheader("Periodo de Referencia")
 
-def on_change_mes():
-    st.session_state['mes_sel'] = st.session_state['_widget_mes']
-def on_change_ano():
-    st.session_state['ano_sel'] = st.session_state['_widget_ano']
+# Widgets de seleção direta no session_state
+mes_nome_sel = st.sidebar.selectbox(
+    "Mes", 
+    meses_nomes, 
+    index=meses_nomes.index(st.session_state['mes_sel']),
+    key='mes_sel'
+)
 
-st.sidebar.selectbox("Mes", meses_nomes, index=meses_nomes.index(st.session_state['mes_sel']), key='_widget_mes', on_change=on_change_mes)
-st.sidebar.selectbox("Ano", anos, index=anos.index(st.session_state['ano_sel']) if st.session_state['ano_sel'] in anos else 0, key='_widget_ano', on_change=on_change_ano)
+ano_sel = st.sidebar.selectbox(
+    "Ano", 
+    anos, 
+    index=anos.index(st.session_state['ano_sel']) if st.session_state['ano_sel'] in anos else 0,
+    key='ano_sel'
+)
 
-# ATUALIZA AS VARIAVEIS DE EXIBICAO
-mes_nome_sel = st.session_state['mes_sel']
-ano_sel      = st.session_state['ano_sel']
-mes_num_sel  = meses_nomes.index(mes_nome_sel) + 1
+mes_num_sel = meses_nomes.index(mes_nome_sel) + 1
 
 st.sidebar.markdown("---")
 
@@ -119,10 +127,12 @@ arq_cbr    = st.sidebar.file_uploader("Cliq CBR Mercado", type=['xlsx', 'csv'])
 arq_cceal1 = st.sidebar.file_uploader("Cliq Matrix",      type=['xlsx', 'csv'])
 arq_cceal2 = st.sidebar.file_uploader("Cliq Bismut",      type=['xlsx', 'csv'])
 
-# TITULO DA PAGINA (Posicionado aqui para respeitar a troca de meses no widget)
+# TITULO DINAMICO - Sempre reflete a seleção atual
 st.title(f"Book de Energia - {mes_nome_sel}/{ano_sel}")
 
-# 5. CACHE DE ARQUIVOS NO SESSION STATE
+# ---------------------------------------------------------------------------
+# 5. CARREGAMENTO DOS DADOS (CACHE)
+# ---------------------------------------------------------------------------
 fid_subido = get_file_id(arquivo_subido)
 if fid_subido != st.session_state['fid_subido']:
     st.session_state['fid_subido'] = fid_subido
@@ -132,8 +142,6 @@ if fid_subido != st.session_state['fid_subido']:
         except Exception as e:
             st.session_state['df_bruto'] = None
             st.error(f"Erro ao carregar base principal: {e}")
-    else:
-        st.session_state['df_bruto'] = None
 
 fid_anterior = get_file_id(arquivo_anterior)
 if fid_anterior != st.session_state['fid_anterior']:
@@ -142,9 +150,6 @@ if fid_anterior != st.session_state['fid_anterior']:
     if arquivo_anterior:
         try:
             df_apoio = pd.read_excel(arquivo_anterior, header=0, dtype=str)
-            primeira_celula = str(df_apoio.iloc[0, 0]).strip().upper()
-            if primeira_celula in ["BOLETA", "ID", "CHAVE"]:
-                df_apoio = df_apoio.iloc[1:].reset_index(drop=True)
             df_apoio.iloc[:, 0] = df_apoio.iloc[:, 0].apply(tratar_chave)
             df_apoio.iloc[:, 1] = df_apoio.iloc[:, 1].apply(tratar_chave)
             dict_ma = pd.Series(df_apoio.iloc[:, 1].values, index=df_apoio.iloc[:, 0].values).to_dict()
@@ -181,10 +186,15 @@ if fid_cceal2 != st.session_state['fid_cceal2']:
     st.session_state['db_bismut'] = carregar_csv_cliq(arq_cceal2)
 
 df_bruto = st.session_state['df_bruto']
-dict_mes_anterior, dict_comprador, dict_vendedor = st.session_state['dict_mes_anterior'], st.session_state['dict_comprador'], st.session_state['dict_vendedor']
-db_matrix, db_bismut = st.session_state['db_matrix'], st.session_state['db_bismut']
+dict_mes_anterior = st.session_state['dict_mes_anterior']
+dict_comprador = st.session_state['dict_comprador']
+dict_vendedor = st.session_state['dict_vendedor']
+db_matrix = st.session_state['db_matrix']
+db_bismut = st.session_state['db_bismut']
 
-# 6. PROCESSAMENTO DA BASE PRINCIPAL
+# ---------------------------------------------------------------------------
+# 6. PROCESSAMENTO
+# ---------------------------------------------------------------------------
 if df_bruto is not None:
     try:
         col_boleta         = df_bruto.columns[0]
@@ -194,7 +204,7 @@ if df_bruto is not None:
         col_contraparte    = df_bruto.columns[6]
         col_mes_suprimento = df_bruto.columns[14]
         col_horas_mes      = df_bruto.columns[15]
-        col_montante_mwh   = df_bruto.columns[17] # COLUNA R
+        col_montante_mwh   = df_bruto.columns[17] # Coluna R
         col_volume_mwh     = df_bruto.columns[20]
         col_mod_min        = df_bruto.columns[28]
         col_mod_max        = df_bruto.columns[29]
@@ -215,27 +225,23 @@ if df_bruto is not None:
             df_conferencia['Tipo Energia']     = df_conferencia[col_boleta].map(df_lookup[col_energia]).astype(str).str.strip()
             df_conferencia['Parte']            = df_conferencia[col_boleta].map(df_lookup[col_parte_bk]).astype(str).str.strip()
             
-            # Lógica Jacarandá
             mask_jaca = df_conferencia['Parte'].str.upper().str.contains('UFV JACARANDA 1', na=False)
             df_conferencia.loc[mask_jaca, 'Tipo Energia'] = 'Incentivada-I5'
             
-            mapa_energia = {
-                'INCENTIVADA-50%': 'Incentivada-I5', 
-                'INCENTIVADA-CQ50%': 'Incentivada-CQ5', 
-                'INCENTIVADA-100%': 'Incentivada-I1', 
-                'INCENTIVADA-0%': 'Incentivada-I0'
-            }
+            mapa_energia = {'INCENTIVADA-50%': 'Incentivada-I5', 'INCENTIVADA-CQ50%': 'Incentivada-CQ5', 'INCENTIVADA-100%': 'Incentivada-I1', 'INCENTIVADA-0%': 'Incentivada-I0'}
             df_conferencia['Tipo Energia'] = df_conferencia['Tipo Energia'].apply(lambda v: mapa_energia.get(str(v).strip().upper(), v))
             
             df_conferencia['Contraparte']      = df_conferencia[col_boleta].map(df_lookup[col_contraparte])
             df_conferencia['CNPJ Contraparte'] = df_conferencia[col_boleta].map(df_lookup[col_cnpj]).apply(formatar_cnpj)
             
-            # ADIÇÃO DO MONTANTE MWh (COLUNA R)
-            df_conferencia['Montante MWh']     = df_conferencia[col_boleta].map(df_lookup[col_montante_mwh]).fillna(0)
+            # --- FORMATAÇÃO: 3 CASAS DECIMAIS PARA MWh ---
+            df_conferencia['Montante MWh']     = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[col_montante_mwh]), errors='coerce').fillna(0).round(3)
             
-            v_mwh = df_conferencia[col_boleta].map(df_lookup[col_volume_mwh])
-            h_mes = df_conferencia[col_boleta].map(df_lookup[col_horas_mes])
-            df_conferencia['Volume MWm'] = (v_mwh / h_mes).fillna(0).round(4)
+            v_mwh = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[col_volume_mwh]), errors='coerce')
+            h_mes = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[col_horas_mes]), errors='coerce')
+            
+            # --- FORMATAÇÃO: 6 CASAS DECIMAIS PARA MWm ---
+            df_conferencia['Volume MWm'] = (v_mwh / h_mes).fillna(0).round(6)
 
             df_conferencia['CliqCCEE Paradigma'] = df_conferencia[col_boleta].map(df_lookup[col_cliq_para]).apply(tratar_chave)
             df_conferencia['Modulacao WBC']      = df_conferencia[col_boleta].map(df_lookup[col_mod_wbc]).apply(limpar_modulacao)
@@ -253,7 +259,6 @@ if df_bruto is not None:
 
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
 
-            # Ordenação
             df_conferencia['_boleta_num'] = pd.to_numeric(df_conferencia['Boleta_Key'], errors='coerce')
             df_conferencia = df_conferencia.sort_values('_boleta_num').drop(columns=['_boleta_num'])
 
@@ -268,7 +273,6 @@ if df_bruto is not None:
             if parte_f != "Todos": df_final = df_final[df_final['Parte'] == parte_f]
             if rem_zero: df_final = df_final[df_final['Volume MWm'] != 0]
 
-            # Ordem final das colunas na visualização
             ordem = [
                 col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 
                 'CNPJ Contraparte', 'Montante MWh', 'Volume MWm', 
@@ -276,7 +280,17 @@ if df_bruto is not None:
                 'Modulacao Maxima', 'Contrato CliqCCEE mes anterior', 
                 'Comprador', 'Vendedor', 'Contrato CliqCCEE'
             ]
-            st.dataframe(df_final[ordem], hide_index=True, use_container_width=True)
+            
+            # Formatação final para exibição na tabela (forçando as casas decimais)
+            st.dataframe(
+                df_final[ordem], 
+                hide_index=True, 
+                use_container_width=True,
+                column_config={
+                    "Montante MWh": st.column_config.NumberColumn(format="%.3f"),
+                    "Volume MWm": st.column_config.NumberColumn(format="%.6f")
+                }
+            )
         else:
             st.warning(f"Nenhum dado encontrado para {mes_nome_sel}/{ano_sel}")
 
