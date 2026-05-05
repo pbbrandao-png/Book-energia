@@ -74,10 +74,12 @@ meses_nomes = [
 anos = [str(a) for a in range(2024, 2031)]
 
 # Periodo de referencia: inicializa UMA UNICA VEZ, nao muda em reruns
-if 'mes_sel' not in st.session_state:
-    st.session_state['mes_sel'] = meses_nomes[datetime.now().month - 1]
-if 'ano_sel' not in st.session_state:
-    st.session_state['ano_sel'] = str(datetime.now().year)
+# Guarda o INDICE (int) para evitar conflito entre index= e key= no selectbox
+if 'mes_idx' not in st.session_state:
+    st.session_state['mes_idx'] = datetime.now().month - 1   # 0-based
+if 'ano_idx' not in st.session_state:
+    ano_atual = str(datetime.now().year)
+    st.session_state['ano_idx'] = anos.index(ano_atual) if ano_atual in anos else 0
 
 # Dados processados: inicializa como None
 for chave in ['df_bruto', 'dict_mes_anterior', 'dict_comprador', 'dict_vendedor',
@@ -98,26 +100,16 @@ st.sidebar.title("Configuracoes")
 
 st.sidebar.subheader("Periodo de Referencia")
 
-# Usando key diretamente vinculado ao session_state.
-# O Streamlit atualiza session_state['mes_sel'] automaticamente quando
-# o usuario muda o selectbox, e o index inicial vem do valor ja salvo.
-st.sidebar.selectbox(
-    "Mes",
-    meses_nomes,
-    index=meses_nomes.index(st.session_state['mes_sel']),
-    key='mes_sel',
-)
-st.sidebar.selectbox(
-    "Ano",
-    anos,
-    index=anos.index(st.session_state['ano_sel']) if st.session_state['ano_sel'] in anos else 0,
-    key='ano_sel',
-)
+# CORRETO: key= aponta para o INDICE (int). Sem index= separado.
+# O Streamlit usa session_state['mes_idx'] como valor inicial E
+# atualiza automaticamente quando o usuario muda — sem conflito.
+st.sidebar.selectbox("Mes", meses_nomes, key='mes_idx')
+st.sidebar.selectbox("Ano", anos,        key='ano_idx')
 
-# Lê diretamente do session_state - sempre o valor atual
-mes_nome_sel = st.session_state['mes_sel']
-mes_num_sel  = meses_nomes.index(mes_nome_sel) + 1
-ano_sel      = st.session_state['ano_sel']
+# Deriva os valores de exibicao a partir do indice salvo
+mes_nome_sel = meses_nomes[st.session_state['mes_idx']]
+mes_num_sel  = st.session_state['mes_idx'] + 1
+ano_sel      = anos[st.session_state['ano_idx']]
 
 st.sidebar.markdown("---")
 
