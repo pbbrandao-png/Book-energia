@@ -50,34 +50,19 @@ def carregar_csv_cliq(arquivo):
 # ─────────────────────────────────────────────────────────────────────────────
 # MAPEAMENTO DE COLUNAS POR BASE CLIQ
 # ─────────────────────────────────────────────────────────────────────────────
-# Centraliza aqui quais colunas de cada base contêm Vendedor e Comprador.
-# Para adicionar/alterar uma base, basta editar este dicionário.
+# Usa os NOMES REAIS das colunas dos CSVs (não posição/letra Excel).
+# Inspecionando os arquivos, todas as bases têm:
+#   Vendedor  → SIGLA_AGENTE_VENDEDOR
+#   Comprador → SIGLA_AGENTE_COMPRADOR
 #
-#   matrix / bismut → Vendedor: V  | Comprador: AF
-#   cbr             → Vendedor: U  | Comprador: AE
-#   ccear           → Vendedor: Q  | Comprador: Z
+# Se alguma base usar coluna diferente, basta alterar o valor aqui.
 # ─────────────────────────────────────────────────────────────────────────────
 COLUNAS_CLIQ = {
-    'matrix': {'vendedor': 'V',  'comprador': 'AF'},
-    'bismut': {'vendedor': 'V',  'comprador': 'AF'},
-    'cbr':    {'vendedor': 'U',  'comprador': 'AE'},
-    'ccear':  {'vendedor': 'Q',  'comprador': 'Z'},
+    'matrix': {'vendedor': 'SIGLA_PERFIL_VENDEDOR',  'comprador': 'SIGLA_PERFIL_COMPRADOR'},
+    'bismut': {'vendedor': 'SIGLA_PERFIL_VENDEDOR',  'comprador': 'SIGLA_PERFIL_COMPRADOR'},
+    'cbr':    {'vendedor': 'SIGLA_PERFIL_VENDEDOR',  'comprador': 'SIGLA_PERFIL_COMPRADOR'},
+    'ccear':  {'vendedor': 'SIGLA_PERFIL_VENDEDOR',  'comprador': 'SIGLA_PERFIL_COMPRADOR'},
 }
-
-def letra_para_nome_coluna(df, letra):
-    """
-    Converte letra(s) de coluna Excel (ex: 'AF') para o nome real
-    da coluna no DataFrame, usando posição (A=0, B=1, ..., Z=25, AA=26...).
-    Retorna None se fora do range.
-    """
-    letra = letra.upper().strip()
-    idx = 0
-    for c in letra:
-        idx = idx * 26 + (ord(c) - ord('A') + 1)
-    idx -= 1  # base 0
-    if idx < len(df.columns):
-        return df.columns[idx]
-    return None
 
 def buscar_cliq_ccee(cod_paradigma, cod_mes_anterior, df_cliq, tipo_base,
                      nome_vendedor, nome_comprador):
@@ -85,18 +70,18 @@ def buscar_cliq_ccee(cod_paradigma, cod_mes_anterior, df_cliq, tipo_base,
     Busca o código do contrato na base Cliq aplicando 4 critérios:
       1. Código existe no índice
       2. SITUACAO_CONTRATO != 'RASCUNHO'
-      3. Vendedor bate exatamente (case-insensitive) com o Exportador
-      4. Comprador bate exatamente (case-insensitive) com o Exportador
+      3. SIGLA_AGENTE_VENDEDOR bate com o Vendedor do Exportador (case-insensitive)
+      4. SIGLA_AGENTE_COMPRADOR bate com o Comprador do Exportador (case-insensitive)
 
-    Testa primeiro o cod_paradigma; se reprovar, testa cod_mes_anterior.
+    Testa primeiro cod_paradigma; se reprovar, testa cod_mes_anterior.
     Retorna o código aprovado ou "Verificar".
     """
     if df_cliq is None:
         return "Verificar"
 
     mapa     = COLUNAS_CLIQ.get(tipo_base, {})
-    col_vend = letra_para_nome_coluna(df_cliq, mapa.get('vendedor', '')) if mapa.get('vendedor') else None
-    col_comp = letra_para_nome_coluna(df_cliq, mapa.get('comprador', '')) if mapa.get('comprador') else None
+    col_vend = mapa.get('vendedor')
+    col_comp = mapa.get('comprador')
 
     def checar(codigo):
         codigo = tratar_chave(codigo)
@@ -113,14 +98,14 @@ def buscar_cliq_ccee(cod_paradigma, cod_mes_anterior, df_cliq, tipo_base,
             return False
 
         # Critério 2: Vendedor deve bater (só valida se Exportador trouxe valor)
-        if col_vend:
+        if col_vend and col_vend in df_cliq.columns:
             vend_exp  = limpar_str(nome_vendedor)
             vend_cliq = limpar_str(row.get(col_vend, ''))
             if vend_exp and vend_cliq != vend_exp:
                 return False
 
         # Critério 3: Comprador deve bater
-        if col_comp:
+        if col_comp and col_comp in df_cliq.columns:
             comp_exp  = limpar_str(nome_comprador)
             comp_cliq = limpar_str(row.get(col_comp, ''))
             if comp_exp and comp_cliq != comp_exp:
@@ -230,8 +215,7 @@ if fid_pessoas != st.session_state['fid_pessoas']:
     st.session_state['dict_vendedor']  = dict_v
 
 # ── Cliq CCEE ────────────────────────────────────────────────────────────────
-# As bases são armazenadas SEPARADAMENTE (db_ccear, db_cbr, db_matrix, db_bismut)
-# para que buscar_cliq_ccee saiba qual mapeamento de colunas usar em cada uma.
+# Cada base carregada separadamente para preservar o mapeamento de colunas.
 if (get_file_id(arq_ccear), get_file_id(arq_cbr), get_file_id(arq_cceal1)) != st.session_state['chave_matrix']:
     st.session_state['chave_matrix'] = (get_file_id(arq_ccear), get_file_id(arq_cbr), get_file_id(arq_cceal1))
     st.session_state['db_ccear']  = carregar_csv_cliq(arq_ccear)
@@ -290,23 +274,21 @@ if df_bruto is not None:
             # ── Contrato CliqCCEE ─────────────────────────────────────────────
             #
             # Fluxo de decisão por linha:
+            #   - Parte contém "BISMUT" → busca APENAS em db_bismut
+            #   - Caso contrário, tenta em ordem: ccear → cbr → matrix
+            #     Retorna o primeiro código que passar em TODOS os critérios.
             #
-            #  ┌─ Parte contém "BISMUT"? ──► busca em db_bismut (col V / AF)
-            #  └─ Caso contrário, tenta na ordem:
-            #       1. db_ccear  (col Q / Z)
-            #       2. db_cbr    (col U / AE)
-            #       3. db_matrix (col V / AF)
-            #     → retorna o primeiro código que passar em TODOS os critérios
-            #     → se nenhum passar: "Verificar"
-            #
-            # Critérios dentro de cada base:
-            #   ✓ Código existe no índice
+            # Critérios (função buscar_cliq_ccee):
+            #   ✓ Código existe no índice da base
             #   ✓ SITUACAO_CONTRATO != RASCUNHO
-            #   ✓ Vendedor (Exportador) == coluna vendedor da base (case-insensitive)
-            #   ✓ Comprador (Exportador) == coluna comprador da base (case-insensitive)
+            #   ✓ SIGLA_AGENTE_VENDEDOR == Vendedor do Exportador (case-insensitive)
+            #   ✓ SIGLA_AGENTE_COMPRADOR == Comprador do Exportador (case-insensitive)
+            #
+            # OBS: se o Exportador não trouxer nome (valor "-"), a validação de
+            # nome é ignorada para aquele campo (não gera falso Verificar).
             def resolver(row):
-                vend    = row['Vendedor']
-                comp    = row['Comprador']
+                vend    = row['Vendedor']    if row['Vendedor']    != "-" else ""
+                comp    = row['Comprador']   if row['Comprador']   != "-" else ""
                 cod_par = row['CliqCCEE Paradigma']
                 cod_ant = row['Contrato CliqCCEE mes anterior']
                 parte   = str(row['Parte']).upper()
