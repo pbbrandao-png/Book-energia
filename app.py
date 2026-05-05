@@ -98,9 +98,10 @@ def on_change_ano():
 st.sidebar.selectbox("Mes", meses_nomes, index=meses_nomes.index(st.session_state['mes_sel']), key='_widget_mes', on_change=on_change_mes)
 st.sidebar.selectbox("Ano", anos, index=anos.index(st.session_state['ano_sel']) if st.session_state['ano_sel'] in anos else 0, key='_widget_ano', on_change=on_change_ano)
 
+# ATUALIZA AS VARIAVEIS DE EXIBICAO
 mes_nome_sel = st.session_state['mes_sel']
-mes_num_sel  = meses_nomes.index(mes_nome_sel) + 1
 ano_sel      = st.session_state['ano_sel']
+mes_num_sel  = meses_nomes.index(mes_nome_sel) + 1
 
 st.sidebar.markdown("---")
 
@@ -118,9 +119,10 @@ arq_cbr    = st.sidebar.file_uploader("Cliq CBR Mercado", type=['xlsx', 'csv'])
 arq_cceal1 = st.sidebar.file_uploader("Cliq Matrix",      type=['xlsx', 'csv'])
 arq_cceal2 = st.sidebar.file_uploader("Cliq Bismut",      type=['xlsx', 'csv'])
 
+# TITULO DA PAGINA (Posicionado aqui para respeitar a troca de meses no widget)
 st.title(f"Book de Energia - {mes_nome_sel}/{ano_sel}")
 
-# 5. CACHE DE ARQUIVOS
+# 5. CACHE DE ARQUIVOS NO SESSION STATE
 fid_subido = get_file_id(arquivo_subido)
 if fid_subido != st.session_state['fid_subido']:
     st.session_state['fid_subido'] = fid_subido
@@ -182,7 +184,7 @@ df_bruto = st.session_state['df_bruto']
 dict_mes_anterior, dict_comprador, dict_vendedor = st.session_state['dict_mes_anterior'], st.session_state['dict_comprador'], st.session_state['dict_vendedor']
 db_matrix, db_bismut = st.session_state['db_matrix'], st.session_state['db_bismut']
 
-# 6. PROCESSAMENTO
+# 6. PROCESSAMENTO DA BASE PRINCIPAL
 if df_bruto is not None:
     try:
         col_boleta         = df_bruto.columns[0]
@@ -217,13 +219,18 @@ if df_bruto is not None:
             mask_jaca = df_conferencia['Parte'].str.upper().str.contains('UFV JACARANDA 1', na=False)
             df_conferencia.loc[mask_jaca, 'Tipo Energia'] = 'Incentivada-I5'
             
-            mapa_energia = {'INCENTIVADA-50%': 'Incentivada-I5', 'INCENTIVADA-CQ50%': 'Incentivada-CQ5', 'INCENTIVADA-100%': 'Incentivada-I1', 'INCENTIVADA-0%': 'Incentivada-I0'}
+            mapa_energia = {
+                'INCENTIVADA-50%': 'Incentivada-I5', 
+                'INCENTIVADA-CQ50%': 'Incentivada-CQ5', 
+                'INCENTIVADA-100%': 'Incentivada-I1', 
+                'INCENTIVADA-0%': 'Incentivada-I0'
+            }
             df_conferencia['Tipo Energia'] = df_conferencia['Tipo Energia'].apply(lambda v: mapa_energia.get(str(v).strip().upper(), v))
             
             df_conferencia['Contraparte']      = df_conferencia[col_boleta].map(df_lookup[col_contraparte])
             df_conferencia['CNPJ Contraparte'] = df_conferencia[col_boleta].map(df_lookup[col_cnpj]).apply(formatar_cnpj)
             
-            # --- ADIÇÃO DO MONTANTE MWh (COLUNA R) ---
+            # ADIÇÃO DO MONTANTE MWh (COLUNA R)
             df_conferencia['Montante MWh']     = df_conferencia[col_boleta].map(df_lookup[col_montante_mwh]).fillna(0)
             
             v_mwh = df_conferencia[col_boleta].map(df_lookup[col_volume_mwh])
@@ -246,6 +253,7 @@ if df_bruto is not None:
 
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
 
+            # Ordenação
             df_conferencia['_boleta_num'] = pd.to_numeric(df_conferencia['Boleta_Key'], errors='coerce')
             df_conferencia = df_conferencia.sort_values('_boleta_num').drop(columns=['_boleta_num'])
 
@@ -260,14 +268,17 @@ if df_bruto is not None:
             if parte_f != "Todos": df_final = df_final[df_final['Parte'] == parte_f]
             if rem_zero: df_final = df_final[df_final['Volume MWm'] != 0]
 
+            # Ordem final das colunas na visualização
             ordem = [
                 col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 
-                'CNPJ Contraparte', 'Montante MWh', 'Volume MWm', # <--- ORDEM ATUALIZADA AQUI
+                'CNPJ Contraparte', 'Montante MWh', 'Volume MWm', 
                 'CliqCCEE Paradigma', 'Modulacao WBC', 'Modulacao Minima', 
                 'Modulacao Maxima', 'Contrato CliqCCEE mes anterior', 
                 'Comprador', 'Vendedor', 'Contrato CliqCCEE'
             ]
             st.dataframe(df_final[ordem], hide_index=True, use_container_width=True)
+        else:
+            st.warning(f"Nenhum dado encontrado para {mes_nome_sel}/{ano_sel}")
 
     except Exception as e:
         st.error(f"Erro ao processar: {e}")
