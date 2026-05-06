@@ -435,7 +435,42 @@ if st.session_state['df_bruto'] is not None:
             )
 
             # ─────────────────────────────────────────────────────────────────
-            # PAINEL DE VALIDAÇÃO DE MATCH CCEE
+            # FILTROS E TABELA PRINCIPAL
+            # ─────────────────────────────────────────────────────────────────
+            st.write("### Filtros")
+            f1, f2, f3, f4, f5, f6 = st.columns([2, 2, 2, 1.2, 1.2, 1.2])
+            op_f          = f1.selectbox("Operação",          ["Todos"] + sorted(df_conferencia['Operacao'].unique()))
+            parte_f       = f2.selectbox("Parte",             ["Todos"] + sorted(df_conferencia['Parte'].unique()))
+            cliq_f        = f3.selectbox("Contrato CliqCCEE", ["Todos"] + sorted(df_conferencia['Contrato CliqCCEE'].unique()))
+            zerar_intra   = f4.toggle("Zerar Intraportfólio",  value=False)
+            zerar_entre   = f5.toggle("Zerar Entre Empresas",  value=False)
+            ocultar_vazio = f6.toggle("Ocultar Volumes Zerados", value=False)
+
+            df_final = df_conferencia.copy()
+            if op_f    != "Todos": df_final = df_final[df_final['Operacao'] == op_f]
+            if parte_f != "Todos": df_final = df_final[df_final['Parte'] == parte_f]
+            if cliq_f  != "Todos": df_final = df_final[df_final['Contrato CliqCCEE'] == cliq_f]
+
+            if zerar_intra:
+                mask_i = df_final['Vendedor'].str.lower().str.strip() == df_final['Comprador'].str.lower().str.strip()
+                df_final.loc[mask_i, ['Montante MWh', 'Volume MWm']] = 0.0
+
+            if zerar_entre:
+                mask_p = (
+                    df_final['Parte'].str.contains("BISMUT", na=False, case=False) |
+                    df_final['Parte'].str.contains("GET",    na=False, case=False)
+                )
+                mask_c = (
+                    df_final['Contraparte'].str.upper().str.startswith("MATRIX", na=False) &
+                    ~df_final['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False)
+                )
+                df_final.loc[mask_p & mask_c, ['Montante MWh', 'Volume MWm']] = 0.0
+
+            if ocultar_vazio:
+                df_final = df_final[df_final['Volume MWm'] != 0]
+
+            # ─────────────────────────────────────────────────────────────────
+            # PAINEL DE VALIDAÇÃO DE MATCH CCEE  (usa df_final já filtrado)
             # ─────────────────────────────────────────────────────────────────
             bases_carregadas = [
                 k.replace('db_', '').upper()
@@ -443,25 +478,28 @@ if st.session_state['df_bruto'] is not None:
                 if st.session_state.get(k) is not None
             ]
 
+            # Conta apenas linhas com volume > 0 para o título do expander
+            n_com_volume = int((pd.to_numeric(df_final['Volume MWm'], errors='coerce').fillna(0) != 0).sum())
+
             with st.expander(
-                f"🔍 Validação de Match CCEE  —  bases carregadas: {', '.join(bases_carregadas) if bases_carregadas else 'nenhuma'}",
+                f"🔍 Validação de Match CCEE  —  {n_com_volume} linhas com volume  |  bases: {', '.join(bases_carregadas) if bases_carregadas else 'nenhuma'}",
                 expanded=False
             ):
                 if not bases_carregadas:
                     st.warning("Nenhuma base Cliq CCEE carregada. Faça o upload das bases na barra lateral.")
                 else:
-                    com_match, sem_match, incompleto = gerar_relatorio_match(df_conferencia)
+                    com_match, sem_match, incompleto = gerar_relatorio_match(df_final)
 
-                    total   = len(df_conferencia)
-                    n_ok    = len(com_match)
-                    n_nok   = len(sem_match)
-                    n_inc   = len(incompleto)
+                    total = n_com_volume
+                    n_ok  = len(com_match)
+                    n_nok = len(sem_match)
+                    n_inc = len(incompleto)
 
                     # Métricas resumo
                     c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("Total de linhas", total)
-                    c2.metric("✅ Com match",    n_ok)
-                    c3.metric("❌ Sem match",    n_nok)
+                    c1.metric("Linhas analisadas", total)
+                    c2.metric("✅ Com match",       n_ok)
+                    c3.metric("❌ Sem match",       n_nok)
                     c4.metric("⚠️ Dados incompletos", n_inc)
 
                     st.markdown("---")
@@ -508,41 +546,6 @@ if st.session_state['df_bruto'] is not None:
                                 use_container_width=True,
                                 hide_index=True
                             )
-
-            # ─────────────────────────────────────────────────────────────────
-            # FILTROS E TABELA PRINCIPAL
-            # ─────────────────────────────────────────────────────────────────
-            st.write("### Filtros")
-            f1, f2, f3, f4, f5, f6 = st.columns([2, 2, 2, 1.2, 1.2, 1.2])
-            op_f        = f1.selectbox("Operação",          ["Todos"] + sorted(df_conferencia['Operacao'].unique()))
-            parte_f     = f2.selectbox("Parte",             ["Todos"] + sorted(df_conferencia['Parte'].unique()))
-            cliq_f      = f3.selectbox("Contrato CliqCCEE", ["Todos"] + sorted(df_conferencia['Contrato CliqCCEE'].unique()))
-            zerar_intra = f4.toggle("Zerar Intraportfólio",  value=False)
-            zerar_entre = f5.toggle("Zerar Entre Empresas",  value=False)
-            ocultar_vazio = f6.toggle("Ocultar Volumes Zerados", value=False)
-
-            df_final = df_conferencia.copy()
-            if op_f    != "Todos": df_final = df_final[df_final['Operacao'] == op_f]
-            if parte_f != "Todos": df_final = df_final[df_final['Parte'] == parte_f]
-            if cliq_f  != "Todos": df_final = df_final[df_final['Contrato CliqCCEE'] == cliq_f]
-
-            if zerar_intra:
-                mask_i = df_final['Vendedor'].str.lower().str.strip() == df_final['Comprador'].str.lower().str.strip()
-                df_final.loc[mask_i, ['Montante MWh', 'Volume MWm']] = 0.0
-
-            if zerar_entre:
-                mask_p = (
-                    df_final['Parte'].str.contains("BISMUT", na=False, case=False) |
-                    df_final['Parte'].str.contains("GET",    na=False, case=False)
-                )
-                mask_c = (
-                    df_final['Contraparte'].str.upper().str.startswith("MATRIX", na=False) &
-                    ~df_final['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False)
-                )
-                df_final.loc[mask_p & mask_c, ['Montante MWh', 'Volume MWm']] = 0.0
-
-            if ocultar_vazio:
-                df_final = df_final[df_final['Volume MWm'] != 0]
 
             # ORDEM FINAL DAS COLUNAS
             ordem = [
