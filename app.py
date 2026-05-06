@@ -114,7 +114,7 @@ arq_cceal1, arq_cceal2 = st.sidebar.file_uploader("Cliq Matrix", type=['xlsx', '
 
 st.title(f"Book de Energia - {mes_nome_sel}/{ano_sel_val}")
 
-# 5. CARREGAMENTO DOS DADOS (Com cache de ID)
+# 5. CARREGAMENTO DOS DADOS
 if get_file_id(arquivo_subido) != st.session_state['fid_subido']:
     st.session_state['fid_subido'] = get_file_id(arquivo_subido)
     if arquivo_subido:
@@ -139,7 +139,10 @@ if get_file_id(arquivo_anterior) != st.session_state['fid_anterior']:
     st.session_state['fid_anterior'] = get_file_id(arquivo_anterior)
     if arquivo_anterior:
         df_apoio = pd.read_excel(arquivo_anterior, dtype=str)
-        st.session_state['dict_mes_anterior'] = pd.Series(df_apoio.iloc[:, 1].values, index=df_apoio.iloc[:, 0].apply(tratar_chave).values).to_dict()
+        st.session_state['dict_mes_anterior'] = pd.Series(
+            df_apoio.iloc[:, 1].values, 
+            index=df_apoio.iloc[:, 0].apply(tratar_chave).values
+        ).to_dict()
 
 if get_file_id(arquivo_pessoas) != st.session_state['fid_pessoas']:
     st.session_state['fid_pessoas'] = get_file_id(arquivo_pessoas)
@@ -201,10 +204,14 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Modulacao WBC'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[63]]).apply(limpar_modulacao)
             df_conferencia['% Modulacao Min'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[28]]), errors='coerce')
             df_conferencia['% Modulacao Max'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[29]]), errors='coerce')
+            
+            # Buscando o dado da base do mês anterior
             df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mes_anterior']).fillna("-")
+            
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
             df_conferencia['Vendedor'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
 
+            # Lógica CliqCCEE
             def resolver_cliq(row):
                 vend, comp = (row['Vendedor'] if row['Vendedor'] != "-" else ""), (row['Comprador'] if row['Comprador'] != "-" else "")
                 if 'BISMUT' in str(row['Parte']).upper(): 
@@ -224,7 +231,7 @@ if st.session_state['df_bruto'] is not None:
             parte_f = f2.selectbox("Parte", ["Todos"] + sorted(df_conferencia['Parte'].unique()))
             cliq_f = f3.selectbox("Contrato CliqCCEE", ["Todos"] + sorted(df_conferencia['Contrato CliqCCEE'].unique()))
             zerar_intra = f4.toggle("Zerar Intraportfólio", value=False)
-            ocultar_vazio = f5.toggle("Ocultar Volumes Zerados", value=False) # <--- NOVO FILTRO
+            ocultar_vazio = f5.toggle("Ocultar Volumes Zerados", value=False)
 
             df_final = df_conferencia.copy()
             if op_f != "Todos": df_final = df_final[df_final['Operacao'] == op_f]
@@ -235,7 +242,7 @@ if st.session_state['df_bruto'] is not None:
                 mask = df_final['Vendedor'].str.lower().str.strip() == df_final['Comprador'].str.lower().str.strip()
                 df_final.loc[mask, ['Montante MWh', 'Volume MWm']] = 0.0
             
-            if ocultar_vazio: # <--- LÓGICA DO NOVO FILTRO
+            if ocultar_vazio:
                 df_final = df_final[df_final['Volume MWm'] != 0]
 
             # MÉTRICAS
@@ -246,11 +253,12 @@ if st.session_state['df_bruto'] is not None:
             m3.metric("Total de Boletas na Tela", len(df_final))
             st.markdown("---")
 
-            # EXIBIÇÃO
+            # EXIBIÇÃO - Ordem de Colunas Atualizada
             ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
                     'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
-                    'CliqCCEE Paradigma', 'Modulacao WBC', '% Modulacao Min', '% Modulacao Max', 'Vendedor', 'Comprador',
-                    'Contrato CliqCCEE', 'Situacao ERP', 'Razao Social', 'Pendência Financeira']
+                    'CliqCCEE Paradigma', 'Modulacao WBC', '% Modulacao Min', '% Modulacao Max', 
+                    'Contrato CliqCCEE mes anterior', # <--- NOVA POSIÇÃO
+                    'Vendedor', 'Comprador', 'Contrato CliqCCEE', 'Situacao ERP', 'Razao Social', 'Pendência Financeira']
             
             st.dataframe(df_final[ordem].sort_values(by=col_boleta), use_container_width=True, hide_index=True,
                          column_config={
