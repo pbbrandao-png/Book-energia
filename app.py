@@ -192,8 +192,8 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['CP/LP'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[12]])
             df_conferencia['CNPJ Contraparte'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[4]]).apply(formatar_cnpj)
             df_conferencia['Submercado'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[8]]).replace({'SE/CO': 'Sudeste', 'N': 'Norte', 'NE': 'Nordeste', 'S': 'Sul'})
-            df_conferencia['Montante MWh'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[17]]), errors='coerce').fillna(0).round(3)
             
+            df_conferencia['Montante MWh'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[17]]), errors='coerce').fillna(0).round(3)
             v_mwh = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[20]]), errors='coerce')
             h_mes = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[15]]), errors='coerce')
             df_conferencia['Volume MWm'] = (v_mwh / h_mes).fillna(0).round(6)
@@ -219,15 +219,28 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
 
             # ─────────────────────────────────────────────────────────────────────────────
-            # NOVA COLUNA: Volume BOOK (Lógica SOMA.SE.S)
+            # LOGICA DE SOMA E VALIDAÇÃO DE PAGAMENTO
             # ─────────────────────────────────────────────────────────────────────────────
-            # Agrupamos por Contrato CliqCCEE e somamos o Volume MWm
-            # Filtramos apenas contratos que não sejam "Verificar" ou "-" para a soma
+            
+            # 1. Volume BOOK (SOMA.SE.S(Volume MWm ; Contrato CliqCCEE ; Valor_Linha))
             df_soma_cliq = df_conferencia[~df_conferencia['Contrato CliqCCEE'].isin(['Verificar', '-', ''])].copy()
             dict_soma_book = df_soma_cliq.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
-            
-            # Mapeamos o resultado de volta para a tabela principal
             df_conferencia['Volume BOOK'] = df_conferencia['Contrato CliqCCEE'].map(dict_soma_book).fillna(0.0).round(6)
+
+            # 2. SITUAÇÃO PGTO (SOMA.SE.S(Volume MWm ; Contrato CliqCCEE ; Valor_Linha ; Situacao ERP ; "Pago"))
+            # Filtramos apenas as linhas que já estão como "Pago" no ERP
+            df_pagos = df_conferencia[df_conferencia['Situacao ERP'].astype(str).str.upper() == 'PAGO'].copy()
+            dict_soma_pagos = df_pagos.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
+
+            def validar_pagamento(row):
+                if row['Contrato CliqCCEE'] in ['Verificar', '-', '']: return "-"
+                total_pago = dict_soma_pagos.get(row['Contrato CliqCCEE'], 0.0)
+                # Se a soma dos volumes marcados como "Pago" for igual ao Volume BOOK
+                if round(total_pago, 6) == round(row['Volume BOOK'], 6) and row['Volume BOOK'] > 0:
+                    return "Pago"
+                return "-"
+
+            df_conferencia['SITUAÇÃO PGTO'] = df_conferencia.apply(validar_pagamento, axis=1)
             # ─────────────────────────────────────────────────────────────────────────────
 
             df_conferencia['Pendência Financeira'] = df_conferencia['Razao Social'].str.strip().str.upper().map(st.session_state['dict_pendencias']).fillna(0.0)
@@ -266,14 +279,15 @@ if st.session_state['df_bruto'] is not None:
                     'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
                     'CliqCCEE Paradigma', 'Modulacao WBC', '% Modulacao Min', '% Modulacao Max', 
                     'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 
-                    'Contrato CliqCCEE', 'Volume BOOK', # <--- POSIÇÃO SOLICITADA
-                    'Situacao ERP', 'Razao Social', 'Pendência Financeira']
+                    'Contrato CliqCCEE', 
+                    'SITUAÇÃO PGTO', # <--- POSIÇÃO SOLICITADA
+                    'Volume BOOK', 'Situacao ERP', 'Razao Social', 'Pendência Financeira']
             
             st.dataframe(df_final[ordem].sort_values(by=col_boleta), use_container_width=True, hide_index=True,
                          column_config={
                              "Montante MWh": st.column_config.NumberColumn(format="%.3f"), 
                              "Volume MWm": st.column_config.NumberColumn(format="%.6f"),
-                             "Volume BOOK": st.column_config.NumberColumn(format="%.6f"), # Formatação para Volume BOOK
+                             "Volume BOOK": st.column_config.NumberColumn(format="%.6f"),
                              "% Modulacao Min": st.column_config.NumberColumn(format="%.2f%%"),
                              "% Modulacao Max": st.column_config.NumberColumn(format="%.2f%%"),
                              "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f")
