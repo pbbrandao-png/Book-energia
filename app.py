@@ -6,6 +6,15 @@ from datetime import datetime
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(layout="wide", page_title="Book de Energia")
 
+# ─────────────────────────────────────────────────────────────────────────────
+# LISTA DE DESTAQUE - CONTRATOS ESPECIAIS (BUSCA EM CCEAR_Q + CONVERSÃO MWH)
+# ─────────────────────────────────────────────────────────────────────────────
+CONTRATOS_ESPECIAIS_CCEAR = [
+    "2813298", "2813299", "2813300", "2813301", "2813302", "2813303", 
+    "2813304", "2813305", "4159778", "4159779", "4159780", "4686267", 
+    "4686268", "4686269", "4686270"
+]
+
 # 2. FUNÇÕES DE APOIO
 def formatar_cnpj(cnpj):
     if pd.isna(cnpj) or cnpj == "": return ""
@@ -49,9 +58,7 @@ def carregar_csv_cliq(arquivo):
         return None
     except Exception: return None
 
-# ─────────────────────────────────────────────────────────────────────────────
-# MAPEAMENTO E REGRAS DE BUSCA CLIQ
-# ─────────────────────────────────────────────────────────────────────────────
+# 3. MAPEAMENTO E REGRAS DE BUSCA CLIQ
 COLUNAS_CLIQ = {
     'matrix': {'vendedor': 'SIGLA_PERFIL_VENDEDOR',  'comprador': 'SIGLA_PERFIL_COMPRADOR'},
     'bismut': {'vendedor': 'SIGLA_PERFIL_VENDEDOR',  'comprador': 'SIGLA_PERFIL_COMPRADOR'},
@@ -80,9 +87,9 @@ def buscar_cliq_ccee(cod_paradigma, cod_mes_anterior, df_cliq, tipo_base, nome_v
     if checar(cod_mes_anterior): return tratar_chave(cod_mes_anterior)
     return "Verificar"
 
-# 3. INICIALIZAÇÃO DO SESSION STATE
+# 4. INICIALIZAÇÃO DO SESSION STATE
 meses_nomes = ["Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho",
-               "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+                "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
 anos = [str(a) for a in range(2024, 2031)]
 
 for chave in ['df_bruto', 'dict_mes_anterior', 'dict_comprador', 'dict_vendedor', 'dict_mapa', 'dict_pendencias',
@@ -95,7 +102,7 @@ for chave in ['fid_subido', 'fid_anterior', 'fid_pessoas', 'chave_matrix', 'fid_
 if 'mes_sel' not in st.session_state: st.session_state['mes_sel'] = meses_nomes[datetime.now().month - 1]
 if 'ano_sel' not in st.session_state: st.session_state['ano_sel'] = str(datetime.now().year)
 
-# 4. INTERFACE LATERAL
+# 5. INTERFACE LATERAL
 st.sidebar.title("Configurações")
 mes_nome_sel = st.sidebar.selectbox("Mês", meses_nomes, index=meses_nomes.index(st.session_state['mes_sel']), key='mes_sel')
 ano_sel_val = st.sidebar.selectbox("Ano", anos, index=anos.index(st.session_state['ano_sel']) if st.session_state['ano_sel'] in anos else 0, key='ano_sel')
@@ -114,7 +121,7 @@ arq_cceal1, arq_cceal2 = st.sidebar.file_uploader("Cliq Matrix", type=['xlsx', '
 
 st.title(f"Book de Energia - {mes_nome_sel}/{ano_sel_val}")
 
-# 5. CARREGAMENTO DOS DADOS
+# 6. CARREGAMENTO DOS DADOS
 if get_file_id(arquivo_subido) != st.session_state['fid_subido']:
     st.session_state['fid_subido'] = get_file_id(arquivo_subido)
     if arquivo_subido: st.session_state['df_bruto'] = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
@@ -162,7 +169,7 @@ if get_file_id(arq_cceal2) != st.session_state['fid_cceal2']:
     st.session_state['fid_cceal2'] = get_file_id(arq_cceal2)
     st.session_state['db_bismut'] = carregar_csv_cliq(arq_cceal2)
 
-# 6. PROCESSAMENTO DA TABELA
+# 7. PROCESSAMENTO DA TABELA
 if st.session_state['df_bruto'] is not None:
     try:
         df_base = st.session_state['df_bruto'].copy()
@@ -232,9 +239,26 @@ if st.session_state['df_bruto'] is not None:
             dict_soma_book = df_soma_cliq.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
             df_conferencia['Volume BOOK'] = df_conferencia['Contrato CliqCCEE'].map(dict_soma_book).fillna(0.0).round(6)
 
+            # --- NOVA LÓGICA VOLUME CLIQCCEE COM CONVERSÃO MWH ---
             def buscar_volume_cliq(row):
                 cod = row['Contrato CliqCCEE']
                 if cod in ['Verificar', '-', '']: return 0.0
+                
+                h_mes_valor = h_mes.iloc[0] if not pd.isna(h_mes.iloc[0]) else 744
+
+                # REGRA DE DESTAQUE: Busca apenas na db_ccear (Cliq CCEAR_Q) e converte
+                if cod in CONTRATOS_ESPECIAIS_CCEAR:
+                    df_cliq = st.session_state.get('db_ccear')
+                    if df_cliq is not None and cod in df_cliq.index:
+                        val = df_cliq.loc[cod, 'MONTANTE_MENSAL_MWh']
+                        if isinstance(val, pd.Series): val = val.iloc[0]
+                        if not pd.isna(val) and val != "":
+                            try:
+                                return float(str(val).replace(',', '.')) / h_mes_valor
+                            except: pass
+                    return 0.0 # Se for destaque e não achar na CCEAR_Q, retorna 0
+
+                # REGRA PADRÃO: Percorre todas as bases buscando MWmedio
                 for db_key in ['db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
                     df_cliq = st.session_state.get(db_key)
                     if df_cliq is not None and cod in df_cliq.index:
@@ -244,6 +268,7 @@ if st.session_state['df_bruto'] is not None:
                         try: return float(str(val).replace(',', '.'))
                         except: continue
                 return 0.0
+            
             df_conferencia['Volume CliqCCEE'] = df_conferencia.apply(buscar_volume_cliq, axis=1).fillna(0.0).round(6)
 
             # --- LÓGICA SITUAÇÃO PGTO ---
@@ -284,7 +309,7 @@ if st.session_state['df_bruto'] is not None:
                 df_final.loc[mask_p & mask_c, ['Montante MWh', 'Volume MWm']] = 0.0
             if ocultar_vazio: df_final = df_final[df_final['Volume MWm'] != 0]
 
-            # ORDEM FINAL DAS COLUNAS (INCLUINDO TUDO)
+            # ORDEM FINAL DAS COLUNAS
             ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
                     'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
                     'CliqCCEE Paradigma', 'Modulacao WBC', '% Modulacao Min', '% Modulacao Max', 
