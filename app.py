@@ -172,7 +172,7 @@ if df_bruto is not None:
             df_conferencia['Operacao'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[1]]).astype(str)
             df_conferencia['Parte'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[62]]).astype(str).str.strip()
             
-            # Razão Social (Coluna C do Excel Original - Índice 2)
+            # Razão Social
             df_conferencia['Razao Social'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[2]]).astype(str).str.strip()
 
             # De/Para Energia e Regra Jacaranda
@@ -191,7 +191,6 @@ if df_bruto is not None:
             h_mes = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[15]]), errors='coerce')
             df_conferencia['Volume MWm'] = (v_mwh / h_mes).fillna(0).round(6)
 
-            # Nova Coluna: Situacao ERP (Vinda do Mapa Financeiro)
             df_conferencia['Situacao ERP'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mapa']).fillna("-")
 
             # Modulações e Cliq
@@ -200,8 +199,6 @@ if df_bruto is not None:
             df_conferencia['Modulacao Minima'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[28]])
             df_conferencia['Modulacao Maxima'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[29]])
             df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mes_anterior']).fillna("-")
-            
-            # Aqui as siglas Vendedor e Comprador são puxadas do dicionário (Base 3)
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
             df_conferencia['Vendedor'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
 
@@ -220,36 +217,34 @@ if df_bruto is not None:
             f1, f2, f3, f4 = st.columns([2, 2, 2, 1])
             op_f = f1.selectbox("Operação", ["Todos"] + sorted(df_conferencia['Operacao'].dropna().unique().tolist()))
             parte_f = f2.selectbox("Parte", ["Todos"] + sorted(df_conferencia['Parte'].dropna().unique().tolist()))
-            sit_f = f3.selectbox("Situação ERP", ["Todos"] + sorted(df_conferencia['Situacao ERP'].dropna().unique().tolist()))
+            
+            # --- NOVO FILTRO: CONTRATO CLIQ (INICIA EM VERIFICAR) ---
+            opcoes_cliq = ["Todos"] + sorted(df_conferencia['Contrato CliqCCEE'].dropna().unique().tolist())
+            idx_verificar = opcoes_cliq.index("Verificar") if "Verificar" in opcoes_cliq else 0
+            cliq_f = f3.selectbox("Contrato CliqCCEE", opcoes_cliq, index=idx_verificar)
+            
             rem_zero = f4.toggle("Ocultar Zero", value=False)
             zerar_intra = f4.toggle("Zerar Intraportfólio", value=False)
 
             df_final = df_conferencia.copy()
             if op_f != "Todos": df_final = df_final[df_final['Operacao'] == op_f]
             if parte_f != "Todos": df_final = df_final[df_final['Parte'] == parte_f]
-            if sit_f != "Todos": df_final = df_final[df_final['Situacao ERP'] == sit_f]
+            if cliq_f != "Todos": df_final = df_final[df_final['Contrato CliqCCEE'] == cliq_f]
+            
             if zerar_intra:
                 mask = df_final['Vendedor'].str.lower().str.strip() == df_final['Comprador'].str.lower().str.strip()
                 df_final.loc[mask, ['Montante MWh', 'Volume MWm']] = 0.0
             if rem_zero: df_final = df_final[df_final['Volume MWm'] != 0]
 
-            # ORDEM DAS COLUNAS (Incluindo as siglas Vendedor e Comprador da Base 3)
-            ordem = [
-                col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
-                'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
-                'CliqCCEE Paradigma', 'Modulacao WBC', 
-                'Vendedor',      # Sigla Vendedor do Exportador (4)
-                'Comprador',     # Sigla Comprador do Exportador (4)
-                'Contrato CliqCCEE', 
-                'Situacao ERP', 'Razao Social'
-            ]
+            ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
+                    'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
+                    'CliqCCEE Paradigma', 'Modulacao WBC', 'Vendedor', 'Comprador',
+                    'Contrato CliqCCEE', 'Situacao ERP', 'Razao Social']
             
             st.dataframe(df_final[ordem].sort_values(by=col_boleta), hide_index=True, use_container_width=True,
                          column_config={
                              "Montante MWh": st.column_config.NumberColumn(format="%.3f"), 
-                             "Volume MWm": st.column_config.NumberColumn(format="%.6f"),
-                             "Vendedor": "Sigla Vendedor CCEE",
-                             "Comprador": "Sigla Comprador CCEE"
+                             "Volume MWm": st.column_config.NumberColumn(format="%.6f")
                          })
         else: st.warning(f"Sem dados para {mes_nome_sel}/{ano_sel}")
     except Exception as e: st.error(f"Erro no processamento: {e}")
