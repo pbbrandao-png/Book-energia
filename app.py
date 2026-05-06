@@ -120,7 +120,6 @@ if get_file_id(arquivo_subido) != st.session_state['fid_subido']:
     if arquivo_subido:
         st.session_state['df_bruto'] = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
 
-# --- CORREÇÃO: LÓGICA DE SOMA DE PENDÊNCIA COM NORMALIZAÇÃO ---
 if get_file_id(arquivo_pendencias) != st.session_state['fid_pendencias']:
     st.session_state['fid_pendencias'] = get_file_id(arquivo_pendencias)
     if arquivo_pendencias:
@@ -129,19 +128,12 @@ if get_file_id(arquivo_pendencias) != st.session_state['fid_pendencias']:
             df_p_simples = df_p.iloc[:, [4, 8]].copy()
             df_p_simples.columns = ['razao_social_pend', 'valor_pendente']
             df_p_simples['valor_pendente'] = pd.to_numeric(df_p_simples['valor_pendente'], errors='coerce').fillna(0)
-            # CORREÇÃO: normalizar a chave para evitar falhas de match
-            df_p_simples['razao_social_pend'] = (
-                df_p_simples['razao_social_pend']
-                .astype(str)
-                .str.strip()
-                .str.upper()
-            )
+            df_p_simples['razao_social_pend'] = df_p_simples['razao_social_pend'].astype(str).str.strip().str.upper()
             df_somado = df_p_simples.groupby('razao_social_pend')['valor_pendente'].sum().reset_index()
             st.session_state['dict_pendencias'] = dict(zip(df_somado['razao_social_pend'], df_somado['valor_pendente']))
         except Exception as e:
             st.session_state['dict_pendencias'] = {}
             st.warning(f"Erro ao carregar pendências: {e}")
-# --------------------------------------------------------------
 
 if get_file_id(arquivo_anterior) != st.session_state['fid_anterior']:
     st.session_state['fid_anterior'] = get_file_id(arquivo_anterior)
@@ -213,7 +205,6 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
             df_conferencia['Vendedor'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
 
-            # Lógica CliqCCEE
             def resolver_cliq(row):
                 vend, comp = (row['Vendedor'] if row['Vendedor'] != "-" else ""), (row['Comprador'] if row['Comprador'] != "-" else "")
                 if 'BISMUT' in str(row['Parte']).upper(): 
@@ -224,31 +215,28 @@ if st.session_state['df_bruto'] is not None:
                 return "Verificar"
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
 
-            # --- CORREÇÃO: MAPEAMENTO DA PENDÊNCIA COM NORMALIZAÇÃO ---
-            df_conferencia['Pendência Financeira'] = (
-                df_conferencia['Razao Social']
-                .str.strip()
-                .str.upper()
-                .map(st.session_state['dict_pendencias'])
-                .fillna(0.0)
-            )
-            # ----------------------------------------------------------
+            df_conferencia['Pendência Financeira'] = df_conferencia['Razao Social'].str.strip().str.upper().map(st.session_state['dict_pendencias']).fillna(0.0)
 
             # FILTROS
             st.write("### Filtros")
-            f1, f2, f3, f4 = st.columns([2, 2, 2, 1])
+            f1, f2, f3, f4, f5 = st.columns([2, 2, 2, 1, 1])
             op_f = f1.selectbox("Operação", ["Todos"] + sorted(df_conferencia['Operacao'].unique()))
             parte_f = f2.selectbox("Parte", ["Todos"] + sorted(df_conferencia['Parte'].unique()))
             cliq_f = f3.selectbox("Contrato CliqCCEE", ["Todos"] + sorted(df_conferencia['Contrato CliqCCEE'].unique()))
             zerar_intra = f4.toggle("Zerar Intraportfólio", value=False)
+            ocultar_vazio = f5.toggle("Ocultar Volumes Zerados", value=False) # <--- NOVO FILTRO
 
             df_final = df_conferencia.copy()
             if op_f != "Todos": df_final = df_final[df_final['Operacao'] == op_f]
             if parte_f != "Todos": df_final = df_final[df_final['Parte'] == parte_f]
             if cliq_f != "Todos": df_final = df_final[df_final['Contrato CliqCCEE'] == cliq_f]
+            
             if zerar_intra:
                 mask = df_final['Vendedor'].str.lower().str.strip() == df_final['Comprador'].str.lower().str.strip()
                 df_final.loc[mask, ['Montante MWh', 'Volume MWm']] = 0.0
+            
+            if ocultar_vazio: # <--- LÓGICA DO NOVO FILTRO
+                df_final = df_final[df_final['Volume MWm'] != 0]
 
             # MÉTRICAS
             st.markdown("---")
