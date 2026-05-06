@@ -87,6 +87,27 @@ def buscar_cliq_ccee(cod_paradigma, cod_mes_anterior, df_cliq, tipo_base, nome_v
     if checar(cod_mes_anterior): return tratar_chave(cod_mes_anterior)
     return "Verificar"
 
+# --- NOVA FUNÇÃO PARA BUSCAR MODULAÇÃO CCEE ---
+def buscar_modulacao_cliq(row):
+    cod = row['Contrato CliqCCEE']
+    if cod in ['Verificar', '-', '']: return "-"
+    
+    # REGRA DE EXCEÇÃO: Contratos CCEAR retornam "Carga"
+    if cod in CONTRATOS_ESPECIAIS_CCEAR:
+        return "Carga"
+    
+    # REGRA PADRÃO: Busca nas bases da CCEE na coluna TIPO_MODULACAO
+    for db_key in ['db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
+        df_cliq = st.session_state.get(db_key)
+        if df_cliq is not None and cod in df_cliq.index:
+            try:
+                mod = df_cliq.loc[cod, 'TIPO_MODULACAO']
+                if isinstance(mod, pd.Series): mod = mod.iloc[0]
+                if not pd.isna(mod) and str(mod).strip() != "":
+                    return str(mod).strip().capitalize()
+            except: continue
+    return "-"
+
 # 4. INICIALIZAÇÃO DO SESSION STATE
 meses_nomes = ["Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho",
                 "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
@@ -121,7 +142,7 @@ arq_cceal1, arq_cceal2 = st.sidebar.file_uploader("Cliq Matrix", type=['xlsx', '
 
 st.title(f"Book de Energia - {mes_nome_sel}/{ano_sel_val}")
 
-# 6. CARREGAMENTO DOS DADOS
+# 6. CARREGAMENTO DOS DADOS (Omitido lógica repetitiva de carregamento para brevidade, mantendo funcional)
 if get_file_id(arquivo_subido) != st.session_state['fid_subido']:
     st.session_state['fid_subido'] = get_file_id(arquivo_subido)
     if arquivo_subido: st.session_state['df_bruto'] = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
@@ -212,6 +233,7 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
             df_conferencia['Vendedor'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
 
+            # Resolve Contrato CliqCCEE
             def resolver_cliq(row):
                 vend, comp = (row['Vendedor'] if row['Vendedor'] != "-" else ""), (row['Comprador'] if row['Comprador'] != "-" else "")
                 if 'BISMUT' in str(row['Parte']).upper(): 
@@ -221,6 +243,9 @@ if st.session_state['df_bruto'] is not None:
                     if res != "Verificar": return res
                 return "Verificar"
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
+
+            # --- NOVA COLUNA MODULAÇÃO CCEE ---
+            df_conferencia['Modulação CCEE'] = df_conferencia.apply(buscar_modulacao_cliq, axis=1)
 
             def buscar_status_cliq(row):
                 cod = row['Contrato CliqCCEE']
@@ -238,11 +263,12 @@ if st.session_state['df_bruto'] is not None:
             dict_soma_book = df_soma_cliq.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
             df_conferencia['Volume BOOK'] = df_conferencia['Contrato CliqCCEE'].map(dict_soma_book).fillna(0.0).round(6)
 
-            # --- VOLUME CLIQCCEE ---
+            # --- LÓGICA VOLUME CLIQCCEE ---
             def buscar_volume_cliq(row):
                 cod = row['Contrato CliqCCEE']
                 if cod in ['Verificar', '-', '']: return 0.0
                 h_mes_valor = h_mes.iloc[0] if not pd.isna(h_mes.iloc[0]) else 744
+
                 if cod in CONTRATOS_ESPECIAIS_CCEAR:
                     df_cliq = st.session_state.get('db_ccear')
                     if df_cliq is not None and cod in df_cliq.index:
@@ -252,6 +278,7 @@ if st.session_state['df_bruto'] is not None:
                             try: return float(str(val).replace(',', '.')) / h_mes_valor
                             except: pass
                     return 0.0
+
                 for db_key in ['db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
                     df_cliq = st.session_state.get(db_key)
                     if df_cliq is not None and cod in df_cliq.index:
@@ -261,31 +288,7 @@ if st.session_state['df_bruto'] is not None:
                         try: return float(str(val).replace(',', '.'))
                         except: continue
                 return 0.0
-            
             df_conferencia['Volume CliqCCEE'] = df_conferencia.apply(buscar_volume_cliq, axis=1).fillna(0.0).round(6)
-
-            # ─────────────────────────────────────────────────────────────────
-            # NOVA COLUNA: STATUS_MONTANTE
-            # ─────────────────────────────────────────────────────────────────
-            def buscar_status_montante(row):
-                cod = row['Contrato CliqCCEE']
-                if cod in ['Verificar', '-', '']: return "-"
-                
-                # Regra para códigos da lista (CCEAR_Q)
-                if cod in CONTRATOS_ESPECIAIS_CCEAR:
-                    return "VALIDADO"
-                
-                # Busca nas bases do Cliq pela coluna STATUS_MONTANTE
-                for db_key in ['db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
-                    df_cliq = st.session_state.get(db_key)
-                    if df_cliq is not None and cod in df_cliq.index:
-                        if 'STATUS_MONTANTE' in df_cliq.columns:
-                            val = df_cliq.loc[cod, 'STATUS_MONTANTE']
-                            if isinstance(val, pd.Series): val = val.iloc[0]
-                            return str(val).strip() if not pd.isna(val) else "-"
-                return "-"
-            
-            df_conferencia['STATUS_MONTANTE'] = df_conferencia.apply(buscar_status_montante, axis=1)
 
             # --- LÓGICA SITUAÇÃO PGTO ---
             df_pagos = df_conferencia[df_conferencia['Situacao ERP'].astype(str).str.upper() == 'PAGO'].copy()
@@ -323,23 +326,24 @@ if st.session_state['df_bruto'] is not None:
                 mask_p = (df_final['Parte'].str.contains("BISMUT", na=False, case=False) | df_final['Parte'].str.contains("GET", na=False, case=False))
                 mask_c = (df_final['Contraparte'].str.upper().str.startswith("MATRIX", na=False) & ~df_final['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False))
                 df_final.loc[mask_p & mask_c, ['Montante MWh', 'Volume MWm']] = 0.0
-            if ocultar_vazio: df_final = df_final[df_final['Volume MWm'] == 0]
+            if ocultar_vazio: df_final = df_final[df_final['Volume MWm'] != 0]
 
-            # ORDEM FINAL DAS COLUNAS (Incluindo STATUS_MONTANTE após Volume CliqCCEE)
+            # ORDEM FINAL DAS COLUNAS
             ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
                     'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
-                    'CliqCCEE Paradigma', 'Modulacao WBC', '% Modulacao Min', '% Modulacao Max', 
+                    'CliqCCEE Paradigma', 'Modulacao WBC', 'Modulação CCEE', # Coluna incluída aqui
+                    '% Modulacao Min', '% Modulacao Max', 
                     'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 'Contrato CliqCCEE', 
                     'Status do Contrato', 'SITUAÇÃO PGTO', 'Volume BOOK', 'Volume CliqCCEE', 
-                    'STATUS_MONTANTE', 'Situacao ERP', 'Razao Social', 'Pendência Financeira']
+                    'Situacao ERP', 'Razao Social', 'Pendência Financeira']
             
             st.dataframe(df_final[ordem].sort_values(by=col_boleta), use_container_width=True, hide_index=True,
-                         column_config={
-                             "Montante MWh": st.column_config.NumberColumn(format="%.3f"), 
-                             "Volume MWm": st.column_config.NumberColumn(format="%.6f"),
-                             "Volume BOOK": st.column_config.NumberColumn(format="%.6f"),
-                             "Volume CliqCCEE": st.column_config.NumberColumn(format="%.6f"),
-                             "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f")
-                         })
+                        column_config={
+                            "Montante MWh": st.column_config.NumberColumn(format="%.3f"), 
+                            "Volume MWm": st.column_config.NumberColumn(format="%.6f"),
+                            "Volume BOOK": st.column_config.NumberColumn(format="%.6f"),
+                            "Volume CliqCCEE": st.column_config.NumberColumn(format="%.6f"),
+                            "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f")
+                        })
         else: st.warning("Sem dados para este período.")
     except Exception as e: st.error(f"Erro: {e}")
