@@ -200,6 +200,8 @@ if df_bruto is not None:
             df_conferencia['Modulacao Minima'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[28]])
             df_conferencia['Modulacao Maxima'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[29]])
             df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mes_anterior']).fillna("-")
+            
+            # Aqui as siglas Vendedor e Comprador são puxadas do dicionário (Base 3)
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
             df_conferencia['Vendedor'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
 
@@ -231,16 +233,23 @@ if df_bruto is not None:
                 df_final.loc[mask, ['Montante MWh', 'Volume MWm']] = 0.0
             if rem_zero: df_final = df_final[df_final['Volume MWm'] != 0]
 
-            # ORDEM DAS COLUNAS (Razão Social adicionada ao final)
-            ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
-                     'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
-                     'CliqCCEE Paradigma', 'Modulacao WBC', 'Contrato CliqCCEE', 
-                     'Situacao ERP', 'Razao Social']
+            # ORDEM DAS COLUNAS (Incluindo as siglas Vendedor e Comprador da Base 3)
+            ordem = [
+                col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
+                'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
+                'CliqCCEE Paradigma', 'Modulacao WBC', 
+                'Vendedor',      # Sigla Vendedor do Exportador (4)
+                'Comprador',     # Sigla Comprador do Exportador (4)
+                'Contrato CliqCCEE', 
+                'Situacao ERP', 'Razao Social'
+            ]
             
             st.dataframe(df_final[ordem].sort_values(by=col_boleta), hide_index=True, use_container_width=True,
                          column_config={
                              "Montante MWh": st.column_config.NumberColumn(format="%.3f"), 
-                             "Volume MWm": st.column_config.NumberColumn(format="%.6f")
+                             "Volume MWm": st.column_config.NumberColumn(format="%.6f"),
+                             "Vendedor": "Sigla Vendedor CCEE",
+                             "Comprador": "Sigla Comprador CCEE"
                          })
         else: st.warning(f"Sem dados para {mes_nome_sel}/{ano_sel}")
     except Exception as e: st.error(f"Erro no processamento: {e}")
