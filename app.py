@@ -233,17 +233,19 @@ if df_bruto is not None:
             if rem_zero: df_final = df_final[df_final['Volume MWm'] != 0]
 
             # ─────────────────────────────────────────────────────────────────────────────
-            # BLOCO DE TOTAIS INTERATIVOS
+            # BLOCO DE TOTAIS INTERATIVOS (CONTAGEM DE OPERAÇÕES)
             # ─────────────────────────────────────────────────────────────────────────────
-            total_compras = df_final[df_final['Operacao'].str.upper().str.contains('COMPRA', na=False)]['Volume MWm'].sum()
-            total_vendas = df_final[df_final['Operacao'].str.upper().str.contains('VENDA', na=False)]['Volume MWm'].sum()
+            # Conta a quantidade de linhas para Compra e Venda
+            count_compras = len(df_final[df_final['Operacao'].str.upper().str.contains('COMPRA', na=False)])
+            count_vendas = len(df_final[df_final['Operacao'].str.upper().str.contains('VENDA', na=False)])
             total_boletas = len(df_final)
 
             st.markdown("---")
             m1, m2, m3 = st.columns(3)
-            m1.metric("Total Compras (MWm)", f"{total_compras:,.4f}".replace(",", "X").replace(".", ",").replace("X", "."))
-            m2.metric("Total Vendas (MWm)", f"{total_vendas:,.4f}".replace(",", "X").replace(".", ",").replace("X", "."))
-            m3.metric("Total de Boletas", total_boletas)
+            # Exibe a quantidade de boletas filtradas por categoria
+            m1.metric("Qtd. Operações Compra", count_compras)
+            m2.metric("Qtd. Operações Venda", count_vendas)
+            m3.metric("Total de Boletas na Tela", total_boletas)
             st.markdown("---")
 
             # Exibição da Tabela
