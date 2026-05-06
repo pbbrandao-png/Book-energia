@@ -120,6 +120,7 @@ if get_file_id(arquivo_subido) != st.session_state['fid_subido']:
     if arquivo_subido:
         st.session_state['df_bruto'] = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
 
+# [CARREGAMENTO DE OUTROS DICIONÁRIOS MANTIDO...]
 if get_file_id(arquivo_pendencias) != st.session_state['fid_pendencias']:
     st.session_state['fid_pendencias'] = get_file_id(arquivo_pendencias)
     if arquivo_pendencias:
@@ -133,16 +134,12 @@ if get_file_id(arquivo_pendencias) != st.session_state['fid_pendencias']:
             st.session_state['dict_pendencias'] = dict(zip(df_somado['razao_social_pend'], df_somado['valor_pendente']))
         except Exception as e:
             st.session_state['dict_pendencias'] = {}
-            st.warning(f"Erro ao carregar pendências: {e}")
 
 if get_file_id(arquivo_anterior) != st.session_state['fid_anterior']:
     st.session_state['fid_anterior'] = get_file_id(arquivo_anterior)
     if arquivo_anterior:
         df_apoio = pd.read_excel(arquivo_anterior, dtype=str)
-        st.session_state['dict_mes_anterior'] = pd.Series(
-            df_apoio.iloc[:, 1].values, 
-            index=df_apoio.iloc[:, 0].apply(tratar_chave).values
-        ).to_dict()
+        st.session_state['dict_mes_anterior'] = pd.Series(df_apoio.iloc[:, 1].values, index=df_apoio.iloc[:, 0].apply(tratar_chave).values).to_dict()
 
 if get_file_id(arquivo_pessoas) != st.session_state['fid_pessoas']:
     st.session_state['fid_pessoas'] = get_file_id(arquivo_pessoas)
@@ -184,14 +181,11 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Operacao'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[1]]).astype(str)
             df_conferencia['Parte'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[62]]).astype(str).str.strip()
             df_conferencia['Razao Social'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[2]]).astype(str).str.strip()
-            
-            mapa_energia = {'Incentivada-50%': 'Incentivada-I5', 'Incentivada-100%': 'Incentivada-I1', 'Incentivada-0%': 'Incentivada-I0', 'Incentivada-CQ50%': 'Incentivada-CQ5'}
-            df_conferencia['Tipo Energia'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[5]]).astype(str).str.strip().replace(mapa_energia)
-            
+            df_conferencia['Tipo Energia'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[5]]).astype(str).str.strip()
             df_conferencia['Contraparte'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[6]])
             df_conferencia['CP/LP'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[12]])
             df_conferencia['CNPJ Contraparte'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[4]]).apply(formatar_cnpj)
-            df_conferencia['Submercado'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[8]]).replace({'SE/CO': 'Sudeste', 'N': 'Norte', 'NE': 'Nordeste', 'S': 'Sul'})
+            df_conferencia['Submercado'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[8]])
             
             df_conferencia['Montante MWh'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[17]]), errors='coerce').fillna(0).round(3)
             v_mwh = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[20]]), errors='coerce')
@@ -203,7 +197,6 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Modulacao WBC'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[63]]).apply(limpar_modulacao)
             df_conferencia['% Modulacao Min'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[28]]), errors='coerce')
             df_conferencia['% Modulacao Max'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[29]]), errors='coerce')
-            
             df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mes_anterior']).fillna("-")
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
             df_conferencia['Vendedor'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
@@ -218,9 +211,7 @@ if st.session_state['df_bruto'] is not None:
                 return "Verificar"
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
 
-            # ─────────────────────────────────────────────────────────────────────────────
-            # LOGICA DE SOMA E VALIDAÇÃO DE PAGAMENTO
-            # ─────────────────────────────────────────────────────────────────────────────
+            # LÓGICA DE SOMA E PAGAMENTO
             df_soma_cliq = df_conferencia[~df_conferencia['Contrato CliqCCEE'].isin(['Verificar', '-', ''])].copy()
             dict_soma_book = df_soma_cliq.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
             df_conferencia['Volume BOOK'] = df_conferencia['Contrato CliqCCEE'].map(dict_soma_book).fillna(0.0).round(6)
@@ -231,8 +222,7 @@ if st.session_state['df_bruto'] is not None:
             def validar_pagamento(row):
                 if row['Contrato CliqCCEE'] in ['Verificar', '-', '']: return "-"
                 total_pago = dict_soma_pagos.get(row['Contrato CliqCCEE'], 0.0)
-                if round(total_pago, 6) == round(row['Volume BOOK'], 6) and row['Volume BOOK'] > 0:
-                    return "Pago"
+                if round(total_pago, 6) == round(row['Volume BOOK'], 6) and row['Volume BOOK'] > 0: return "Pago"
                 return "-"
             df_conferencia['SITUAÇÃO PGTO'] = df_conferencia.apply(validar_pagamento, axis=1)
 
@@ -243,69 +233,48 @@ if st.session_state['df_bruto'] is not None:
             parte_f = f2.selectbox("Parte", ["Todos"] + sorted(df_conferencia['Parte'].unique()))
             cliq_f = f3.selectbox("Contrato CliqCCEE", ["Todos"] + sorted(df_conferencia['Contrato CliqCCEE'].unique()))
             zerar_intra = f4.toggle("Zerar Intraportfólio", value=False)
-            zerar_empresas = f5.toggle("Zerar Entre Empresas", value=False) # <--- NOVO TOGGLE
+            zerar_empresas = f5.toggle("Zerar Entre Empresas", value=False)
             ocultar_vazio = f6.toggle("Ocultar Volumes Zerados", value=False)
 
             df_final = df_conferencia.copy()
-            
-            # Aplicação das Filtros de Seleção
             if op_f != "Todos": df_final = df_final[df_final['Operacao'] == op_f]
             if parte_f != "Todos": df_final = df_final[df_final['Parte'] == parte_f]
             if cliq_f != "Todos": df_final = df_final[df_final['Contrato CliqCCEE'] == cliq_f]
             
-            # Lógica de Zeragem Intraportfólio
             if zerar_intra:
-                mask = df_final['Vendedor'].str.lower().str.strip() == df_final['Comprador'].str.lower().str.strip()
-                df_final.loc[mask, ['Montante MWh', 'Volume MWm']] = 0.0
+                mask_i = df_final['Vendedor'].str.lower().str.strip() == df_final['Comprador'].str.lower().str.strip()
+                df_final.loc[mask_i, ['Montante MWh', 'Volume MWm']] = 0.0
 
             # ─────────────────────────────────────────────────────────────────────────────
-            # LOGICA DE ZERAGEM ENTRE EMPRESAS (Baseada na Macro VBA)
+            # ZERAGEM ENTRE EMPRESAS (PERNA ÚNICA)
             # ─────────────────────────────────────────────────────────────────────────────
             if zerar_empresas:
-                # Condição Parte: Bismut ou Get
-                mask_parte = (
+                # Critério da Macro: Parte Bismut/Get + Contraparte Matrix (Não Var)
+                mask_p = (
                     df_final['Parte'].str.contains("BISMUT COMERCIALIZADORA DE ENERGIA S/A", na=False, case=False) |
                     df_final['Parte'].str.contains("GET COMERCIALIZADORA DE ENERGIA S.A.", na=False, case=False)
                 )
-                
-                # Condição Contraparte: Matrix (mas não Matrix Var)
-                # No código, 'Contraparte' é a coluna com a Sigla da contraparte (cell.Offset(0, 8) no VBA)
-                mask_contraparte = (
+                mask_c = (
                     df_final['Contraparte'].str.upper().str.startswith("MATRIX", na=False) & 
                     ~df_final['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False)
                 )
-                
-                # Aplicar zeragem onde ambas as condições batem
-                mask_zeragem = mask_parte & mask_contraparte
-                df_final.loc[mask_zeragem, ['Montante MWh', 'Volume MWm']] = 0.0
+                df_final.loc[mask_p & mask_c, ['Montante MWh', 'Volume MWm']] = 0.0
             # ─────────────────────────────────────────────────────────────────────────────
-            
-            if ocultar_vazio:
-                df_final = df_final[df_final['Volume MWm'] != 0]
 
-            # MÉTRICAS
-            st.markdown("---")
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Qtd. Operações Compra", len(df_final[df_final['Operacao'].str.upper().str.contains('COMPRA', na=False)]))
-            m2.metric("Qtd. Operações Venda", len(df_final[df_final['Operacao'].str.upper().str.contains('VENDA', na=False)]))
-            m3.metric("Total de Boletas na Tela", len(df_final))
-            st.markdown("---")
+            if ocultar_vazio: df_final = df_final[df_final['Volume MWm'] != 0]
 
             # EXIBIÇÃO
             ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
                     'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
                     'CliqCCEE Paradigma', 'Modulacao WBC', '% Modulacao Min', '% Modulacao Max', 
                     'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 
-                    'Contrato CliqCCEE', 'SITUAÇÃO PGTO', 'Volume BOOK', 'Situacao ERP', 'Razao Social', 'Pendência Financeira']
+                    'Contrato CliqCCEE', 'SITUAÇÃO PGTO', 'Volume BOOK', 'Situacao ERP', 'Razao Social']
             
             st.dataframe(df_final[ordem].sort_values(by=col_boleta), use_container_width=True, hide_index=True,
                          column_config={
                              "Montante MWh": st.column_config.NumberColumn(format="%.3f"), 
                              "Volume MWm": st.column_config.NumberColumn(format="%.6f"),
-                             "Volume BOOK": st.column_config.NumberColumn(format="%.6f"),
-                             "% Modulacao Min": st.column_config.NumberColumn(format="%.2f%%"),
-                             "% Modulacao Max": st.column_config.NumberColumn(format="%.2f%%"),
-                             "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f")
+                             "Volume BOOK": st.column_config.NumberColumn(format="%.6f")
                          })
         else: st.warning("Sem dados para este período.")
     except Exception as e: st.error(f"Erro: {e}")
