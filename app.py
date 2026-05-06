@@ -28,7 +28,7 @@ def tratar_chave(valor):
     return s
 
 def limpar_str(valor):
-    if pd.isna(valor): return ""
+    if pd.isna(valor) or valor == "": return ""
     return str(valor).strip().lower()
 
 def carregar_csv_cliq(arquivo):
@@ -86,11 +86,11 @@ anos = [str(a) for a in range(2024, 2031)]
 if 'mes_sel' not in st.session_state: st.session_state['mes_sel'] = meses_nomes[datetime.now().month - 1]
 if 'ano_sel' not in st.session_state: st.session_state['ano_sel'] = str(datetime.now().year)
 
-for chave in ['df_bruto', 'dict_mes_anterior', 'dict_comprador', 'dict_vendedor', 'dict_mapa',
+for chave in ['df_bruto', 'dict_mes_anterior', 'dict_comprador', 'dict_vendedor', 'dict_mapa', 'dict_pendencias',
               'db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
     if chave not in st.session_state: st.session_state[chave] = {} if 'dict' in chave else None
 
-for chave in ['fid_subido', 'fid_anterior', 'fid_pessoas', 'chave_matrix', 'fid_cceal2', 'fid_mapa']:
+for chave in ['fid_subido', 'fid_anterior', 'fid_pessoas', 'chave_matrix', 'fid_cceal2', 'fid_mapa', 'fid_pendencias']:
     if chave not in st.session_state: st.session_state[chave] = None
 
 # 4. INTERFACE LATERAL
@@ -102,10 +102,11 @@ mes_num_sel = meses_nomes.index(mes_nome_sel) + 1
 st.sidebar.markdown("---")
 def get_file_id(arq): return (arq.name, arq.size) if arq else None
 
-arquivo_subido   = st.sidebar.file_uploader("1. Contratos Aprovados (Excel)", type=['xlsx', 'xlsm'])
-arquivo_anterior = st.sidebar.file_uploader("2. Base Mês Anterior.xlsx",      type=['xlsx'])
-arquivo_pessoas  = st.sidebar.file_uploader("3. Exportador (4).xlsx",          type=['xlsx'])
-arquivo_mapa     = st.sidebar.file_uploader("4. Mapa Financeiro (Excel)",     type=['xlsx'])
+arquivo_subido    = st.sidebar.file_uploader("1. Contratos Aprovados (Excel)", type=['xlsx', 'xlsm'])
+arquivo_anterior  = st.sidebar.file_uploader("2. Base Mês Anterior.xlsx",      type=['xlsx'])
+arquivo_pessoas   = st.sidebar.file_uploader("3. Exportador (4).xlsx",          type=['xlsx'])
+arquivo_mapa      = st.sidebar.file_uploader("4. Mapa Financeiro (Excel)",     type=['xlsx'])
+arquivo_pendencias = st.sidebar.file_uploader("5. Pendências Financeiras (Excel)", type=['xlsx'])
 
 st.sidebar.subheader("Bases Cliq CCEE")
 arq_ccear, arq_cbr = st.sidebar.file_uploader("Cliq CCEAR_Q", type=['xlsx', 'csv']), st.sidebar.file_uploader("Cliq CBR Mercado", type=['xlsx', 'csv'])
@@ -146,6 +147,18 @@ if get_file_id(arquivo_mapa) != st.session_state['fid_mapa']:
             st.session_state['dict_mapa'] = pd.Series(df_mapa_raw['Situacao_ERP'].values, index=df_mapa_raw['Codigo_WBC'].apply(tratar_chave).values).to_dict()
         except: st.session_state['dict_mapa'] = {}
 
+# CARREGAMENTO DA BASE DE PENDÊNCIAS (FATURAMENTO EM ABERTO)
+if get_file_id(arquivo_pendencias) != st.session_state['fid_pendencias']:
+    st.session_state['fid_pendencias'] = get_file_id(arquivo_pendencias)
+    if arquivo_pendencias:
+        try:
+            df_pend = pd.read_excel(arquivo_pendencias)
+            # Coluna E (índice 4) é a Razão Social, Coluna I (índice 8) é o Valor
+            # Criamos um dicionário com a Razão Social limpa como chave
+            df_pend['razao_limpa'] = df_pend.iloc[:, 4].apply(limpar_str)
+            st.session_state['dict_pendencias'] = pd.Series(df_pend.iloc[:, 8].values, index=df_pend['razao_limpa'].values).to_dict()
+        except: st.session_state['dict_pendencias'] = {}
+
 if (get_file_id(arq_ccear), get_file_id(arq_cbr), get_file_id(arq_cceal1)) != st.session_state['chave_matrix']:
     st.session_state['chave_matrix'] = (get_file_id(arq_ccear), get_file_id(arq_cbr), get_file_id(arq_cceal1))
     st.session_state['db_ccear'], st.session_state['db_cbr'], st.session_state['db_matrix'] = carregar_csv_cliq(arq_ccear), carregar_csv_cliq(arq_cbr), carregar_csv_cliq(arq_cceal1)
@@ -172,6 +185,10 @@ if df_bruto is not None:
             df_conferencia['Operacao'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[1]]).astype(str)
             df_conferencia['Parte'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[62]]).astype(str).str.strip()
             df_conferencia['Razao Social'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[2]]).astype(str).str.strip()
+
+            # Mapeamento de Pendência Financeira (Comparando Razão Social limpa)
+            df_conferencia['razao_limpa'] = df_conferencia['Razao Social'].apply(limpar_str)
+            df_conferencia['Pendência Financeira'] = df_conferencia['razao_limpa'].map(st.session_state['dict_pendencias']).fillna(0.0)
 
             # De/Para Energia e Regra Jacaranda
             mapa_energia = {'Incentivada-50%': 'Incentivada-I5', 'Incentivada-100%': 'Incentivada-I1', 'Incentivada-0%': 'Incentivada-I0', 'Incentivada-CQ50%': 'Incentivada-CQ5'}
@@ -221,7 +238,6 @@ if df_bruto is not None:
             rem_zero = f4.toggle("Ocultar Zero", value=False)
             zerar_intra = f4.toggle("Zerar Intraportfólio", value=False)
 
-            # Aplicação dos Filtros no df_final
             df_final = df_conferencia.copy()
             if op_f != "Todos": df_final = df_final[df_final['Operacao'] == op_f]
             if parte_f != "Todos": df_final = df_final[df_final['Parte'] == parte_f]
@@ -232,32 +248,29 @@ if df_bruto is not None:
                 df_final.loc[mask, ['Montante MWh', 'Volume MWm']] = 0.0
             if rem_zero: df_final = df_final[df_final['Volume MWm'] != 0]
 
-            # ─────────────────────────────────────────────────────────────────────────────
-            # BLOCO DE TOTAIS INTERATIVOS (CONTAGEM DE OPERAÇÕES)
-            # ─────────────────────────────────────────────────────────────────────────────
-            # Conta a quantidade de linhas para Compra e Venda
+            # BLOCO DE TOTAIS
             count_compras = len(df_final[df_final['Operacao'].str.upper().str.contains('COMPRA', na=False)])
             count_vendas = len(df_final[df_final['Operacao'].str.upper().str.contains('VENDA', na=False)])
             total_boletas = len(df_final)
 
             st.markdown("---")
             m1, m2, m3 = st.columns(3)
-            # Exibe a quantidade de boletas filtradas por categoria
             m1.metric("Qtd. Operações Compra", count_compras)
             m2.metric("Qtd. Operações Venda", count_vendas)
             m3.metric("Total de Boletas na Tela", total_boletas)
             st.markdown("---")
 
-            # Exibição da Tabela
+            # ORDEM DAS COLUNAS (Incluindo Pendência Financeira)
             ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
                     'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
                     'CliqCCEE Paradigma', 'Modulacao WBC', 'Vendedor', 'Comprador',
-                    'Contrato CliqCCEE', 'Situacao ERP', 'Razao Social']
+                    'Contrato CliqCCEE', 'Situacao ERP', 'Razao Social', 'Pendência Financeira']
             
             st.dataframe(df_final[ordem].sort_values(by=col_boleta), hide_index=True, use_container_width=True,
                          column_config={
                              "Montante MWh": st.column_config.NumberColumn(format="%.3f"), 
-                             "Volume MWm": st.column_config.NumberColumn(format="%.6f")
+                             "Volume MWm": st.column_config.NumberColumn(format="%.6f"),
+                             "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f")
                          })
         else: st.warning(f"Sem dados para {mes_nome_sel}/{ano_sel}")
     except Exception as e: st.error(f"Erro no processamento: {e}")
