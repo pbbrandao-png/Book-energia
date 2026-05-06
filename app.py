@@ -171,8 +171,6 @@ if df_bruto is not None:
             # Colunas Base
             df_conferencia['Operacao'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[1]]).astype(str)
             df_conferencia['Parte'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[62]]).astype(str).str.strip()
-            
-            # Razão Social
             df_conferencia['Razao Social'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[2]]).astype(str).str.strip()
 
             # De/Para Energia e Regra Jacaranda
@@ -196,8 +194,6 @@ if df_bruto is not None:
             # Modulações e Cliq
             df_conferencia['CliqCCEE Paradigma'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[60]]).apply(tratar_chave)
             df_conferencia['Modulacao WBC'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[63]]).apply(limpar_modulacao)
-            df_conferencia['Modulacao Minima'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[28]])
-            df_conferencia['Modulacao Maxima'] = df_conferencia[col_boleta].map(df_lookup[df_bruto.columns[29]])
             df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mes_anterior']).fillna("-")
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
             df_conferencia['Vendedor'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
@@ -212,13 +208,12 @@ if df_bruto is not None:
 
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver, axis=1)
 
-            # Filtros e Exibição
+            # Filtros
             st.write("### Filtros")
             f1, f2, f3, f4 = st.columns([2, 2, 2, 1])
             op_f = f1.selectbox("Operação", ["Todos"] + sorted(df_conferencia['Operacao'].dropna().unique().tolist()))
             parte_f = f2.selectbox("Parte", ["Todos"] + sorted(df_conferencia['Parte'].dropna().unique().tolist()))
             
-            # --- NOVO FILTRO: CONTRATO CLIQ (INICIA EM VERIFICAR) ---
             opcoes_cliq = ["Todos"] + sorted(df_conferencia['Contrato CliqCCEE'].dropna().unique().tolist())
             idx_verificar = opcoes_cliq.index("Verificar") if "Verificar" in opcoes_cliq else 0
             cliq_f = f3.selectbox("Contrato CliqCCEE", opcoes_cliq, index=idx_verificar)
@@ -226,6 +221,7 @@ if df_bruto is not None:
             rem_zero = f4.toggle("Ocultar Zero", value=False)
             zerar_intra = f4.toggle("Zerar Intraportfólio", value=False)
 
+            # Aplicação dos Filtros no df_final
             df_final = df_conferencia.copy()
             if op_f != "Todos": df_final = df_final[df_final['Operacao'] == op_f]
             if parte_f != "Todos": df_final = df_final[df_final['Parte'] == parte_f]
@@ -236,6 +232,21 @@ if df_bruto is not None:
                 df_final.loc[mask, ['Montante MWh', 'Volume MWm']] = 0.0
             if rem_zero: df_final = df_final[df_final['Volume MWm'] != 0]
 
+            # ─────────────────────────────────────────────────────────────────────────────
+            # BLOCO DE TOTAIS INTERATIVOS
+            # ─────────────────────────────────────────────────────────────────────────────
+            total_compras = df_final[df_final['Operacao'].str.upper().str.contains('COMPRA', na=False)]['Volume MWm'].sum()
+            total_vendas = df_final[df_final['Operacao'].str.upper().str.contains('VENDA', na=False)]['Volume MWm'].sum()
+            total_boletas = len(df_final)
+
+            st.markdown("---")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total Compras (MWm)", f"{total_compras:,.4f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            m2.metric("Total Vendas (MWm)", f"{total_vendas:,.4f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            m3.metric("Total de Boletas", total_boletas)
+            st.markdown("---")
+
+            # Exibição da Tabela
             ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
                     'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
                     'CliqCCEE Paradigma', 'Modulacao WBC', 'Vendedor', 'Comprador',
