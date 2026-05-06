@@ -197,6 +197,8 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Situacao ERP'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mapa']).fillna("-")
             df_conferencia['CliqCCEE Paradigma'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[60]]).apply(tratar_chave)
             df_conferencia['Modulacao WBC'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[63]]).apply(limpar_modulacao)
+            
+            # --- MODULAÇÕES REATIVADAS ---
             df_conferencia['% Modulacao Min'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[28]]), errors='coerce')
             df_conferencia['% Modulacao Max'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[29]]), errors='coerce')
             
@@ -214,7 +216,6 @@ if st.session_state['df_bruto'] is not None:
                 return "Verificar"
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
 
-            # Busca Status
             def buscar_status_cliq(row):
                 cod = row['Contrato CliqCCEE']
                 if cod in ['Verificar', '-', '']: return "-"
@@ -227,7 +228,6 @@ if st.session_state['df_bruto'] is not None:
                 return "-"
             df_conferencia['Status do Contrato'] = df_conferencia.apply(buscar_status_cliq, axis=1)
 
-            # Lógica Volume BOOK e Real
             df_soma_cliq = df_conferencia[~df_conferencia['Contrato CliqCCEE'].isin(['Verificar', '-', ''])].copy()
             dict_soma_book = df_soma_cliq.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
             df_conferencia['Volume BOOK'] = df_conferencia['Contrato CliqCCEE'].map(dict_soma_book).fillna(0.0).round(6)
@@ -246,21 +246,17 @@ if st.session_state['df_bruto'] is not None:
                 return 0.0
             df_conferencia['Volume CliqCCEE'] = df_conferencia.apply(buscar_volume_cliq, axis=1).fillna(0.0).round(6)
 
-            # --- LÓGICA REINSERIDA: SITUAÇÃO PGTO ---
-            # Identifica volumes que já estão marcados como pagos no ERP por contrato Cliq
+            # --- LÓGICA SITUAÇÃO PGTO ---
             df_pagos = df_conferencia[df_conferencia['Situacao ERP'].astype(str).str.upper() == 'PAGO'].copy()
             dict_soma_pagos = df_pagos.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
 
             def validar_pagamento(row):
                 if row['Contrato CliqCCEE'] in ['Verificar', '-', '']: return "-"
                 total_pago = dict_soma_pagos.get(row['Contrato CliqCCEE'], 0.0)
-                # Se o que foi pago atinge o total esperado do BOOK para aquele contrato, marca como Pago
                 if round(total_pago, 6) >= round(row['Volume BOOK'], 6) and row['Volume BOOK'] > 0:
                     return "Pago"
                 return "-"
-            
             df_conferencia['SITUAÇÃO PGTO'] = df_conferencia.apply(validar_pagamento, axis=1)
-            # ---------------------------------------
 
             df_conferencia['Pendência Financeira'] = df_conferencia['Razao Social'].str.strip().str.upper().map(st.session_state['dict_pendencias']).fillna(0.0)
 
@@ -288,12 +284,12 @@ if st.session_state['df_bruto'] is not None:
                 df_final.loc[mask_p & mask_c, ['Montante MWh', 'Volume MWm']] = 0.0
             if ocultar_vazio: df_final = df_final[df_final['Volume MWm'] != 0]
 
-            # ORDEM FINAL DAS COLUNAS
+            # ORDEM FINAL DAS COLUNAS (INCLUINDO TUDO)
             ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
                     'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
-                    'CliqCCEE Paradigma', 'Modulacao WBC', 'Contrato CliqCCEE mes anterior', 
-                    'Vendedor', 'Comprador', 'Contrato CliqCCEE', 'Status do Contrato', 
-                    'SITUAÇÃO PGTO', 'Volume BOOK', 'Volume CliqCCEE', 
+                    'CliqCCEE Paradigma', 'Modulacao WBC', '% Modulacao Min', '% Modulacao Max', 
+                    'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 'Contrato CliqCCEE', 
+                    'Status do Contrato', 'SITUAÇÃO PGTO', 'Volume BOOK', 'Volume CliqCCEE', 
                     'Situacao ERP', 'Razao Social', 'Pendência Financeira']
             
             st.dataframe(df_final[ordem].sort_values(by=col_boleta), use_container_width=True, hide_index=True,
