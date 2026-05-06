@@ -261,4 +261,20 @@ if st.session_state['df_bruto'] is not None:
             if ocultar_vazio: df_final = df_final[df_final['Volume MWm'] != 0]
 
             # EXIBIÇÃO
-            ordem = [col_boleta, 'Operacao', 'Tipo Energia',
+            ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
+                    'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
+                    'CliqCCEE Paradigma', 'Modulacao WBC', '% Modulacao Min', '% Modulacao Max', 
+                    'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 
+                    'Contrato CliqCCEE', 'SITUAÇÃO PGTO', 
+                    'Volume BOOK', 'Volume CliqCCEE', # <--- POSIÇÃO SOLICITADA
+                    'Situacao ERP', 'Razao Social']
+            
+            st.dataframe(df_final[ordem].sort_values(by=col_boleta), use_container_width=True, hide_index=True,
+                         column_config={
+                             "Montante MWh": st.column_config.NumberColumn(format="%.3f"), 
+                             "Volume MWm": st.column_config.NumberColumn(format="%.6f"),
+                             "Volume BOOK": st.column_config.NumberColumn(format="%.6f"),
+                             "Volume CliqCCEE": st.column_config.NumberColumn(format="%.6f") # Formatação para 6 casas
+                         })
+        else: st.warning("Sem dados para este período.")
+    except Exception as e: st.error(f"Erro: {e}")
