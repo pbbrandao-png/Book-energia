@@ -51,24 +51,26 @@ def carregar_csv_cliq(arquivo):
             df = pd.read_csv(arquivo, sep='\t', encoding='latin-1', skiprows=1, dtype=str)
         else:
             df = pd.read_excel(arquivo, dtype=str)
-        return df # Retorna o DF completo para busca por colunas, não apenas índice
+        # Não usamos set_index aqui para permitir buscas por múltiplas colunas (vendedor/comprador)
+        return df 
     except Exception: return None
 
-# 3. NOVA LÓGICA DE CONFERÊNCIA (MATCH TRIPLO)
-def buscar_por_match_triplo(row, df_cliq):
+# 3. NOVA LÓGICA DE BUSCA: MATCH TRIPLO (Vendedor + Comprador + Submercado)
+def buscar_contrato_na_base(row, df_cliq):
+    """
+    Verifica se existe um contrato que bata com Vendedor, Comprador e Submercado da Boleta.
+    """
     if df_cliq is None or df_cliq.empty: return "Verificar"
     
     vend_alvo = limpar_str(row['Vendedor'])
     comp_alvo = limpar_str(row['Comprador'])
     sub_wbc = row['Submercado']
     
-    # Conversão de submercado para padrão CCEE
+    # De-Para de Submercado para o padrão CCEE
     de_para_sub = {'Sudeste': 'se/co', 'Sul': 's', 'Norte': 'n', 'Nordeste': 'ne'}
     sub_alvo = de_para_sub.get(sub_wbc, sub_wbc).lower()
 
-    # Filtros na base CCEE:
-    # 1. Não pode ser Rascunho
-    # 2. Match Vendedor + Comprador + Submercado
+    # Filtro: Situação não pode ser Rascunho + Trio de Identificação
     mask = (
         (df_cliq['SITUACAO_CONTRATO'].str.upper() != 'RASCUNHO') &
         (df_cliq['SIGLA_PERFIL_VENDEDOR'].str.lower().str.strip() == vend_alvo) &
@@ -79,10 +81,21 @@ def buscar_por_match_triplo(row, df_cliq):
     df_match = df_cliq[mask]
     
     if not df_match.empty:
-        # Retorna o código do contrato encontrado
         return tratar_chave(df_match.iloc[0]['CODIGO_CONTRATO'])
     
     return "Verificar"
+
+def buscar_info_extra_cliq(cod_contrato, col_desejada):
+    """Busca informações como Modulação ou Status baseado no código já validado."""
+    if cod_contrato in ['Verificar', '-', '']: return "-"
+    for db_key in ['db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
+        df_cliq = st.session_state.get(db_key)
+        if df_cliq is not None and not df_cliq.empty:
+            match = df_cliq[df_cliq['CODIGO_CONTRATO'].apply(tratar_chave) == cod_contrato]
+            if not match.empty:
+                val = match.iloc[0].get(col_desejada, "-")
+                return str(val).strip() if not pd.isna(val) else "-"
+    return "-"
 
 # 4. INICIALIZAÇÃO DO SESSION STATE
 meses_nomes = ["Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho",
@@ -99,7 +112,7 @@ for chave in ['fid_subido', 'fid_anterior', 'fid_pessoas', 'chave_matrix', 'fid_
 if 'mes_sel' not in st.session_state: st.session_state['mes_sel'] = meses_nomes[datetime.now().month - 1]
 if 'ano_sel' not in st.session_state: st.session_state['ano_sel'] = str(datetime.now().year)
 
-# 5. INTERFACE LATERAL
+# 5. INTERFACE LATERAL (Mantida)
 st.sidebar.title("Configurações")
 mes_nome_sel = st.sidebar.selectbox("Mês", meses_nomes, index=meses_nomes.index(st.session_state['mes_sel']), key='mes_sel')
 ano_sel_val = st.sidebar.selectbox("Ano", anos, index=anos.index(st.session_state['ano_sel']) if st.session_state['ano_sel'] in anos else 0, key='ano_sel')
@@ -118,7 +131,7 @@ arq_cceal1, arq_cceal2 = st.sidebar.file_uploader("Cliq Matrix", type=['xlsx', '
 
 st.title(f"Book de Energia - {mes_nome_sel}/{ano_sel_val}")
 
-# 6. CARREGAMENTO DOS DADOS (Otimizado com IDs)
+# 6. CARREGAMENTO DOS DADOS (Otimizado)
 if get_file_id(arquivo_subido) != st.session_state['fid_subido']:
     st.session_state['fid_subido'] = get_file_id(arquivo_subido)
     if arquivo_subido: st.session_state['df_bruto'] = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
@@ -184,51 +197,66 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Operacao'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[1]]).astype(str)
             df_conferencia['Parte'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[62]]).astype(str).str.strip()
             df_conferencia['Razao Social'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[2]]).astype(str).str.strip()
+            
+            mapa_energia = {'Incentivada-50%': 'Incentivada-I5', 'Incentivada-100%': 'Incentivada-I1', 'Incentivada-0%': 'Incentivada-I0', 'Incentivada-CQ50%': 'Incentivada-CQ5'}
+            df_conferencia['Tipo Energia'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[5]]).astype(str).str.strip().replace(mapa_energia)
+            
+            df_conferencia['Contraparte'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[6]])
+            df_conferencia['CP/LP'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[12]])
+            df_conferencia['CNPJ Contraparte'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[4]]).apply(formatar_cnpj)
             df_conferencia['Submercado'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[8]]).replace({'SE/CO': 'Sudeste', 'N': 'Norte', 'NE': 'Nordeste', 'S': 'Sul'})
+            
+            df_conferencia['Montante MWh'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[17]]), errors='coerce').fillna(0).round(3)
+            v_mwh = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[20]]), errors='coerce')
+            h_mes_valor = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[15]]), errors='coerce').iloc[0]
+            df_conferencia['Volume MWm'] = (v_mwh / h_mes_valor).fillna(0).round(6)
+
             df_conferencia['Vendedor'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
-            
-            # --- EXECUÇÃO DA CONFERÊNCIA DE MATCH ---
+
+            # --- RESOLVE CONTRATO POR MATCH TRIPLO ---
             def resolver_cliq_final(row):
-                if 'BISMUT' in str(row['Parte']).upper():
-                    return buscar_por_match_triplo(row, st.session_state['db_bismut'])
-                
-                # Procura sequencial nas outras bases
-                for base_key in ['db_matrix', 'db_ccear', 'db_cbr']:
-                    res = buscar_por_match_triplo(row, st.session_state[base_key])
+                if 'BISMUT' in str(row['Parte']).upper(): 
+                    return buscar_contrato_na_base(row, st.session_state['db_bismut'])
+                for db in ['db_matrix', 'db_ccear', 'db_cbr']:
+                    res = buscar_contrato_na_base(row, st.session_state[db])
                     if res != "Verificar": return res
                 return "Verificar"
 
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq_final, axis=1)
 
-            # --- BALÕES DE MÉTRICAS (CONFERÊNCIA 1) ---
-            boletas_sem_contrato = df_conferencia[df_conferencia['Contrato CliqCCEE'] == 'Verificar']
-            qtd_erro = len(boletas_sem_contrato)
+            # --- BUSCA INFOS EXTRAS ---
+            df_conferencia['Status do Contrato'] = df_conferencia['Contrato CliqCCEE'].apply(lambda x: buscar_info_extra_cliq(x, 'SITUACAO_CONTRATO'))
+            df_conferencia['Modulação CCEE'] = df_conferencia['Contrato CliqCCEE'].apply(lambda x: buscar_info_extra_cliq(x, 'TIPO_MODULACAO'))
             
-            b1, b2 = st.columns(2)
-            with b1:
-                st.metric("Total de Boletas", len(df_conferencia))
-            with b2:
-                label_status = "⚠️ Boletas Sem Contrato" if qtd_erro > 0 else "✅ Contratos OK"
-                st.metric(label_status, qtd_erro, delta=f"{qtd_erro} pendentes" if qtd_erro > 0 else "Tudo certo", delta_color="inverse")
+            # Ajuste de Modulação Especial
+            df_conferencia.loc[df_conferencia['Contrato CliqCCEE'].isin(CONTRATOS_ESPECIAIS_CCEAR), 'Modulação CCEE'] = "Carga"
 
-            if qtd_erro > 0:
-                with st.expander("Clique para ver boletas sem match na CCEE", expanded=False):
-                    st.dataframe(boletas_sem_contrato[[col_boleta, 'Parte', 'Vendedor', 'Comprador', 'Submercado']], use_container_width=True, hide_index=True)
-
-            # --- RESTANTE DO PROCESSAMENTO (VBC, MWm, ETC) ---
-            df_conferencia['Contraparte'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[6]])
-            df_conferencia['Montante MWh'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[17]]), errors='coerce').fillna(0).round(3)
-            v_mwh = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[20]]), errors='coerce')
-            h_mes = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[15]]), errors='coerce')
-            df_conferencia['Volume MWm'] = (v_mwh / h_mes).fillna(0).round(6)
+            # Outras colunas
             df_conferencia['Situacao ERP'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mapa']).fillna("-")
-            
-            # Exibição Principal
-            st.write("---")
-            st.write("### Detalhamento Geral")
-            ordem_final = [col_boleta, 'Operacao', 'Parte', 'Contraparte', 'Submercado', 'Vendedor', 'Comprador', 'Contrato CliqCCEE', 'Volume MWm', 'Situacao ERP']
-            st.dataframe(df_conferencia[ordem_final].sort_values(by=col_boleta), use_container_width=True, hide_index=True)
+            df_conferencia['CliqCCEE Paradigma'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[60]]).apply(tratar_chave)
+            df_conferencia['Modulacao WBC'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[63]]).apply(limpar_modulacao)
+            df_conferencia['% Modulacao Min'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[28]]), errors='coerce').fillna("-")
+            df_conferencia['% Modulacao Max'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[29]]), errors='coerce').fillna("-")
+            df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mes_anterior']).fillna("-")
 
-        else: st.warning("Sem dados para este período.")
-    except Exception as e: st.error(f"Erro: {e}")
+            # Cálculos de Volume
+            df_soma_cliq = df_conferencia[df_conferencia['Contrato CliqCCEE'] != "Verificar"].copy()
+            dict_soma_book = df_soma_cliq.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
+            df_conferencia['Volume BOOK'] = df_conferencia['Contrato CliqCCEE'].map(dict_soma_book).fillna(0.0).round(6)
+
+            def buscar_vol_cliq(row):
+                cod = row['Contrato CliqCCEE']
+                if cod == "Verificar": return 0.0
+                if cod in CONTRATOS_ESPECIAIS_CCEAR:
+                    val = buscar_info_extra_cliq(cod, 'MONTANTE_MENSAL_MWh')
+                    try: return float(str(val).replace(',', '.')) / h_mes_valor
+                    except: return 0.0
+                val = buscar_info_extra_cliq(cod, 'MWmedio')
+                try: return float(str(val).replace(',', '.'))
+                except: return 0.0
+
+            df_conferencia['Volume CliqCCEE'] = df_conferencia.apply(buscar_vol_cliq, axis=1).fillna(0.0).round(6)
+
+            # Pagamento e Pendência
+            df_pagos = df_conferencia[df_conferencia['Situacao ERP'].astype(str).str.upper
