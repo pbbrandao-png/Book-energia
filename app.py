@@ -120,18 +120,20 @@ if get_file_id(arquivo_subido) != st.session_state['fid_subido']:
     if arquivo_subido:
         st.session_state['df_bruto'] = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
 
+# --- AJUSTE SOLICITADO: LÓGICA DE SOMA DE PENDÊNCIA ---
 if get_file_id(arquivo_pendencias) != st.session_state['fid_pendencias']:
     st.session_state['fid_pendencias'] = get_file_id(arquivo_pendencias)
     if arquivo_pendencias:
         try:
             df_p = pd.read_excel(arquivo_pendencias)
-            df_p_clean = df_p.iloc[:, [4, 8]].copy()
-            df_p_clean.columns = ['razao_raw', 'valor']
-            df_p_clean['valor'] = pd.to_numeric(df_p_clean['valor'], errors='coerce').fillna(0)
-            df_p_clean['key'] = df_p_clean['razao_raw'].apply(limpar_str)
-            df_sum = df_p_clean.groupby('key')['valor'].sum().reset_index()
-            st.session_state['dict_pendencias'] = dict(zip(df_sum['key'], df_sum['valor']))
+            df_p_simples = df_p.iloc[:, [4, 8]].copy()
+            df_p_simples.columns = ['razao_social_pend', 'valor_pendente']
+            df_p_simples['valor_pendente'] = pd.to_numeric(df_p_simples['valor_pendente'], errors='coerce').fillna(0)
+            df_p_simples['razao_social_pend'] = df_p_simples['razao_social_pend'].astype(str).str.strip()
+            df_somado = df_p_simples.groupby('razao_social_pend')['valor_pendente'].sum().reset_index()
+            st.session_state['dict_pendencias'] = dict(zip(df_somado['razao_social_pend'], df_somado['valor_pendente']))
         except: st.session_state['dict_pendencias'] = {}
+# ------------------------------------------------------
 
 if get_file_id(arquivo_anterior) != st.session_state['fid_anterior']:
     st.session_state['fid_anterior'] = get_file_id(arquivo_anterior)
@@ -175,12 +177,11 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Boleta_Key'] = df_conferencia[col_boleta].apply(tratar_chave)
             df_lookup = df_filtrada.drop_duplicates(subset=[col_boleta]).set_index(col_boleta)
 
-            # --- RESTAURAÇÃO DE TODAS AS COLUNAS ---
+            # Colunas da Tabela
             df_conferencia['Operacao'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[1]]).astype(str)
             df_conferencia['Parte'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[62]]).astype(str).str.strip()
             df_conferencia['Razao Social'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[2]]).astype(str).str.strip()
             
-            # De/Para Energia e Regra Jacaranda
             mapa_energia = {'Incentivada-50%': 'Incentivada-I5', 'Incentivada-100%': 'Incentivada-I1', 'Incentivada-0%': 'Incentivada-I0', 'Incentivada-CQ50%': 'Incentivada-CQ5'}
             df_conferencia['Tipo Energia'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[5]]).astype(str).str.strip().replace(mapa_energia)
             df_conferencia.loc[df_conferencia['Parte'].str.upper() == 'UFV JACARANDA 1', 'Tipo Energia'] = 'Incentivada-I5'
@@ -202,7 +203,7 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
             df_conferencia['Vendedor'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
 
-            # Lógica de Contrato Cliq
+            # Lógica CliqCCEE
             def resolver_cliq(row):
                 vend, comp = (row['Vendedor'] if row['Vendedor'] != "-" else ""), (row['Comprador'] if row['Comprador'] != "-" else "")
                 if 'BISMUT' in str(row['Parte']).upper(): 
@@ -213,11 +214,11 @@ if st.session_state['df_bruto'] is not None:
                 return "Verificar"
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
 
-            # NOVA COLUNA PENDÊNCIA (SOMADA)
-            df_conferencia['key_busca'] = df_conferencia['Razao Social'].apply(limpar_str)
-            df_conferencia['Pendência Financeira'] = df_conferencia['key_busca'].map(st.session_state['dict_pendencias']).fillna(0.0)
+            # --- AJUSTE SOLICITADO: MAPEAMENTO DA PENDÊNCIA ---
+            df_conferencia['Pendência Financeira'] = df_conferencia['Razao Social'].map(st.session_state['dict_pendencias']).fillna(0.0)
+            # --------------------------------------------------
 
-            # --- FILTROS ---
+            # FILTROS
             st.write("### Filtros")
             f1, f2, f3, f4 = st.columns([2, 2, 2, 1])
             op_f = f1.selectbox("Operação", ["Todos"] + sorted(df_conferencia['Operacao'].unique()))
@@ -233,17 +234,15 @@ if st.session_state['df_bruto'] is not None:
                 mask = df_final['Vendedor'].str.lower().str.strip() == df_final['Comprador'].str.lower().str.strip()
                 df_final.loc[mask, ['Montante MWh', 'Volume MWm']] = 0.0
 
-            # --- BALÕES DE TOTAIS INTERATIVOS ---
+            # MÉTRICAS
             st.markdown("---")
             m1, m2, m3 = st.columns(3)
-            c_compra = len(df_final[df_final['Operacao'].str.upper().str.contains('COMPRA', na=False)])
-            c_venda = len(df_final[df_final['Operacao'].str.upper().str.contains('VENDA', na=False)])
-            m1.metric("Qtd. Operações Compra", c_compra)
-            m2.metric("Qtd. Operações Venda", c_venda)
+            m1.metric("Qtd. Operações Compra", len(df_final[df_final['Operacao'].str.upper().str.contains('COMPRA', na=False)]))
+            m2.metric("Qtd. Operações Venda", len(df_final[df_final['Operacao'].str.upper().str.contains('VENDA', na=False)]))
             m3.metric("Total de Boletas na Tela", len(df_final))
             st.markdown("---")
 
-            # --- EXIBIÇÃO FINAL ---
+            # EXIBIÇÃO
             ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
                     'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
                     'CliqCCEE Paradigma', 'Modulacao WBC', 'Vendedor', 'Comprador',
