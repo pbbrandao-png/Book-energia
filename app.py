@@ -120,7 +120,7 @@ if get_file_id(arquivo_subido) != st.session_state['fid_subido']:
     if arquivo_subido:
         st.session_state['df_bruto'] = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
 
-# --- AJUSTE SOLICITADO: LÓGICA DE SOMA DE PENDÊNCIA ---
+# --- CORREÇÃO: LÓGICA DE SOMA DE PENDÊNCIA COM NORMALIZAÇÃO ---
 if get_file_id(arquivo_pendencias) != st.session_state['fid_pendencias']:
     st.session_state['fid_pendencias'] = get_file_id(arquivo_pendencias)
     if arquivo_pendencias:
@@ -129,11 +129,19 @@ if get_file_id(arquivo_pendencias) != st.session_state['fid_pendencias']:
             df_p_simples = df_p.iloc[:, [4, 8]].copy()
             df_p_simples.columns = ['razao_social_pend', 'valor_pendente']
             df_p_simples['valor_pendente'] = pd.to_numeric(df_p_simples['valor_pendente'], errors='coerce').fillna(0)
-            df_p_simples['razao_social_pend'] = df_p_simples['razao_social_pend'].astype(str).str.strip()
+            # CORREÇÃO: normalizar a chave para evitar falhas de match
+            df_p_simples['razao_social_pend'] = (
+                df_p_simples['razao_social_pend']
+                .astype(str)
+                .str.strip()
+                .str.upper()
+            )
             df_somado = df_p_simples.groupby('razao_social_pend')['valor_pendente'].sum().reset_index()
             st.session_state['dict_pendencias'] = dict(zip(df_somado['razao_social_pend'], df_somado['valor_pendente']))
-        except: st.session_state['dict_pendencias'] = {}
-# ------------------------------------------------------
+        except Exception as e:
+            st.session_state['dict_pendencias'] = {}
+            st.warning(f"Erro ao carregar pendências: {e}")
+# --------------------------------------------------------------
 
 if get_file_id(arquivo_anterior) != st.session_state['fid_anterior']:
     st.session_state['fid_anterior'] = get_file_id(arquivo_anterior)
@@ -214,9 +222,15 @@ if st.session_state['df_bruto'] is not None:
                 return "Verificar"
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
 
-            # --- AJUSTE SOLICITADO: MAPEAMENTO DA PENDÊNCIA ---
-            df_conferencia['Pendência Financeira'] = df_conferencia['Razao Social'].map(st.session_state['dict_pendencias']).fillna(0.0)
-            # --------------------------------------------------
+            # --- CORREÇÃO: MAPEAMENTO DA PENDÊNCIA COM NORMALIZAÇÃO ---
+            df_conferencia['Pendência Financeira'] = (
+                df_conferencia['Razao Social']
+                .str.strip()
+                .str.upper()
+                .map(st.session_state['dict_pendencias'])
+                .fillna(0.0)
+            )
+            # ----------------------------------------------------------
 
             # FILTROS
             st.write("### Filtros")
