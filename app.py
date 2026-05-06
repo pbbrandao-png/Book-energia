@@ -114,13 +114,12 @@ arq_cceal1, arq_cceal2 = st.sidebar.file_uploader("Cliq Matrix", type=['xlsx', '
 
 st.title(f"Book de Energia - {mes_nome_sel}/{ano_sel_val}")
 
-# 5. CARREGAMENTO DOS DADOS (Com cache de ID)
+# 5. CARREGAMENTO DOS DADOS
 if get_file_id(arquivo_subido) != st.session_state['fid_subido']:
     st.session_state['fid_subido'] = get_file_id(arquivo_subido)
     if arquivo_subido:
         st.session_state['df_bruto'] = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
 
-# --- CORREÇÃO: LÓGICA DE SOMA DE PENDÊNCIA COM NORMALIZAÇÃO ---
 if get_file_id(arquivo_pendencias) != st.session_state['fid_pendencias']:
     st.session_state['fid_pendencias'] = get_file_id(arquivo_pendencias)
     if arquivo_pendencias:
@@ -129,19 +128,12 @@ if get_file_id(arquivo_pendencias) != st.session_state['fid_pendencias']:
             df_p_simples = df_p.iloc[:, [4, 8]].copy()
             df_p_simples.columns = ['razao_social_pend', 'valor_pendente']
             df_p_simples['valor_pendente'] = pd.to_numeric(df_p_simples['valor_pendente'], errors='coerce').fillna(0)
-            # CORREÇÃO: normalizar a chave para evitar falhas de match
-            df_p_simples['razao_social_pend'] = (
-                df_p_simples['razao_social_pend']
-                .astype(str)
-                .str.strip()
-                .str.upper()
-            )
+            df_p_simples['razao_social_pend'] = df_p_simples['razao_social_pend'].astype(str).str.strip().str.upper()
             df_somado = df_p_simples.groupby('razao_social_pend')['valor_pendente'].sum().reset_index()
             st.session_state['dict_pendencias'] = dict(zip(df_somado['razao_social_pend'], df_somado['valor_pendente']))
         except Exception as e:
             st.session_state['dict_pendencias'] = {}
             st.warning(f"Erro ao carregar pendências: {e}")
-# --------------------------------------------------------------
 
 if get_file_id(arquivo_anterior) != st.session_state['fid_anterior']:
     st.session_state['fid_anterior'] = get_file_id(arquivo_anterior)
@@ -207,11 +199,16 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Situacao ERP'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mapa']).fillna("-")
             df_conferencia['CliqCCEE Paradigma'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[60]]).apply(tratar_chave)
             df_conferencia['Modulacao WBC'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[63]]).apply(limpar_modulacao)
+            
+            # --- NOVAS COLUNAS: MODULAÇÃO MÍNIMA E MÁXIMA ---
+            df_conferencia['Modulação Mínima'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[28]]), errors='coerce').fillna(0)
+            df_conferencia['Modulação Máxima'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[29]]), errors='coerce').fillna(0)
+            # -----------------------------------------------
+
             df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mes_anterior']).fillna("-")
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
             df_conferencia['Vendedor'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
 
-            # Lógica CliqCCEE
             def resolver_cliq(row):
                 vend, comp = (row['Vendedor'] if row['Vendedor'] != "-" else ""), (row['Comprador'] if row['Comprador'] != "-" else "")
                 if 'BISMUT' in str(row['Parte']).upper(): 
@@ -222,15 +219,7 @@ if st.session_state['df_bruto'] is not None:
                 return "Verificar"
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
 
-            # --- CORREÇÃO: MAPEAMENTO DA PENDÊNCIA COM NORMALIZAÇÃO ---
-            df_conferencia['Pendência Financeira'] = (
-                df_conferencia['Razao Social']
-                .str.strip()
-                .str.upper()
-                .map(st.session_state['dict_pendencias'])
-                .fillna(0.0)
-            )
-            # ----------------------------------------------------------
+            df_conferencia['Pendência Financeira'] = df_conferencia['Razao Social'].str.strip().str.upper().map(st.session_state['dict_pendencias']).fillna(0.0)
 
             # FILTROS
             st.write("### Filtros")
@@ -259,13 +248,15 @@ if st.session_state['df_bruto'] is not None:
             # EXIBIÇÃO
             ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
                     'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
-                    'CliqCCEE Paradigma', 'Modulacao WBC', 'Vendedor', 'Comprador',
-                    'Contrato CliqCCEE', 'Situacao ERP', 'Razao Social', 'Pendência Financeira']
+                    'CliqCCEE Paradigma', 'Modulacao WBC', 'Modulação Mínima', 'Modulação Máxima', # <--- Ordem atualizada
+                    'Vendedor', 'Comprador', 'Contrato CliqCCEE', 'Situacao ERP', 'Razao Social', 'Pendência Financeira']
             
             st.dataframe(df_final[ordem].sort_values(by=col_boleta), use_container_width=True, hide_index=True,
                          column_config={
                              "Montante MWh": st.column_config.NumberColumn(format="%.3f"), 
                              "Volume MWm": st.column_config.NumberColumn(format="%.6f"),
+                             "Modulação Mínima": st.column_config.NumberColumn(format="%.2f"),
+                             "Modulação Máxima": st.column_config.NumberColumn(format="%.2f"),
                              "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f")
                          })
         else: st.warning("Sem dados para este período.")
