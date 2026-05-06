@@ -187,8 +187,7 @@ if st.session_state['df_bruto'] is not None:
             
             mapa_energia = {'Incentivada-50%': 'Incentivada-I5', 'Incentivada-100%': 'Incentivada-I1', 'Incentivada-0%': 'Incentivada-I0', 'Incentivada-CQ50%': 'Incentivada-CQ5'}
             df_conferencia['Tipo Energia'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[5]]).astype(str).str.strip().replace(mapa_energia)
-            df_conferencia.loc[df_conferencia['Parte'].str.upper() == 'UFV JACARANDA 1', 'Tipo Energia'] = 'Incentivada-I5'
-
+            
             df_conferencia['Contraparte'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[6]])
             df_conferencia['CP/LP'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[12]])
             df_conferencia['CNPJ Contraparte'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[4]]).apply(formatar_cnpj)
@@ -205,13 +204,10 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['% Modulacao Min'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[28]]), errors='coerce')
             df_conferencia['% Modulacao Max'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[29]]), errors='coerce')
             
-            # Buscando o dado da base do mês anterior
             df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mes_anterior']).fillna("-")
-            
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
             df_conferencia['Vendedor'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
 
-            # Lógica CliqCCEE
             def resolver_cliq(row):
                 vend, comp = (row['Vendedor'] if row['Vendedor'] != "-" else ""), (row['Comprador'] if row['Comprador'] != "-" else "")
                 if 'BISMUT' in str(row['Parte']).upper(): 
@@ -221,6 +217,18 @@ if st.session_state['df_bruto'] is not None:
                     if res != "Verificar": return res
                 return "Verificar"
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
+
+            # ─────────────────────────────────────────────────────────────────────────────
+            # NOVA COLUNA: Volume BOOK (Lógica SOMA.SE.S)
+            # ─────────────────────────────────────────────────────────────────────────────
+            # Agrupamos por Contrato CliqCCEE e somamos o Volume MWm
+            # Filtramos apenas contratos que não sejam "Verificar" ou "-" para a soma
+            df_soma_cliq = df_conferencia[~df_conferencia['Contrato CliqCCEE'].isin(['Verificar', '-', ''])].copy()
+            dict_soma_book = df_soma_cliq.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
+            
+            # Mapeamos o resultado de volta para a tabela principal
+            df_conferencia['Volume BOOK'] = df_conferencia['Contrato CliqCCEE'].map(dict_soma_book).fillna(0.0).round(6)
+            # ─────────────────────────────────────────────────────────────────────────────
 
             df_conferencia['Pendência Financeira'] = df_conferencia['Razao Social'].str.strip().str.upper().map(st.session_state['dict_pendencias']).fillna(0.0)
 
@@ -257,13 +265,15 @@ if st.session_state['df_bruto'] is not None:
             ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
                     'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
                     'CliqCCEE Paradigma', 'Modulacao WBC', '% Modulacao Min', '% Modulacao Max', 
-                    'Contrato CliqCCEE mes anterior', # <--- NOVA POSIÇÃO
-                    'Vendedor', 'Comprador', 'Contrato CliqCCEE', 'Situacao ERP', 'Razao Social', 'Pendência Financeira']
+                    'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 
+                    'Contrato CliqCCEE', 'Volume BOOK', # <--- POSIÇÃO SOLICITADA
+                    'Situacao ERP', 'Razao Social', 'Pendência Financeira']
             
             st.dataframe(df_final[ordem].sort_values(by=col_boleta), use_container_width=True, hide_index=True,
                          column_config={
                              "Montante MWh": st.column_config.NumberColumn(format="%.3f"), 
                              "Volume MWm": st.column_config.NumberColumn(format="%.6f"),
+                             "Volume BOOK": st.column_config.NumberColumn(format="%.6f"), # Formatação para Volume BOOK
                              "% Modulacao Min": st.column_config.NumberColumn(format="%.2f%%"),
                              "% Modulacao Max": st.column_config.NumberColumn(format="%.2f%%"),
                              "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f")
