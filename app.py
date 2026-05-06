@@ -50,7 +50,7 @@ def carregar_csv_cliq(arquivo):
     except Exception: return None
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MAPEAMENTO CLIQ E REGRAS DE BUSCA
+# MAPEAMENTO DE COLUNAS POR BASE CLIQ
 # ─────────────────────────────────────────────────────────────────────────────
 COLUNAS_CLIQ = {
     'matrix': {'vendedor': 'SIGLA_PERFIL_VENDEDOR',  'comprador': 'SIGLA_PERFIL_COMPRADOR'},
@@ -106,6 +106,7 @@ arquivo_subido    = st.sidebar.file_uploader("1. Contratos Aprovados (Excel)", t
 arquivo_anterior  = st.sidebar.file_uploader("2. Base Mês Anterior.xlsx",      type=['xlsx'])
 arquivo_pessoas   = st.sidebar.file_uploader("3. Exportador (4).xlsx",          type=['xlsx'])
 arquivo_mapa      = st.sidebar.file_uploader("4. Mapa Financeiro (Excel)",     type=['xlsx'])
+arquivo_pendencias = st.sidebar.file_uploader("5. Pendências Financeiras (Excel)", type=['xlsx'])
 
 st.sidebar.subheader("Bases Cliq CCEE")
 arq_ccear, arq_cbr = st.sidebar.file_uploader("Cliq CCEAR_Q", type=['xlsx', 'csv']), st.sidebar.file_uploader("Cliq CBR Mercado", type=['xlsx', 'csv'])
@@ -113,16 +114,35 @@ arq_cceal1, arq_cceal2 = st.sidebar.file_uploader("Cliq Matrix", type=['xlsx', '
 
 st.title(f"Book de Energia - {mes_nome_sel}/{ano_sel_val}")
 
-# 5. CARREGAMENTO DOS DADOS (PROCESSAMENTO DE ARQUIVOS)
+# 5. CARREGAMENTO DOS DADOS
 if get_file_id(arquivo_subido) != st.session_state['fid_subido']:
     st.session_state['fid_subido'] = get_file_id(arquivo_subido)
-    if arquivo_subido: st.session_state['df_bruto'] = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
+    if arquivo_subido:
+        st.session_state['df_bruto'] = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
+
+if get_file_id(arquivo_pendencias) != st.session_state['fid_pendencias']:
+    st.session_state['fid_pendencias'] = get_file_id(arquivo_pendencias)
+    if arquivo_pendencias:
+        try:
+            df_p = pd.read_excel(arquivo_pendencias)
+            df_p_simples = df_p.iloc[:, [4, 8]].copy()
+            df_p_simples.columns = ['razao_social_pend', 'valor_pendente']
+            df_p_simples['valor_pendente'] = pd.to_numeric(df_p_simples['valor_pendente'], errors='coerce').fillna(0)
+            df_p_simples['razao_social_pend'] = df_p_simples['razao_social_pend'].astype(str).str.strip().str.upper()
+            df_somado = df_p_simples.groupby('razao_social_pend')['valor_pendente'].sum().reset_index()
+            st.session_state['dict_pendencias'] = dict(zip(df_somado['razao_social_pend'], df_somado['valor_pendente']))
+        except Exception as e:
+            st.session_state['dict_pendencias'] = {}
+            st.warning(f"Erro ao carregar pendências: {e}")
 
 if get_file_id(arquivo_anterior) != st.session_state['fid_anterior']:
     st.session_state['fid_anterior'] = get_file_id(arquivo_anterior)
     if arquivo_anterior:
         df_apoio = pd.read_excel(arquivo_anterior, dtype=str)
-        st.session_state['dict_mes_anterior'] = pd.Series(df_apoio.iloc[:, 1].values, index=df_apoio.iloc[:, 0].apply(tratar_chave).values).to_dict()
+        st.session_state['dict_mes_anterior'] = pd.Series(
+            df_apoio.iloc[:, 1].values, 
+            index=df_apoio.iloc[:, 0].apply(tratar_chave).values
+        ).to_dict()
 
 if get_file_id(arquivo_pessoas) != st.session_state['fid_pessoas']:
     st.session_state['fid_pessoas'] = get_file_id(arquivo_pessoas)
@@ -160,10 +180,10 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Boleta_Key'] = df_conferencia[col_boleta].apply(tratar_chave)
             df_lookup = df_filtrada.drop_duplicates(subset=[col_boleta]).set_index(col_boleta)
 
-            # Colunas da Tabela (Restaurando Ordem e Nomes Originais)
+            # Colunas da Tabela
             df_conferencia['Operacao'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[1]]).astype(str)
-            df_conferencia['Razao Social'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[2]]).astype(str).str.strip()
             df_conferencia['Parte'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[62]]).astype(str).str.strip()
+            df_conferencia['Razao Social'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[2]]).astype(str).str.strip()
             
             mapa_energia = {'Incentivada-50%': 'Incentivada-I5', 'Incentivada-100%': 'Incentivada-I1', 'Incentivada-0%': 'Incentivada-I0', 'Incentivada-CQ50%': 'Incentivada-CQ5'}
             df_conferencia['Tipo Energia'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[5]]).astype(str).str.strip().replace(mapa_energia)
@@ -188,7 +208,6 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
             df_conferencia['Vendedor'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
 
-            # Resolver o Código do Contrato Cliq
             def resolver_cliq(row):
                 vend, comp = (row['Vendedor'] if row['Vendedor'] != "-" else ""), (row['Comprador'] if row['Comprador'] != "-" else "")
                 if 'BISMUT' in str(row['Parte']).upper(): 
@@ -199,9 +218,79 @@ if st.session_state['df_bruto'] is not None:
                 return "Verificar"
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
 
-            # Volume BOOK (Soma do Book)
+            # ─────────────────────────────────────────────────────────────────────────────
+            # LOGICA DE SOMA E VALIDAÇÃO DE PAGAMENTO
+            # ─────────────────────────────────────────────────────────────────────────────
+            
+            # 1. Volume BOOK (SOMA.SE.S(Volume MWm ; Contrato CliqCCEE ; Valor_Linha))
             df_soma_cliq = df_conferencia[~df_conferencia['Contrato CliqCCEE'].isin(['Verificar', '-', ''])].copy()
             dict_soma_book = df_soma_cliq.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
             df_conferencia['Volume BOOK'] = df_conferencia['Contrato CliqCCEE'].map(dict_soma_book).fillna(0.0).round(6)
 
-            # --- NOVA COLUNA: Volume CliqCC
+            # 2. SITUAÇÃO PGTO (SOMA.SE.S(Volume MWm ; Contrato CliqCCEE ; Valor_Linha ; Situacao ERP ; "Pago"))
+            # Filtramos apenas as linhas que já estão como "Pago" no ERP
+            df_pagos = df_conferencia[df_conferencia['Situacao ERP'].astype(str).str.upper() == 'PAGO'].copy()
+            dict_soma_pagos = df_pagos.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
+
+            def validar_pagamento(row):
+                if row['Contrato CliqCCEE'] in ['Verificar', '-', '']: return "-"
+                total_pago = dict_soma_pagos.get(row['Contrato CliqCCEE'], 0.0)
+                # Se a soma dos volumes marcados como "Pago" for igual ao Volume BOOK
+                if round(total_pago, 6) == round(row['Volume BOOK'], 6) and row['Volume BOOK'] > 0:
+                    return "Pago"
+                return "-"
+
+            df_conferencia['SITUAÇÃO PGTO'] = df_conferencia.apply(validar_pagamento, axis=1)
+            # ─────────────────────────────────────────────────────────────────────────────
+
+            df_conferencia['Pendência Financeira'] = df_conferencia['Razao Social'].str.strip().str.upper().map(st.session_state['dict_pendencias']).fillna(0.0)
+
+            # FILTROS
+            st.write("### Filtros")
+            f1, f2, f3, f4, f5 = st.columns([2, 2, 2, 1, 1])
+            op_f = f1.selectbox("Operação", ["Todos"] + sorted(df_conferencia['Operacao'].unique()))
+            parte_f = f2.selectbox("Parte", ["Todos"] + sorted(df_conferencia['Parte'].unique()))
+            cliq_f = f3.selectbox("Contrato CliqCCEE", ["Todos"] + sorted(df_conferencia['Contrato CliqCCEE'].unique()))
+            zerar_intra = f4.toggle("Zerar Intraportfólio", value=False)
+            ocultar_vazio = f5.toggle("Ocultar Volumes Zerados", value=False)
+
+            df_final = df_conferencia.copy()
+            if op_f != "Todos": df_final = df_final[df_final['Operacao'] == op_f]
+            if parte_f != "Todos": df_final = df_final[df_final['Parte'] == parte_f]
+            if cliq_f != "Todos": df_final = df_final[df_final['Contrato CliqCCEE'] == cliq_f]
+            
+            if zerar_intra:
+                mask = df_final['Vendedor'].str.lower().str.strip() == df_final['Comprador'].str.lower().str.strip()
+                df_final.loc[mask, ['Montante MWh', 'Volume MWm']] = 0.0
+            
+            if ocultar_vazio:
+                df_final = df_final[df_final['Volume MWm'] != 0]
+
+            # MÉTRICAS
+            st.markdown("---")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Qtd. Operações Compra", len(df_final[df_final['Operacao'].str.upper().str.contains('COMPRA', na=False)]))
+            m2.metric("Qtd. Operações Venda", len(df_final[df_final['Operacao'].str.upper().str.contains('VENDA', na=False)]))
+            m3.metric("Total de Boletas na Tela", len(df_final))
+            st.markdown("---")
+
+            # EXIBIÇÃO - Ordem de Colunas Atualizada
+            ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
+                    'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
+                    'CliqCCEE Paradigma', 'Modulacao WBC', '% Modulacao Min', '% Modulacao Max', 
+                    'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 
+                    'Contrato CliqCCEE', 
+                    'SITUAÇÃO PGTO', # <--- POSIÇÃO SOLICITADA
+                    'Volume BOOK', 'Situacao ERP', 'Razao Social', 'Pendência Financeira']
+            
+            st.dataframe(df_final[ordem].sort_values(by=col_boleta), use_container_width=True, hide_index=True,
+                         column_config={
+                             "Montante MWh": st.column_config.NumberColumn(format="%.3f"), 
+                             "Volume MWm": st.column_config.NumberColumn(format="%.6f"),
+                             "Volume BOOK": st.column_config.NumberColumn(format="%.6f"),
+                             "% Modulacao Min": st.column_config.NumberColumn(format="%.2f%%"),
+                             "% Modulacao Max": st.column_config.NumberColumn(format="%.2f%%"),
+                             "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f")
+                         })
+        else: st.warning("Sem dados para este período.")
+    except Exception as e: st.error(f"Erro: {e}")
