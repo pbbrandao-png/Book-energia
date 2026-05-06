@@ -69,7 +69,6 @@ def buscar_cliq_ccee(cod_paradigma, cod_mes_anterior, df_cliq, tipo_base, nome_v
         if not codigo or codigo not in df_cliq.index: return False
         row = df_cliq.loc[codigo]
         if isinstance(row, pd.DataFrame): row = row.iloc[0]
-        # Regra de negócio: Ignorar rascunhos na busca automática
         if str(row.get('SITUACAO_CONTRATO', '') or '').strip().upper() == 'RASCUNHO': return False
         if col_vend and col_vend in df_cliq.columns:
             if limpar_str(nome_vendedor) and limpar_str(row.get(col_vend, '')) != limpar_str(nome_vendedor): return False
@@ -213,18 +212,20 @@ if st.session_state['df_bruto'] is not None:
                 return "Verificar"
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
 
-            # --- NOVA BUSCA: Status do Contrato (SITUACAO_CONTRATO) ---
-            def buscar_status_cliq(row):
+            # --- BUSCA: Status do Contrato e Status Montante ---
+            def buscar_info_cliq(row, campo):
                 cod = row['Contrato CliqCCEE']
                 if cod in ['Verificar', '-', '']: return "-"
                 for db_key in ['db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
                     df_cliq = st.session_state.get(db_key)
                     if df_cliq is not None and cod in df_cliq.index:
-                        status = df_cliq.loc[cod, 'SITUACAO_CONTRATO']
-                        if isinstance(status, pd.Series): status = status.iloc[0]
-                        return str(status).strip() if not pd.isna(status) else "-"
+                        val = df_cliq.loc[cod, campo]
+                        if isinstance(val, pd.Series): val = val.iloc[0]
+                        return str(val).strip() if not pd.isna(val) else "-"
                 return "-"
-            df_conferencia['Status do Contrato'] = df_conferencia.apply(buscar_status_cliq, axis=1)
+            
+            df_conferencia['Status do Contrato'] = df_conferencia.apply(lambda r: buscar_info_cliq(r, 'SITUACAO_CONTRATO'), axis=1)
+            df_conferencia['Status Montante'] = df_conferencia.apply(lambda r: buscar_info_cliq(r, 'STATUS_MONTANTE'), axis=1)
 
             # Lógica de Soma de Volumes (Volume BOOK)
             df_soma_cliq = df_conferencia[~df_conferencia['Contrato CliqCCEE'].isin(['Verificar', '-', ''])].copy()
@@ -289,13 +290,13 @@ if st.session_state['df_bruto'] is not None:
             
             if ocultar_vazio: df_final = df_final[df_final['Volume MWm'] != 0]
 
-            # ORDEM DAS COLUNAS (INCLUINDO STATUS DO CONTRATO)
+            # ORDEM DAS COLUNAS (ATUALIZADA)
             ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
                     'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
                     'CliqCCEE Paradigma', 'Modulacao WBC', '% Modulacao Min', '% Modulacao Max', 
                     'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 
                     'Contrato CliqCCEE', 'Status do Contrato', 'SITUAÇÃO PGTO', 
-                    'Volume BOOK', 'Volume CliqCCEE', 
+                    'Volume BOOK', 'Volume CliqCCEE', 'Status Montante', # <--- Posição solicitada
                     'Situacao ERP', 'Razao Social', 'Pendência Financeira']
             
             st.dataframe(df_final[ordem].sort_values(by=col_boleta), use_container_width=True, hide_index=True,
