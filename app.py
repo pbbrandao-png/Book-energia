@@ -207,6 +207,8 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Situacao ERP'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mapa']).fillna("-")
             df_conferencia['CliqCCEE Paradigma'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[60]]).apply(tratar_chave)
             df_conferencia['Modulacao WBC'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[63]]).apply(limpar_modulacao)
+            df_conferencia['% Modulacao Min'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[28]]), errors='coerce')
+            df_conferencia['% Modulacao Max'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[29]]), errors='coerce')
             df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mes_anterior']).fillna("-")
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
             df_conferencia['Vendedor'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
@@ -259,13 +261,15 @@ if st.session_state['df_bruto'] is not None:
             # EXIBIÇÃO
             ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
                     'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
-                    'CliqCCEE Paradigma', 'Modulacao WBC', 'Vendedor', 'Comprador',
+                    'CliqCCEE Paradigma', 'Modulacao WBC', '% Modulacao Min', '% Modulacao Max', 'Vendedor', 'Comprador',
                     'Contrato CliqCCEE', 'Situacao ERP', 'Razao Social', 'Pendência Financeira']
             
             st.dataframe(df_final[ordem].sort_values(by=col_boleta), use_container_width=True, hide_index=True,
                          column_config={
                              "Montante MWh": st.column_config.NumberColumn(format="%.3f"), 
                              "Volume MWm": st.column_config.NumberColumn(format="%.6f"),
+                             "% Modulacao Min": st.column_config.NumberColumn(format="%.2f%%"),
+                             "% Modulacao Max": st.column_config.NumberColumn(format="%.2f%%"),
                              "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f")
                          })
         else: st.warning("Sem dados para este período.")
