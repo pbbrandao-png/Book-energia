@@ -221,47 +221,64 @@ if st.session_state['df_bruto'] is not None:
             # ─────────────────────────────────────────────────────────────────────────────
             # LOGICA DE SOMA E VALIDAÇÃO DE PAGAMENTO
             # ─────────────────────────────────────────────────────────────────────────────
-            
-            # 1. Volume BOOK (SOMA.SE.S(Volume MWm ; Contrato CliqCCEE ; Valor_Linha))
             df_soma_cliq = df_conferencia[~df_conferencia['Contrato CliqCCEE'].isin(['Verificar', '-', ''])].copy()
             dict_soma_book = df_soma_cliq.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
             df_conferencia['Volume BOOK'] = df_conferencia['Contrato CliqCCEE'].map(dict_soma_book).fillna(0.0).round(6)
 
-            # 2. SITUAÇÃO PGTO (SOMA.SE.S(Volume MWm ; Contrato CliqCCEE ; Valor_Linha ; Situacao ERP ; "Pago"))
-            # Filtramos apenas as linhas que já estão como "Pago" no ERP
             df_pagos = df_conferencia[df_conferencia['Situacao ERP'].astype(str).str.upper() == 'PAGO'].copy()
             dict_soma_pagos = df_pagos.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
 
             def validar_pagamento(row):
                 if row['Contrato CliqCCEE'] in ['Verificar', '-', '']: return "-"
                 total_pago = dict_soma_pagos.get(row['Contrato CliqCCEE'], 0.0)
-                # Se a soma dos volumes marcados como "Pago" for igual ao Volume BOOK
                 if round(total_pago, 6) == round(row['Volume BOOK'], 6) and row['Volume BOOK'] > 0:
                     return "Pago"
                 return "-"
-
             df_conferencia['SITUAÇÃO PGTO'] = df_conferencia.apply(validar_pagamento, axis=1)
-            # ─────────────────────────────────────────────────────────────────────────────
-
-            df_conferencia['Pendência Financeira'] = df_conferencia['Razao Social'].str.strip().str.upper().map(st.session_state['dict_pendencias']).fillna(0.0)
 
             # FILTROS
             st.write("### Filtros")
-            f1, f2, f3, f4, f5 = st.columns([2, 2, 2, 1, 1])
+            f1, f2, f3, f4, f5, f6 = st.columns([2, 2, 2, 1.2, 1.2, 1.2])
             op_f = f1.selectbox("Operação", ["Todos"] + sorted(df_conferencia['Operacao'].unique()))
             parte_f = f2.selectbox("Parte", ["Todos"] + sorted(df_conferencia['Parte'].unique()))
             cliq_f = f3.selectbox("Contrato CliqCCEE", ["Todos"] + sorted(df_conferencia['Contrato CliqCCEE'].unique()))
             zerar_intra = f4.toggle("Zerar Intraportfólio", value=False)
-            ocultar_vazio = f5.toggle("Ocultar Volumes Zerados", value=False)
+            zerar_empresas = f5.toggle("Zerar Entre Empresas", value=False) # <--- NOVO TOGGLE
+            ocultar_vazio = f6.toggle("Ocultar Volumes Zerados", value=False)
 
             df_final = df_conferencia.copy()
+            
+            # Aplicação das Filtros de Seleção
             if op_f != "Todos": df_final = df_final[df_final['Operacao'] == op_f]
             if parte_f != "Todos": df_final = df_final[df_final['Parte'] == parte_f]
             if cliq_f != "Todos": df_final = df_final[df_final['Contrato CliqCCEE'] == cliq_f]
             
+            # Lógica de Zeragem Intraportfólio
             if zerar_intra:
                 mask = df_final['Vendedor'].str.lower().str.strip() == df_final['Comprador'].str.lower().str.strip()
                 df_final.loc[mask, ['Montante MWh', 'Volume MWm']] = 0.0
+
+            # ─────────────────────────────────────────────────────────────────────────────
+            # LOGICA DE ZERAGEM ENTRE EMPRESAS (Baseada na Macro VBA)
+            # ─────────────────────────────────────────────────────────────────────────────
+            if zerar_empresas:
+                # Condição Parte: Bismut ou Get
+                mask_parte = (
+                    df_final['Parte'].str.contains("BISMUT COMERCIALIZADORA DE ENERGIA S/A", na=False, case=False) |
+                    df_final['Parte'].str.contains("GET COMERCIALIZADORA DE ENERGIA S.A.", na=False, case=False)
+                )
+                
+                # Condição Contraparte: Matrix (mas não Matrix Var)
+                # No código, 'Contraparte' é a coluna com a Sigla da contraparte (cell.Offset(0, 8) no VBA)
+                mask_contraparte = (
+                    df_final['Contraparte'].str.upper().str.startswith("MATRIX", na=False) & 
+                    ~df_final['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False)
+                )
+                
+                # Aplicar zeragem onde ambas as condições batem
+                mask_zeragem = mask_parte & mask_contraparte
+                df_final.loc[mask_zeragem, ['Montante MWh', 'Volume MWm']] = 0.0
+            # ─────────────────────────────────────────────────────────────────────────────
             
             if ocultar_vazio:
                 df_final = df_final[df_final['Volume MWm'] != 0]
@@ -274,14 +291,12 @@ if st.session_state['df_bruto'] is not None:
             m3.metric("Total de Boletas na Tela", len(df_final))
             st.markdown("---")
 
-            # EXIBIÇÃO - Ordem de Colunas Atualizada
+            # EXIBIÇÃO
             ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
                     'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
                     'CliqCCEE Paradigma', 'Modulacao WBC', '% Modulacao Min', '% Modulacao Max', 
                     'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 
-                    'Contrato CliqCCEE', 
-                    'SITUAÇÃO PGTO', # <--- POSIÇÃO SOLICITADA
-                    'Volume BOOK', 'Situacao ERP', 'Razao Social', 'Pendência Financeira']
+                    'Contrato CliqCCEE', 'SITUAÇÃO PGTO', 'Volume BOOK', 'Situacao ERP', 'Razao Social', 'Pendência Financeira']
             
             st.dataframe(df_final[ordem].sort_values(by=col_boleta), use_container_width=True, hide_index=True,
                          column_config={
