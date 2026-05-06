@@ -478,74 +478,24 @@ if st.session_state['df_bruto'] is not None:
                 if st.session_state.get(k) is not None
             ]
 
-            # Conta apenas linhas com volume > 0 para o título do expander
-            n_com_volume = int((pd.to_numeric(df_final['Volume MWm'], errors='coerce').fillna(0) != 0).sum())
-
             with st.expander(
-                f"🔍 Validação de Match CCEE  —  {n_com_volume} linhas com volume  |  bases: {', '.join(bases_carregadas) if bases_carregadas else 'nenhuma'}",
+                f"🔍 Validação de Match CCEE  |  bases: {', '.join(bases_carregadas) if bases_carregadas else 'nenhuma'}",
                 expanded=False
             ):
                 if not bases_carregadas:
                     st.warning("Nenhuma base Cliq CCEE carregada. Faça o upload das bases na barra lateral.")
                 else:
-                    com_match, sem_match, incompleto = gerar_relatorio_match(df_final)
-
-                    total = n_com_volume
-                    n_ok  = len(com_match)
-                    n_nok = len(sem_match)
-                    n_inc = len(incompleto)
-
-                    # Métricas resumo
-                    c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("Linhas analisadas", total)
-                    c2.metric("✅ Com match",       n_ok)
-                    c3.metric("❌ Sem match",       n_nok)
-                    c4.metric("⚠️ Dados incompletos", n_inc)
-
-                    st.markdown("---")
-
-                    tab_sem, tab_com, tab_inc = st.tabs([
-                        f"❌ Sem Match ({n_nok})",
-                        f"✅ Com Match ({n_ok})",
-                        f"⚠️ Incompletos ({n_inc})",
-                    ])
-
+                    _, sem_match, _ = gerar_relatorio_match(df_final)
                     colunas_exibir = ['Boleta', 'Parte', 'Contraparte', 'Submercado', 'Vendedor', 'Comprador', 'Bases Consultadas']
-
-                    with tab_sem:
-                        if sem_match.empty:
-                            st.success("Nenhuma linha sem match! Todos os contratos foram encontrados nas bases CCEE.")
-                        else:
-                            st.info(
-                                "Estas linhas **não possuem** nenhum contrato nas bases CCEE com a combinação "
-                                "Submercado + Vendedor + Comprador correspondente."
-                            )
-                            st.dataframe(
-                                sem_match[colunas_exibir].reset_index(drop=True),
-                                use_container_width=True,
-                                hide_index=True
-                            )
-
-                    with tab_com:
-                        if com_match.empty:
-                            st.warning("Nenhuma linha com match encontrado.")
-                        else:
-                            st.dataframe(
-                                com_match[colunas_exibir].reset_index(drop=True),
-                                use_container_width=True,
-                                hide_index=True
-                            )
-
-                    with tab_inc:
-                        if incompleto.empty:
-                            st.success("Nenhuma linha com dados incompletos.")
-                        else:
-                            st.info("Linhas onde Vendedor, Comprador ou Submercado estão vazios — não foi possível realizar a busca.")
-                            st.dataframe(
-                                incompleto[colunas_exibir].reset_index(drop=True),
-                                use_container_width=True,
-                                hide_index=True
-                            )
+                    if sem_match.empty:
+                        st.success("Nenhuma linha sem match! Todos os contratos foram encontrados nas bases CCEE.")
+                    else:
+                        st.warning(f"{len(sem_match)} linha(s) sem contrato correspondente nas bases CCEE.")
+                        st.dataframe(
+                            sem_match[colunas_exibir].reset_index(drop=True),
+                            use_container_width=True,
+                            hide_index=True
+                        )
 
             # ORDEM FINAL DAS COLUNAS
             ordem = [
