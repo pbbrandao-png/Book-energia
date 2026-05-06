@@ -205,7 +205,6 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['CliqCCEE Paradigma'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[60]]).apply(tratar_chave)
             df_conferencia['Modulacao WBC'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[63]]).apply(limpar_modulacao)
             
-            # --- MODULAÇÕES REATIVADAS ---
             df_conferencia['% Modulacao Min'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[28]]), errors='coerce')
             df_conferencia['% Modulacao Max'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[29]]), errors='coerce')
             
@@ -239,26 +238,20 @@ if st.session_state['df_bruto'] is not None:
             dict_soma_book = df_soma_cliq.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
             df_conferencia['Volume BOOK'] = df_conferencia['Contrato CliqCCEE'].map(dict_soma_book).fillna(0.0).round(6)
 
-            # --- NOVA LÓGICA VOLUME CLIQCCEE COM CONVERSÃO MWH ---
+            # --- VOLUME CLIQCCEE ---
             def buscar_volume_cliq(row):
                 cod = row['Contrato CliqCCEE']
                 if cod in ['Verificar', '-', '']: return 0.0
-                
                 h_mes_valor = h_mes.iloc[0] if not pd.isna(h_mes.iloc[0]) else 744
-
-                # REGRA DE DESTAQUE: Busca apenas na db_ccear (Cliq CCEAR_Q) e converte
                 if cod in CONTRATOS_ESPECIAIS_CCEAR:
                     df_cliq = st.session_state.get('db_ccear')
                     if df_cliq is not None and cod in df_cliq.index:
                         val = df_cliq.loc[cod, 'MONTANTE_MENSAL_MWh']
                         if isinstance(val, pd.Series): val = val.iloc[0]
                         if not pd.isna(val) and val != "":
-                            try:
-                                return float(str(val).replace(',', '.')) / h_mes_valor
+                            try: return float(str(val).replace(',', '.')) / h_mes_valor
                             except: pass
-                    return 0.0 # Se for destaque e não achar na CCEAR_Q, retorna 0
-
-                # REGRA PADRÃO: Percorre todas as bases buscando MWmedio
+                    return 0.0
                 for db_key in ['db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
                     df_cliq = st.session_state.get(db_key)
                     if df_cliq is not None and cod in df_cliq.index:
@@ -270,6 +263,29 @@ if st.session_state['df_bruto'] is not None:
                 return 0.0
             
             df_conferencia['Volume CliqCCEE'] = df_conferencia.apply(buscar_volume_cliq, axis=1).fillna(0.0).round(6)
+
+            # ─────────────────────────────────────────────────────────────────
+            # NOVA COLUNA: STATUS_MONTANTE
+            # ─────────────────────────────────────────────────────────────────
+            def buscar_status_montante(row):
+                cod = row['Contrato CliqCCEE']
+                if cod in ['Verificar', '-', '']: return "-"
+                
+                # Regra para códigos da lista (CCEAR_Q)
+                if cod in CONTRATOS_ESPECIAIS_CCEAR:
+                    return "VALIDADO"
+                
+                # Busca nas bases do Cliq pela coluna STATUS_MONTANTE
+                for db_key in ['db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
+                    df_cliq = st.session_state.get(db_key)
+                    if df_cliq is not None and cod in df_cliq.index:
+                        if 'STATUS_MONTANTE' in df_cliq.columns:
+                            val = df_cliq.loc[cod, 'STATUS_MONTANTE']
+                            if isinstance(val, pd.Series): val = val.iloc[0]
+                            return str(val).strip() if not pd.isna(val) else "-"
+                return "-"
+            
+            df_conferencia['STATUS_MONTANTE'] = df_conferencia.apply(buscar_status_montante, axis=1)
 
             # --- LÓGICA SITUAÇÃO PGTO ---
             df_pagos = df_conferencia[df_conferencia['Situacao ERP'].astype(str).str.upper() == 'PAGO'].copy()
@@ -307,15 +323,15 @@ if st.session_state['df_bruto'] is not None:
                 mask_p = (df_final['Parte'].str.contains("BISMUT", na=False, case=False) | df_final['Parte'].str.contains("GET", na=False, case=False))
                 mask_c = (df_final['Contraparte'].str.upper().str.startswith("MATRIX", na=False) & ~df_final['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False))
                 df_final.loc[mask_p & mask_c, ['Montante MWh', 'Volume MWm']] = 0.0
-            if ocultar_vazio: df_final = df_final[df_final['Volume MWm'] != 0]
+            if ocultar_vazio: df_final = df_final[df_final['Volume MWm'] == 0]
 
-            # ORDEM FINAL DAS COLUNAS
+            # ORDEM FINAL DAS COLUNAS (Incluindo STATUS_MONTANTE após Volume CliqCCEE)
             ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 
                     'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 
                     'CliqCCEE Paradigma', 'Modulacao WBC', '% Modulacao Min', '% Modulacao Max', 
                     'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 'Contrato CliqCCEE', 
                     'Status do Contrato', 'SITUAÇÃO PGTO', 'Volume BOOK', 'Volume CliqCCEE', 
-                    'Situacao ERP', 'Razao Social', 'Pendência Financeira']
+                    'STATUS_MONTANTE', 'Situacao ERP', 'Razao Social', 'Pendência Financeira']
             
             st.dataframe(df_final[ordem].sort_values(by=col_boleta), use_container_width=True, hide_index=True,
                          column_config={
