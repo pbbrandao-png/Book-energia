@@ -7,7 +7,7 @@ from datetime import datetime
 st.set_page_config(layout="wide", page_title="Book de Energia")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LISTA DE DESTAQUE - CONTRATOS ESPECIAIS
+# LISTA DE CONTRATOS ESPECIAIS (CCEAR — sem limites de modulação)
 # ─────────────────────────────────────────────────────────────────────────────
 CONTRATOS_ESPECIAIS_CCEAR = [
     "2813298", "2813299", "2813300", "2813301", "2813302", "2813303",
@@ -103,6 +103,24 @@ def buscar_modulacao_cliq(row):
             except: continue
     return "-"
 
+def buscar_limite_cliq(cod, coluna):
+    """Busca LIMITE_MINIMO ou LIMITE_MAXIMO nas bases CCEE para um contrato."""
+    if cod in ['Verificar', '-', ''] or not cod:
+        return "-"
+    if cod in CONTRATOS_ESPECIAIS_CCEAR:
+        return "-"
+    for db_key in ['db_matrix', 'db_bismut', 'db_cbr']:   # CCEAR não tem limites
+        df_cliq = st.session_state.get(db_key)
+        if df_cliq is not None and cod in df_cliq.index and coluna in df_cliq.columns:
+            try:
+                val = df_cliq.loc[cod, coluna]
+                if isinstance(val, pd.Series): val = val.iloc[0]
+                if pd.isna(val) or str(val).strip() == "": continue
+                v = float(str(val).replace(',', '.'))
+                return round(v, 6)
+            except: continue
+    return "-"
+
 def verificar_match_ccee_linha(vendedor, comprador, submercado_wbc, is_bismut):
     if not vendedor or not comprador or not submercado_wbc: return None, []
     sub_upper  = submercado_wbc.strip().upper()
@@ -147,7 +165,7 @@ def gerar_relatorio_match(df_conferencia):
     return com_match, sem_match, incompleto
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. INICIALIZAÇÃO DO SESSION STATE  ← DEVE VIR ANTES DE QUALQUER WIDGET
+# 4. INICIALIZAÇÃO DO SESSION STATE  ← ANTES DE QUALQUER WIDGET
 # ─────────────────────────────────────────────────────────────────────────────
 if 'ajustes_manuais' not in st.session_state:
     st.session_state['ajustes_manuais'] = {}
@@ -163,7 +181,7 @@ for chave in ['fid_subido', 'fid_anterior', 'fid_pessoas', 'chave_matrix',
         st.session_state[chave] = None
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5. SIDEBAR — seletores de mês/ano SEM key= para evitar conflito com título
+# 5. SIDEBAR
 # ─────────────────────────────────────────────────────────────────────────────
 meses_nomes = ["Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho",
                "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
@@ -171,18 +189,12 @@ anos = [str(a) for a in range(2024, 2031)]
 
 st.sidebar.title("Configurações")
 
-# Índices default: mês e ano atuais
 _idx_mes_default = datetime.now().month - 1
 _idx_ano_default = anos.index(str(datetime.now().year)) if str(datetime.now().year) in anos else 0
 
-# Recupera índices salvos (persistidos entre reruns)
-_idx_mes = st.session_state.get('_idx_mes', _idx_mes_default)
-_idx_ano = st.session_state.get('_idx_ano', _idx_ano_default)
+mes_sel = st.sidebar.selectbox("Mês", meses_nomes, index=st.session_state.get('_idx_mes', _idx_mes_default))
+ano_sel = st.sidebar.selectbox("Ano", anos,         index=st.session_state.get('_idx_ano', _idx_ano_default))
 
-mes_sel = st.sidebar.selectbox("Mês", meses_nomes, index=_idx_mes)
-ano_sel = st.sidebar.selectbox("Ano", anos,         index=_idx_ano)
-
-# Salva os índices escolhidos para o próximo rerun
 st.session_state['_idx_mes'] = meses_nomes.index(mes_sel)
 st.session_state['_idx_ano'] = anos.index(ano_sel)
 
@@ -199,7 +211,6 @@ arq_cbr    = st.sidebar.file_uploader("Cliq CBR Mercado", type=['xlsx', 'csv'])
 arq_cceal1 = st.sidebar.file_uploader("Cliq Matrix",      type=['xlsx', 'csv'])
 arq_cceal2 = st.sidebar.file_uploader("Cliq Bismut",      type=['xlsx', 'csv'])
 
-# Título usa as variáveis locais que já refletem a seleção atual
 st.title(f"Livro de Energia - {mes_sel}/{ano_sel}")
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -266,18 +277,17 @@ if get_file_id(arq_cceal2) != st.session_state['fid_cceal2']:
 # ─────────────────────────────────────────────────────────────────────────────
 if st.session_state['df_bruto'] is not None:
     try:
-        # --- SEÇÃO DE AJUSTES MANUAIS ---
+        # --- AJUSTES MANUAIS ---
         st.write("### 🛠️ Ajustes de Boleta")
         with st.expander("Expandir painel de ajustes (Individual ou Lote)"):
             tab_manual, tab_lote = st.tabs(["Edição Individual", "Upload em Lote"])
 
             with tab_manual:
                 c1, c2, c3, c4 = st.columns([1, 2, 2, 2])
-                edit_bol  = c1.text_input("ID Boleta",            key="input_bol")
-                edit_vend = c2.text_input("Novo Vendedor",        key="input_vend")
-                edit_comp = c3.text_input("Novo Comprador",       key="input_comp")
-                edit_cliq = c4.text_input("Novo Cliq Paradigma",  key="input_cliq")
-
+                edit_bol  = c1.text_input("ID Boleta",           key="input_bol")
+                edit_vend = c2.text_input("Novo Vendedor",       key="input_vend")
+                edit_comp = c3.text_input("Novo Comprador",      key="input_comp")
+                edit_cliq = c4.text_input("Novo Cliq Paradigma", key="input_cliq")
                 if st.button("Gravar Alteração"):
                     if edit_bol:
                         st.session_state['ajustes_manuais'][tratar_chave(edit_bol)] = {
@@ -324,15 +334,14 @@ if st.session_state['df_bruto'] is not None:
                     if col_del.button("Remover", key=f"del_{bol_id}"):
                         del st.session_state['ajustes_manuais'][bol_id]
                         st.rerun()
-
                 if st.button("Limpar todos os ajustes"):
                     st.session_state['ajustes_manuais'] = {}
                     st.rerun()
 
+        # --- FILTRAGEM POR MÊS ---
         df_base = st.session_state['df_bruto'].copy()
         col_mes = df_base.columns[14]
         df_base[col_mes] = pd.to_numeric(df_base[col_mes], errors='coerce')
-
         mes_num_sel = meses_nomes.index(mes_sel) + 1
         df_filtrada = df_base[df_base[col_mes] == mes_num_sel].copy()
 
@@ -342,6 +351,7 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Boleta_Key'] = df_conferencia[col_boleta].apply(tratar_chave)
             df_lookup = df_filtrada.drop_duplicates(subset=[col_boleta]).set_index(col_boleta)
 
+            # --- COLUNAS BASE ---
             df_conferencia['Operacao']     = df_conferencia[col_boleta].map(df_lookup[df_base.columns[1]]).astype(str)
             df_conferencia['Parte']        = df_conferencia[col_boleta].map(df_lookup[df_base.columns[62]]).astype(str).str.strip()
             df_conferencia['Razao Social'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[2]]).astype(str).str.strip()
@@ -376,13 +386,20 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Situacao ERP']       = df_conferencia['Boleta_Key'].map(st.session_state['dict_mapa']).fillna("-")
             df_conferencia['CliqCCEE Paradigma'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[60]]).apply(tratar_chave)
             df_conferencia['Modulacao WBC']      = df_conferencia[col_boleta].map(df_lookup[df_base.columns[63]]).apply(limpar_modulacao)
-            df_conferencia['% Modulacao Min']    = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[28]]), errors='coerce').fillna("-")
-            df_conferencia['% Modulacao Max']    = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[29]]), errors='coerce').fillna("-")
+
+            # Limites WBC (colunas 28 e 29)
+            df_conferencia['% Modulacao Min'] = pd.to_numeric(
+                df_conferencia[col_boleta].map(df_lookup[df_base.columns[28]]), errors='coerce'
+            ).fillna("-")
+            df_conferencia['% Modulacao Max'] = pd.to_numeric(
+                df_conferencia[col_boleta].map(df_lookup[df_base.columns[29]]), errors='coerce'
+            ).fillna("-")
+
             df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mes_anterior']).fillna("-")
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
             df_conferencia['Vendedor']  = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
 
-            # --- APLICAR AJUSTES MANUAIS ---
+            # --- AJUSTES MANUAIS ---
             df_conferencia['Editado'] = False
             for bol, info in st.session_state['ajustes_manuais'].items():
                 mask = df_conferencia['Boleta_Key'] == bol
@@ -392,6 +409,7 @@ if st.session_state['df_bruto'] is not None:
                     if info['Comprador']:          df_conferencia.loc[mask, 'Comprador'] = info['Comprador']
                     if info['CliqCCEE Paradigma']: df_conferencia.loc[mask, 'CliqCCEE Paradigma'] = info['CliqCCEE Paradigma']
 
+            # --- CONTRATO CLIQ CCEE ---
             def resolver_cliq(row):
                 vend = row['Vendedor']  if row['Vendedor']  != "-" else ""
                 comp = row['Comprador'] if row['Comprador'] != "-" else ""
@@ -405,8 +423,51 @@ if st.session_state['df_bruto'] is not None:
                 return "Verificar"
 
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
-            df_conferencia['Modulação CCEE']    = df_conferencia.apply(buscar_modulacao_cliq, axis=1)
 
+            # --- MODULAÇÃO CCEE ---
+            df_conferencia['Modulação CCEE'] = df_conferencia.apply(buscar_modulacao_cliq, axis=1)
+
+            # --- CHECK MODULAÇÃO: compara WBC x CCEE ---
+            def check_modulacao(row):
+                wbc  = str(row['Modulacao WBC']).strip().lower()
+                ccee = str(row['Modulação CCEE']).strip().lower()
+                if wbc in ['-', '', 'nan'] or ccee in ['-', '', 'nan', 'verificar']:
+                    return "-"
+                return "OK" if wbc == ccee else "Verificar"
+
+            df_conferencia['Check Modulação'] = df_conferencia.apply(check_modulacao, axis=1)
+
+            # --- LIMITES CCEE ---
+            df_conferencia['Lim Min CCEE'] = df_conferencia['Contrato CliqCCEE'].apply(
+                lambda cod: buscar_limite_cliq(cod, 'LIMITE_MINIMO_MODULACAO_MW')
+            )
+            df_conferencia['Lim Max CCEE'] = df_conferencia['Contrato CliqCCEE'].apply(
+                lambda cod: buscar_limite_cliq(cod, 'LIMITE_MAXIMO_MODULACAO_MW')
+            )
+
+            # --- VALIDAÇÃO DOS LIMITES ---
+            def validar_lim_min(row):
+                wbc  = row['% Modulacao Min']
+                ccee = row['Lim Min CCEE']
+                if str(wbc) in ['-', '', 'nan'] or str(ccee) in ['-', '', 'nan']:
+                    return "-"
+                try:
+                    return "OK" if round(float(wbc), 4) == round(float(ccee), 4) else "Verificar"
+                except: return "-"
+
+            def validar_lim_max(row):
+                wbc  = row['% Modulacao Max']
+                ccee = row['Lim Max CCEE']
+                if str(wbc) in ['-', '', 'nan'] or str(ccee) in ['-', '', 'nan']:
+                    return "-"
+                try:
+                    return "OK" if round(float(wbc), 4) == round(float(ccee), 4) else "Verificar"
+                except: return "-"
+
+            df_conferencia['Check Lim Min'] = df_conferencia.apply(validar_lim_min, axis=1)
+            df_conferencia['Check Lim Max'] = df_conferencia.apply(validar_lim_max, axis=1)
+
+            # --- STATUS DO CONTRATO ---
             def buscar_status_cliq(row):
                 cod = row['Contrato CliqCCEE']
                 if cod in ['Verificar', '-', '']: return "-"
@@ -419,6 +480,7 @@ if st.session_state['df_bruto'] is not None:
 
             df_conferencia['Status do Contrato'] = df_conferencia.apply(buscar_status_cliq, axis=1)
 
+            # --- VOLUMES ---
             df_soma_cliq   = df_conferencia[~df_conferencia['Contrato CliqCCEE'].isin(['Verificar', '-', ''])].copy()
             dict_soma_book = df_soma_cliq.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
             df_conferencia['Volume BOOK'] = df_conferencia['Contrato CliqCCEE'].map(dict_soma_book).fillna(0.0).round(6)
@@ -445,6 +507,7 @@ if st.session_state['df_bruto'] is not None:
 
             df_conferencia['Validação Volume'] = df_conferencia.apply(validar_volume_logic, axis=1)
 
+            # --- PAGAMENTO ---
             df_pagos = df_conferencia[df_conferencia['Situacao ERP'].astype(str).str.upper() == 'PAGO'].copy()
             dict_soma_pagos = df_pagos.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
 
@@ -459,22 +522,43 @@ if st.session_state['df_bruto'] is not None:
                 .map(st.session_state['dict_pendencias']).fillna(0.0)
             )
 
-            # --- FILTROS ---
+            # ─────────────────────────────────────────────────────────────────
+            # FILTROS
+            # ─────────────────────────────────────────────────────────────────
             st.write("### Filtros")
-            f1, f2, f3, f4, f5, f6, f7 = st.columns([1.5, 1.5, 1.5, 1.5, 1.2, 1.2, 1.2])
-            op_f       = f1.selectbox("Operação",          ["Todos"] + sorted(df_conferencia['Operacao'].unique()))
-            parte_f    = f2.selectbox("Parte",             ["Todos"] + sorted(df_conferencia['Parte'].unique()))
-            cliq_f     = f3.selectbox("Contrato CliqCCEE", ["Todos"] + sorted(df_conferencia['Contrato CliqCCEE'].unique()))
-            valid_vol_f= f4.selectbox("Validação Volume",  ["Todos"] + sorted(df_conferencia['Validação Volume'].unique()))
-            zerar_intra   = f5.toggle("Zerar Intraportfólio")
-            zerar_entre   = f6.toggle("Zerar Entre Empresas")
-            ocultar_vazio = f7.toggle("Ocultar Volumes Zerados")
+            f1, f2, f3, f4, f5 = st.columns([1.5, 1.5, 1.5, 1.5, 1.5])
+            op_f        = f1.selectbox("Operação",          ["Todos"] + sorted(df_conferencia['Operacao'].unique()))
+            parte_f     = f2.selectbox("Parte",             ["Todos"] + sorted(df_conferencia['Parte'].unique()))
+            cliq_f      = f3.selectbox("Contrato CliqCCEE", ["Todos"] + sorted(df_conferencia['Contrato CliqCCEE'].unique()))
+            valid_vol_f = f4.selectbox("Validação Volume",  ["Todos"] + sorted(df_conferencia['Validação Volume'].unique()))
+
+            # Filtro unificado de modulação: dispara se Check Modulação OU Check Lim Min OU Check Lim Max tiver "Verificar"
+            todas_opts_mod = sorted(set(
+                list(df_conferencia['Check Modulação'].unique()) +
+                list(df_conferencia['Check Lim Min'].unique()) +
+                list(df_conferencia['Check Lim Max'].unique())
+            ))
+            check_mod_f = f5.selectbox("Check Modulação / Limites", ["Todos"] + todas_opts_mod)
+
+            f6, f7, f8 = st.columns([1.5, 1.5, 1.5])
+            zerar_intra   = f6.toggle("Zerar Intraportfólio")
+            zerar_entre   = f7.toggle("Zerar Entre Empresas")
+            ocultar_vazio = f8.toggle("Ocultar Volumes Zerados")
 
             df_final = df_conferencia.copy()
             if op_f        != "Todos": df_final = df_final[df_final['Operacao'] == op_f]
             if parte_f     != "Todos": df_final = df_final[df_final['Parte'] == parte_f]
             if cliq_f      != "Todos": df_final = df_final[df_final['Contrato CliqCCEE'] == cliq_f]
             if valid_vol_f != "Todos": df_final = df_final[df_final['Validação Volume'] == valid_vol_f]
+
+            # Filtro unificado: filtra linhas onde QUALQUER das 3 colunas de check tem o valor selecionado
+            if check_mod_f != "Todos":
+                mask_mod = (
+                    (df_final['Check Modulação'] == check_mod_f) |
+                    (df_final['Check Lim Min']   == check_mod_f) |
+                    (df_final['Check Lim Max']   == check_mod_f)
+                )
+                df_final = df_final[mask_mod]
 
             if zerar_intra:
                 mask_i = df_final['Vendedor'].str.lower().str.strip() == df_final['Comprador'].str.lower().str.strip()
@@ -504,12 +588,19 @@ if st.session_state['df_bruto'] is not None:
                         st.warning(f"{len(sem_match)} linha(s) sem contrato correspondente.")
                         st.dataframe(sem_match.reset_index(drop=True), use_container_width=True, hide_index=True)
 
-            # --- EXIBIÇÃO ---
+            # ─────────────────────────────────────────────────────────────────
+            # ORDEM FINAL DAS COLUNAS
+            # Modulacao WBC → Check Modulação → Modulação CCEE
+            # % Modulacao Min → Lim Min CCEE → Check Lim Min
+            # % Modulacao Max → Lim Max CCEE → Check Lim Max
+            # ─────────────────────────────────────────────────────────────────
             ordem = [
                 col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP',
                 'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm',
-                'CliqCCEE Paradigma', 'Modulacao WBC', 'Modulação CCEE',
-                '% Modulacao Min', '% Modulacao Max',
+                'CliqCCEE Paradigma',
+                'Modulacao WBC', 'Modulação CCEE', 'Check Modulação',
+                '% Modulacao Min', 'Lim Min CCEE', 'Check Lim Min',
+                '% Modulacao Max', 'Lim Max CCEE', 'Check Lim Max',
                 'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 'Contrato CliqCCEE',
                 'Status do Contrato', 'SITUAÇÃO PGTO', 'Volume BOOK', 'Volume CliqCCEE',
                 'Validação Volume', 'Situacao ERP', 'Razao Social', 'Pendência Financeira', 'Editado'
@@ -528,6 +619,8 @@ if st.session_state['df_bruto'] is not None:
                     "Volume MWm":           st.column_config.NumberColumn(format="%.6f"),
                     "Volume BOOK":          st.column_config.NumberColumn(format="%.6f"),
                     "Volume CliqCCEE":      st.column_config.NumberColumn(format="%.6f"),
+                    "Lim Min CCEE":         st.column_config.NumberColumn(format="%.6f"),
+                    "Lim Max CCEE":         st.column_config.NumberColumn(format="%.6f"),
                     "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f"),
                 }
             )
