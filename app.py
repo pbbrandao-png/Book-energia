@@ -146,31 +146,26 @@ def gerar_relatorio_match(df_conferencia):
     incompleto = df_res[df_res['_match'].isna()].drop(columns=['_match'])
     return com_match, sem_match, incompleto
 
-# 4. INICIALIZAÇÃO DO SESSION STATE
+# 4. INICIALIZAÇÃO E INTERFACE LATERAL
 meses_nomes = ["Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho",
                "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
 anos = [str(a) for a in range(2024, 2031)]
 
-for chave in ['df_bruto', 'dict_mes_anterior', 'dict_comprador', 'dict_vendedor', 'dict_mapa', 'dict_pendencias',
-              'db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
-    if chave not in st.session_state: st.session_state[chave] = {} if 'dict' in chave else None
-
-for chave in ['fid_subido', 'fid_anterior', 'fid_pessoas', 'chave_matrix', 'fid_cceal2', 'fid_mapa', 'fid_pendencias']:
-    if chave not in st.session_state: st.session_state[chave] = None
-
-if 'mes_sel' not in st.session_state: st.session_state['mes_sel'] = meses_nomes[datetime.now().month - 1]
-if 'ano_sel' not in st.session_state: st.session_state['ano_sel'] = str(datetime.now().year)
-
-# 5. INTERFACE LATERAL
 st.sidebar.title("Configurações")
 
-# A mágica do "Ctrl+C": o valor selecionado aqui vai direto para o session_state
-st.sidebar.selectbox("Mês", meses_nomes, key='mes_sel')
-st.sidebar.selectbox("Ano", anos, key='ano_sel')
+# RESOLUÇÃO DO PROBLEMA: Atribuímos a seleção a variáveis locais
+# Isso garante que o título mude NA HORA que você clica.
+mes_sel = st.sidebar.selectbox("Mês", meses_nomes, index=datetime.now().month - 1)
+ano_sel = st.sidebar.selectbox("Ano", anos, index=anos.index(str(datetime.now().year)))
 
-# TÍTULO: Ele "cola" o que está na caixa de seleção agora mesmo
-st.title(f"Livro de Energia - {st.session_state['mes_sel']}/{st.session_state['ano_sel']}")
+# TÍTULO: Agora ele é escravo das variáveis mes_sel e ano_sel
+st.title(f"Livro de Energia - {mes_sel}/{ano_sel}")
 
+# Atualizamos o session_state para o restante do código continuar funcionando
+st.session_state['mes_sel'] = mes_sel
+st.session_state['ano_sel'] = ano_sel
+
+# --- Restante dos Uploads ---
 st.sidebar.markdown("---")
 arquivo_subido     = st.sidebar.file_uploader("1. Contratos Aprovados (Excel)", type=['xlsx', 'xlsm'])
 arquivo_anterior   = st.sidebar.file_uploader("2. Base Mês Anterior.xlsx", type=['xlsx'])
@@ -184,7 +179,15 @@ arq_cbr    = st.sidebar.file_uploader("Cliq CBR Mercado", type=['xlsx', 'csv'])
 arq_cceal1 = st.sidebar.file_uploader("Cliq Matrix", type=['xlsx', 'csv'])
 arq_cceal2 = st.sidebar.file_uploader("Cliq Bismut", type=['xlsx', 'csv'])
 
-# 6. CARREGAMENTO DOS DADOS
+# 5. INICIALIZAÇÃO DO RESTO DO SESSION STATE (se não existir)
+for chave in ['df_bruto', 'dict_mes_anterior', 'dict_comprador', 'dict_vendedor', 'dict_mapa', 'dict_pendencias',
+              'db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
+    if chave not in st.session_state: st.session_state[chave] = {} if 'dict' in chave else None
+
+for chave in ['fid_subido', 'fid_anterior', 'fid_pessoas', 'chave_matrix', 'fid_cceal2', 'fid_mapa', 'fid_pendencias']:
+    if chave not in st.session_state: st.session_state[chave] = None
+
+# 6. CARREGAMENTO DOS DADOS (Otimizado)
 if get_file_id(arquivo_subido) != st.session_state['fid_subido']:
     st.session_state['fid_subido'] = get_file_id(arquivo_subido)
     if arquivo_subido: st.session_state['df_bruto'] = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
@@ -238,7 +241,7 @@ if st.session_state['df_bruto'] is not None:
         col_mes = df_base.columns[14]
         df_base[col_mes] = pd.to_numeric(df_base[col_mes], errors='coerce')
         
-        # Filtro de dados baseado no mês numérico (ex: Abril = 4)
+        # Filtro de dados baseado no mês numérico
         mes_num_sel = meses_nomes.index(st.session_state['mes_sel']) + 1
         df_filtrada = df_base[df_base[col_mes] == mes_num_sel].copy()
 
