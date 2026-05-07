@@ -146,26 +146,23 @@ def gerar_relatorio_match(df_conferencia):
     incompleto = df_res[df_res['_match'].isna()].drop(columns=['_match'])
     return com_match, sem_match, incompleto
 
-# 4. INICIALIZAÇÃO E INTERFACE LATERAL
+# 4. INICIALIZAÇÃO
+if 'ajustes_manuais' not in st.session_state:
+    st.session_state['ajustes_manuais'] = {}
+
 meses_nomes = ["Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho",
                "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
 anos = [str(a) for a in range(2024, 2031)]
 
 st.sidebar.title("Configurações")
-
-# RESOLUÇÃO DO PROBLEMA: Atribuímos a seleção a variáveis locais
-# Isso garante que o título mude NA HORA que você clica.
 mes_sel = st.sidebar.selectbox("Mês", meses_nomes, index=datetime.now().month - 1)
 ano_sel = st.sidebar.selectbox("Ano", anos, index=anos.index(str(datetime.now().year)))
 
-# TÍTULO: Agora ele é escravo das variáveis mes_sel e ano_sel
 st.title(f"Livro de Energia - {mes_sel}/{ano_sel}")
 
-# Atualizamos o session_state para o restante do código continuar funcionando
 st.session_state['mes_sel'] = mes_sel
 st.session_state['ano_sel'] = ano_sel
 
-# --- Restante dos Uploads ---
 st.sidebar.markdown("---")
 arquivo_subido     = st.sidebar.file_uploader("1. Contratos Aprovados (Excel)", type=['xlsx', 'xlsm'])
 arquivo_anterior   = st.sidebar.file_uploader("2. Base Mês Anterior.xlsx", type=['xlsx'])
@@ -179,7 +176,6 @@ arq_cbr    = st.sidebar.file_uploader("Cliq CBR Mercado", type=['xlsx', 'csv'])
 arq_cceal1 = st.sidebar.file_uploader("Cliq Matrix", type=['xlsx', 'csv'])
 arq_cceal2 = st.sidebar.file_uploader("Cliq Bismut", type=['xlsx', 'csv'])
 
-# 5. INICIALIZAÇÃO DO RESTO DO SESSION STATE (se não existir)
 for chave in ['df_bruto', 'dict_mes_anterior', 'dict_comprador', 'dict_vendedor', 'dict_mapa', 'dict_pendencias',
               'db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
     if chave not in st.session_state: st.session_state[chave] = {} if 'dict' in chave else None
@@ -187,7 +183,7 @@ for chave in ['df_bruto', 'dict_mes_anterior', 'dict_comprador', 'dict_vendedor'
 for chave in ['fid_subido', 'fid_anterior', 'fid_pessoas', 'chave_matrix', 'fid_cceal2', 'fid_mapa', 'fid_pendencias']:
     if chave not in st.session_state: st.session_state[chave] = None
 
-# 6. CARREGAMENTO DOS DADOS (Otimizado)
+# 6. CARREGAMENTO DOS DADOS
 if get_file_id(arquivo_subido) != st.session_state['fid_subido']:
     st.session_state['fid_subido'] = get_file_id(arquivo_subido)
     if arquivo_subido: st.session_state['df_bruto'] = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
@@ -237,11 +233,34 @@ if get_file_id(arq_cceal2) != st.session_state['fid_cceal2']:
 # 7. PROCESSAMENTO DA TABELA
 if st.session_state['df_bruto'] is not None:
     try:
+        # --- SEÇÃO DE AJUSTES MANUAIS ---
+        st.write("### 🛠️ Ajustes Manuais de Boleta")
+        with st.expander("Expandir painel de edição"):
+            c1, c2, c3, c4 = st.columns([1, 2, 2, 2])
+            edit_bol  = c1.text_input("ID Boleta")
+            edit_vend = c2.text_input("Novo Vendedor")
+            edit_comp = c3.text_input("Novo Comprador")
+            edit_cliq = c4.text_input("Novo Cliq Paradigma")
+            
+            if st.button("Gravar Alteração"):
+                if edit_bol:
+                    st.session_state['ajustes_manuais'][tratar_chave(edit_bol)] = {
+                        'Vendedor': edit_vend if edit_vend else None,
+                        'Comprador': edit_comp if edit_comp else None,
+                        'CliqCCEE Paradigma': edit_cliq if edit_cliq else None
+                    }
+                    st.success(f"Boleta {edit_bol} atualizada!")
+                    st.rerun()
+            
+            if st.session_state['ajustes_manuais']:
+                if st.button("Limpar todos os ajustes"):
+                    st.session_state['ajustes_manuais'] = {}
+                    st.rerun()
+
         df_base = st.session_state['df_bruto'].copy()
         col_mes = df_base.columns[14]
         df_base[col_mes] = pd.to_numeric(df_base[col_mes], errors='coerce')
         
-        # Filtro de dados baseado no mês numérico
         mes_num_sel = meses_nomes.index(st.session_state['mes_sel']) + 1
         df_filtrada = df_base[df_base[col_mes] == mes_num_sel].copy()
 
@@ -276,6 +295,16 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mes_anterior']).fillna("-")
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
             df_conferencia['Vendedor']  = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
+
+            # --- APLICAR AJUSTES MANUAIS ---
+            df_conferencia['Editado'] = False
+            for bol, info in st.session_state['ajustes_manuais'].items():
+                mask = df_conferencia['Boleta_Key'] == bol
+                if mask.any():
+                    df_conferencia.loc[mask, 'Editado'] = True
+                    if info['Vendedor']: df_conferencia.loc[mask, 'Vendedor'] = info['Vendedor']
+                    if info['Comprador']: df_conferencia.loc[mask, 'Comprador'] = info['Comprador']
+                    if info['CliqCCEE Paradigma']: df_conferencia.loc[mask, 'CliqCCEE Paradigma'] = info['CliqCCEE Paradigma']
 
             def resolver_cliq(row):
                 vend, comp = (row['Vendedor'] if row['Vendedor'] != "-" else ""), (row['Comprador'] if row['Comprador'] != "-" else "")
@@ -340,6 +369,7 @@ if st.session_state['df_bruto'] is not None:
             if op_f != "Todos": df_final = df_final[df_final['Operacao'] == op_f]
             if parte_f != "Todos": df_final = df_final[df_final['Parte'] == parte_f]
             if cliq_f != "Todos": df_final = df_final[df_final['Contrato CliqCCEE'] == cliq_f]
+            
             if zerar_intra:
                 mask_i = df_final['Vendedor'].str.lower().str.strip() == df_final['Comprador'].str.lower().str.strip()
                 df_final.loc[mask_i, ['Montante MWh', 'Volume MWm']] = 0.0
@@ -349,15 +379,37 @@ if st.session_state['df_bruto'] is not None:
                 df_final.loc[mask_p & mask_c, ['Montante MWh', 'Volume MWm']] = 0.0
             if ocultar_vazio: df_final = df_final[df_final['Volume MWm'] != 0]
 
+            # Validação de Match
             bases_carregadas = [k.replace('db_', '').upper() for k in ['db_ccear', 'db_cbr', 'db_matrix', 'db_bismut'] if st.session_state.get(k) is not None]
             with st.expander(f"🔍 Validação de Match CCEE", expanded=False):
                 if not bases_carregadas: st.warning("Nenhuma base Cliq CCEE carregada.")
                 else:
                     _, sem_match, _ = gerar_relatorio_match(df_final)
                     if sem_match.empty: st.success("Nenhuma linha sem match!")
-                    else: st.warning(f"{len(sem_match)} linha(s) sem contrato correspondente."); st.dataframe(sem_match.reset_index(drop=True), use_container_width=True, hide_index=True)
+                    else: 
+                        st.warning(f"{len(sem_match)} linha(s) sem contrato correspondente.")
+                        st.dataframe(sem_match.reset_index(drop=True), use_container_width=True, hide_index=True)
 
-            ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 'CliqCCEE Paradigma', 'Modulacao WBC', 'Modulação CCEE', '% Modulacao Min', '% Modulacao Max', 'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 'Contrato CliqCCEE', 'Status do Contrato', 'SITUAÇÃO PGTO', 'Volume BOOK', 'Volume CliqCCEE', 'Situacao ERP', 'Razao Social', 'Pendência Financeira']
-            st.dataframe(df_final[ordem].sort_values(by=col_boleta), use_container_width=True, hide_index=True, column_config={"Montante MWh": st.column_config.NumberColumn(format="%.3f"), "Volume MWm": st.column_config.NumberColumn(format="%.6f"), "Volume BOOK": st.column_config.NumberColumn(format="%.6f"), "Volume CliqCCEE": st.column_config.NumberColumn(format="%.6f"), "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f")})
+            # --- ESTILIZAÇÃO E EXIBIÇÃO ---
+            ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 'CliqCCEE Paradigma', 'Modulacao WBC', 'Modulação CCEE', '% Modulacao Min', '% Modulacao Max', 'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 'Contrato CliqCCEE', 'Status do Contrato', 'SITUAÇÃO PGTO', 'Volume BOOK', 'Volume CliqCCEE', 'Situacao ERP', 'Razao Social', 'Pendência Financeira', 'Editado']
+            
+            def highlight_rows(row):
+                if row['Editado']:
+                    return ['background-color: #fff4cc'] * len(row) # Amarelo claro
+                return [''] * len(row)
+
+            st.dataframe(
+                df_final[ordem].sort_values(by=col_boleta).style.apply(highlight_rows, axis=1), 
+                use_container_width=True, 
+                hide_index=True, 
+                column_config={
+                    "Editado": None, # Oculta a coluna técnica
+                    "Montante MWh": st.column_config.NumberColumn(format="%.3f"), 
+                    "Volume MWm": st.column_config.NumberColumn(format="%.6f"), 
+                    "Volume BOOK": st.column_config.NumberColumn(format="%.6f"), 
+                    "Volume CliqCCEE": st.column_config.NumberColumn(format="%.6f"), 
+                    "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f")
+                }
+            )
         else: st.warning("Sem dados para este período.")
     except Exception as e: st.error(f"Erro no processamento: {e}")
