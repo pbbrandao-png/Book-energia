@@ -95,7 +95,8 @@ def buscar_modulacao_cliq(row):
         return "Carga"
     for db_key in ['db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
         df_cliq = st.session_state.get(db_key)
-        if df_cliq is not None and cod in df_cliq.index:
+        if df_cliq is None: continue
+        if cod in df_cliq.index:
             try:
                 mod = df_cliq.loc[cod, 'TIPO_MODULACAO']
                 if isinstance(mod, pd.Series): mod = mod.iloc[0]
@@ -121,8 +122,7 @@ def verificar_match_ccee_linha(vendedor, comprador, submercado_wbc, is_bismut):
 
     for db_key in bases:
         df_cliq = st.session_state.get(db_key)
-        if df_cliq is None:
-            continue
+        if df_cliq is None: continue
 
         colunas_necessarias = {'SUBMERCADO_ENTREGA', 'SIGLA_PERFIL_VENDEDOR', 'SIGLA_PERFIL_COMPRADOR'}
         df_temp = df_cliq.reset_index()
@@ -142,10 +142,8 @@ def verificar_match_ccee_linha(vendedor, comprador, submercado_wbc, is_bismut):
 
     return False, bases_consultadas
 
-
 def gerar_relatorio_match(df_conferencia):
     resultados = []
-
     for _, row in df_conferencia.iterrows():
         volume = pd.to_numeric(row.get('Volume MWm', 0), errors='coerce')
         if pd.isna(volume) or volume == 0:
@@ -161,19 +159,18 @@ def gerar_relatorio_match(df_conferencia):
 
         resultados.append({
             'Boleta':      boleta,
-            'Parte':       row.get('Parte', ''),
+            'Parte':        row.get('Parte', ''),
             'Contraparte': row.get('Contraparte', ''),
             'Submercado':  submercado,
             'Vendedor':    vendedor,
-            'Comprador':   comprador,
+            'Comprador':    comprador,
             'Bases Consultadas': ', '.join(bases) if bases else '-',
             '_match':      match,
         })
 
     df_res = pd.DataFrame(resultados)
-
     if df_res.empty:
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
     sem_match = df_res[df_res['_match'] == False].drop(columns=['_match'])
     com_match = df_res[df_res['_match'] == True].drop(columns=['_match'])
@@ -181,21 +178,23 @@ def gerar_relatorio_match(df_conferencia):
 
     return com_match, sem_match, incompleto
 
-
 # 4. INICIALIZAÇÃO DO SESSION STATE
 meses_nomes = ["Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho",
                "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
 anos = [str(a) for a in range(2024, 2031)]
 
+# Dicionários e Bases
 for chave in ['df_bruto', 'dict_mes_anterior', 'dict_comprador', 'dict_vendedor', 'dict_mapa', 'dict_pendencias',
               'db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
     if chave not in st.session_state:
         st.session_state[chave] = {} if 'dict' in chave else None
 
+# IDs de Arquivos
 for chave in ['fid_subido', 'fid_anterior', 'fid_pessoas', 'chave_matrix', 'fid_cceal2', 'fid_mapa', 'fid_pendencias']:
     if chave not in st.session_state:
         st.session_state[chave] = None
 
+# Mês e Ano (Corrigido para não resetar)
 if 'mes_sel' not in st.session_state:
     st.session_state['mes_sel'] = meses_nomes[datetime.now().month - 1]
 if 'ano_sel' not in st.session_state:
@@ -203,8 +202,8 @@ if 'ano_sel' not in st.session_state:
 
 # 5. INTERFACE LATERAL
 st.sidebar.title("Configurações")
-mes_nome_sel = st.sidebar.selectbox("Mês", meses_nomes, index=meses_nomes.index(st.session_state['mes_sel']), key='mes_sel')
-ano_sel_val  = st.sidebar.selectbox("Ano", anos, index=anos.index(st.session_state['ano_sel']) if st.session_state['ano_sel'] in anos else 0, key='ano_sel')
+mes_nome_sel = st.sidebar.selectbox("Mês", meses_nomes, key='mes_sel')
+ano_sel_val  = st.sidebar.selectbox("Ano", anos, key='ano_sel')
 mes_num_sel  = meses_nomes.index(mes_nome_sel) + 1
 
 st.sidebar.markdown("---")
@@ -220,12 +219,9 @@ arq_cbr    = st.sidebar.file_uploader("Cliq CBR Mercado", type=['xlsx', 'csv'])
 arq_cceal1 = st.sidebar.file_uploader("Cliq Matrix",      type=['xlsx', 'csv'])
 arq_cceal2 = st.sidebar.file_uploader("Cliq Bismut",      type=['xlsx', 'csv'])
 
-# ── FIX: lê o valor atualizado direto do session_state após os widgets serem renderizados
-mes_titulo = st.session_state['mes_sel']
-ano_titulo = st.session_state['ano_sel']
-st.title(f"Book de Energia - {mes_titulo}/{ano_titulo}")
+st.title(f"Book de Energia - {mes_nome_sel}/{ano_sel_val}")
 
-# 6. CARREGAMENTO DOS DADOS
+# 6. CARREGAMENTO DOS DADOS (OMITIDO PARA BREVIDADE, MAS MANTIDO NO SEU CÓDIGO ORIGINAL)
 if get_file_id(arquivo_subido) != st.session_state['fid_subido']:
     st.session_state['fid_subido'] = get_file_id(arquivo_subido)
     if arquivo_subido:
@@ -462,7 +458,7 @@ if st.session_state['df_bruto'] is not None:
                 df_final = df_final[df_final['Volume MWm'] != 0]
 
             # ─────────────────────────────────────────────────────────────────
-            # PAINEL DE VALIDAÇÃO DE MATCH CCEE  (usa df_final já filtrado)
+            # PAINEL DE VALIDAÇÃO DE MATCH CCEE
             # ─────────────────────────────────────────────────────────────────
             bases_carregadas = [
                 k.replace('db_', '').upper()
