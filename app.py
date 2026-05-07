@@ -214,14 +214,6 @@ SUBMERCADO_CLIQ = {
     "Sul":     "S",
 }
 
-def _parse_mwmedio(series):
-    """Converte MWmedio corretamente: strip + troca vírgula por ponto."""
-    return pd.to_numeric(
-        series.astype(str).str.strip().str.replace(',', '.', regex=False),
-        errors='coerce'
-    ).fillna(0.0)
-
-
 def calcular_posicao_ccee(perfil, submercado_filtro, db_keys=None):
     """
     Soma MWmedio nas bases Cliq onde perfil aparece como comprador ou vendedor.
@@ -243,21 +235,21 @@ def calcular_posicao_ccee(perfil, submercado_filtro, db_keys=None):
         if 'SIGLA_PERFIL_COMPRADOR' not in df_temp.columns:
             continue
 
-        # filtro de submercado (aceita SE/CO, SUDESTE, N, NORTE, etc.)
+        # filtro de submercado
         if sub_cliq:
             df_temp = df_temp[
                 df_temp['SUBMERCADO_ENTREGA'].astype(str).str.strip().str.upper() == sub_cliq.upper()
             ]
 
-        mw = _parse_mwmedio(df_temp['MWmedio'])
-
         # compras: perfil é comprador
         mask_comp = df_temp['SIGLA_PERFIL_COMPRADOR'].astype(str).str.strip().str.upper() == perfil_upper
-        compras += mw[mask_comp].sum()
+        vals_comp = pd.to_numeric(df_temp.loc[mask_comp, 'MWmedio'].str.replace(',', '.'), errors='coerce').fillna(0)
+        compras += vals_comp.sum()
 
         # vendas: perfil é vendedor
         mask_vend = df_temp['SIGLA_PERFIL_VENDEDOR'].astype(str).str.strip().str.upper() == perfil_upper
-        vendas += mw[mask_vend].sum()
+        vals_vend = pd.to_numeric(df_temp.loc[mask_vend, 'MWmedio'].str.replace(',', '.'), errors='coerce').fillna(0)
+        vendas += vals_vend.sum()
 
     return round(compras, 6), round(vendas, 6)
 
@@ -285,86 +277,68 @@ def calcular_posicao_book(df_final, perfil, submercado_filtro):
     return round(compras, 6), round(vendas, 6)
 
 
-def renderizar_tabela_posicao(perfis, empresa, submercado_filtro, df_final):
+def renderizar_card_posicao(perfil, submercado_filtro, df_final):
     """
-    Renderiza duas tabelas nativas Streamlit lado a lado: CLIQ CCEE | BOOK.
-    Para adicionar um novo grupo (ex: MATRIX):
-      - Chame esta função com a nova lista de perfis e o nome da empresa.
+    Renderiza o card de posição CCEE vs BOOK para um perfil.
+    Como adicionar um novo perfil/empresa no futuro:
+      1. Chame esta função passando o novo perfil (ex: "MATRIX COM")
+      2. Certifique-se de que o perfil existe como SIGLA_PERFIL nas bases Cliq carregadas
     """
-    linhas = []
-    for perfil in perfis:
-        c_ccee, v_ccee = calcular_posicao_ccee(perfil, submercado_filtro)
-        c_book, v_book = calcular_posicao_book(df_final, perfil, submercado_filtro)
-        linhas.append({
-            'Perfil':         perfil,
-            'Compras CCEE':   c_ccee,
-            'Vendas CCEE':    v_ccee,
-            'NET CCEE':       round(c_ccee - v_ccee, 6),
-            'Compras BOOK':   c_book,
-            'Vendas BOOK':    v_book,
-            'NET BOOK':       round(c_book - v_book, 6),
-        })
+    c_ccee, v_ccee = calcular_posicao_ccee(perfil, submercado_filtro)
+    c_book, v_book = calcular_posicao_book(df_final, perfil, submercado_filtro)
+    net_ccee = round(c_ccee - v_ccee, 6)
+    net_book = round(c_book - v_book, 6)
 
-    df_tab = pd.DataFrame(linhas)
+    def cor_net(val):
+        if val < 0: return "color:#c0392b; font-weight:bold"
+        if val > 0: return "color:#27ae60; font-weight:bold"
+        return "color:#555"
 
-    # linha de total
-    tot = pd.DataFrame([{
-        'Perfil':       f'TOTAL {empresa}',
-        'Compras CCEE': df_tab['Compras CCEE'].sum(),
-        'Vendas CCEE':  df_tab['Vendas CCEE'].sum(),
-        'NET CCEE':     round(df_tab['Compras CCEE'].sum() - df_tab['Vendas CCEE'].sum(), 6),
-        'Compras BOOK': df_tab['Compras BOOK'].sum(),
-        'Vendas BOOK':  df_tab['Vendas BOOK'].sum(),
-        'NET BOOK':     round(df_tab['Compras BOOK'].sum() - df_tab['Vendas BOOK'].sum(), 6),
-    }])
-    df_tab = pd.concat([df_tab, tot], ignore_index=True)
-
-    def colorir(val, col):
-        if 'NET' in col:
-            if isinstance(val, float) and val < 0:  return 'color: #c0392b; font-weight: bold'
-            if isinstance(val, float) and val > 0:  return 'color: #27ae60; font-weight: bold'
-        return ''
-
-    def highlight_total(row):
-        if 'TOTAL' in str(row['Perfil']):
-            return ['background-color: #1a3a2a; color: white; font-weight: bold'] * len(row)
-        return [''] * len(row)
-
-    st.markdown(f"**{empresa} — {submercado_filtro}**")
-
-    col_ccee, col_book = st.columns(2)
-
-    with col_ccee:
-        st.caption("⚡ CLIQ CCEE")
-        df_ccee = df_tab[['Perfil', 'Compras CCEE', 'Vendas CCEE', 'NET CCEE']].copy()
-        st.dataframe(
-            df_ccee.style
-                .apply(highlight_total, axis=1)
-                .applymap(lambda v: colorir(v, 'NET CCEE'), subset=['NET CCEE']),
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                'Compras CCEE': st.column_config.NumberColumn(format="%.6f"),
-                'Vendas CCEE':  st.column_config.NumberColumn(format="%.6f"),
-                'NET CCEE':     st.column_config.NumberColumn(format="%.6f"),
-            }
-        )
-
-    with col_book:
-        st.caption("📒 BOOK")
-        df_bk = df_tab[['Perfil', 'Compras BOOK', 'Vendas BOOK', 'NET BOOK']].copy()
-        st.dataframe(
-            df_bk.style
-                .apply(highlight_total, axis=1)
-                .applymap(lambda v: colorir(v, 'NET BOOK'), subset=['NET BOOK']),
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                'Compras BOOK': st.column_config.NumberColumn(format="%.6f"),
-                'Vendas BOOK':  st.column_config.NumberColumn(format="%.6f"),
-                'NET BOOK':     st.column_config.NumberColumn(format="%.6f"),
-            }
-        )
+    st.markdown(f"""
+    <div style="border:1px solid #ddd; border-radius:10px; padding:12px 16px; margin-bottom:10px; background:#fafafa;">
+      <div style="font-weight:700; font-size:15px; margin-bottom:10px; color:#333;">
+        📊 {perfil} — {submercado_filtro}
+      </div>
+      <div style="display:flex; gap:24px; flex-wrap:wrap;">
+        <!-- CCEE -->
+        <div style="flex:1; min-width:220px; background:#eaf4fb; border-radius:8px; padding:10px 14px;">
+          <div style="font-size:12px; font-weight:600; color:#2980b9; margin-bottom:6px;">⚡ CLIQ CCEE</div>
+          <table style="width:100%; font-size:13px; border-collapse:collapse;">
+            <tr>
+              <td style="color:#555; padding:2px 0;">Compras</td>
+              <td style="text-align:right; color:#27ae60; font-weight:600;">{c_ccee:,.6f} MWm</td>
+            </tr>
+            <tr>
+              <td style="color:#555; padding:2px 0;">Vendas</td>
+              <td style="text-align:right; color:#c0392b; font-weight:600;">{v_ccee:,.6f} MWm</td>
+            </tr>
+            <tr style="border-top:1px solid #bcd;">
+              <td style="color:#333; padding:4px 0; font-weight:600;">NET</td>
+              <td style="text-align:right; padding:4px 0;"><span style="{cor_net(net_ccee)}">{net_ccee:,.6f} MWm</span></td>
+            </tr>
+          </table>
+        </div>
+        <!-- BOOK -->
+        <div style="flex:1; min-width:220px; background:#eafaf1; border-radius:8px; padding:10px 14px;">
+          <div style="font-size:12px; font-weight:600; color:#27ae60; margin-bottom:6px;">📒 BOOK</div>
+          <table style="width:100%; font-size:13px; border-collapse:collapse;">
+            <tr>
+              <td style="color:#555; padding:2px 0;">Compras</td>
+              <td style="text-align:right; color:#27ae60; font-weight:600;">{c_book:,.6f} MWm</td>
+            </tr>
+            <tr>
+              <td style="color:#555; padding:2px 0;">Vendas</td>
+              <td style="text-align:right; color:#c0392b; font-weight:600;">{v_book:,.6f} MWm</td>
+            </tr>
+            <tr style="border-top:1px solid #bde;">
+              <td style="color:#333; padding:4px 0; font-weight:600;">NET</td>
+              <td style="text-align:right; padding:4px 0;"><span style="{cor_net(net_book)}">{net_book:,.6f} MWm</span></td>
+            </tr>
+          </table>
+        </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -859,16 +833,12 @@ if st.session_state['df_bruto'] is not None:
                 key="sub_card_posicao"
             )
 
-            # <<<NOVO>>> Lista de perfis BISMUT — para adicionar outro grupo (ex: MATRIX)
-            # basta chamar renderizar_tabela_posicao com a nova lista e nome de empresa
-            PERFIS_BISMUT = [
-                "BISMUT COM I5",
-                "BISMUT COM I0",
-                "BISMUT COM I1",
-                "BISMUT COM",
-            ]
+            # <<<NOVO>>> Lista de perfis a exibir no card.
+            # Para adicionar um novo perfil: inclua a sigla aqui.
+            PERFIS_POSICAO = ["BISMUT COM"]
 
-            renderizar_tabela_posicao(PERFIS_BISMUT, "BISMUT", sub_card, df_final)
+            for perfil in PERFIS_POSICAO:
+                renderizar_card_posicao(perfil, sub_card, df_final)
 
             # ─────────────────────────────────────────────────────────────────
             # Validação de Match CCEE (existente)
