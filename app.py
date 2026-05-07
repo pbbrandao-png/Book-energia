@@ -207,6 +207,7 @@ for chave in ['fid_subido', 'fid_anterior', 'fid_pessoas', 'chave_matrix', 'fid_
     if chave not in st.session_state:
         st.session_state[chave] = None
 
+# AJUSTE AQUI: Só define o mês atual se a chave ainda não existir no estado da sessão
 if 'mes_sel' not in st.session_state:
     st.session_state['mes_sel'] = meses_nomes[datetime.now().month - 1]
 if 'ano_sel' not in st.session_state:
@@ -214,8 +215,9 @@ if 'ano_sel' not in st.session_state:
 
 # 5. INTERFACE LATERAL
 st.sidebar.title("Configurações")
-mes_nome_sel = st.sidebar.selectbox("Mês", meses_nomes, index=meses_nomes.index(st.session_state['mes_sel']), key='mes_sel')
-ano_sel_val  = st.sidebar.selectbox("Ano", anos, index=anos.index(st.session_state['ano_sel']) if st.session_state['ano_sel'] in anos else 0, key='ano_sel')
+# Removido o 'index=' manual para deixar o Streamlit gerenciar através da chave 'key'
+mes_nome_sel = st.sidebar.selectbox("Mês", meses_nomes, key='mes_sel')
+ano_sel_val  = st.sidebar.selectbox("Ano", anos, key='ano_sel')
 mes_num_sel  = meses_nomes.index(mes_nome_sel) + 1
 
 st.sidebar.markdown("---")
