@@ -287,10 +287,8 @@ def calcular_posicao_book(df_final, perfil, submercado_filtro):
 
 def renderizar_tabela_posicao(perfis, empresa, submercado_filtro, df_final):
     """
-    Renderiza uma tabela unificada (igual à imagem) com todas as partes em linhas
-    e colunas CLIQ CCEE | BOOK lado a lado.
-
-    Para adicionar um novo grupo (ex: MATRIX) no futuro:
+    Renderiza duas tabelas nativas Streamlit lado a lado: CLIQ CCEE | BOOK.
+    Para adicionar um novo grupo (ex: MATRIX):
       - Chame esta função com a nova lista de perfis e o nome da empresa.
     """
     linhas = []
@@ -298,89 +296,75 @@ def renderizar_tabela_posicao(perfis, empresa, submercado_filtro, df_final):
         c_ccee, v_ccee = calcular_posicao_ccee(perfil, submercado_filtro)
         c_book, v_book = calcular_posicao_book(df_final, perfil, submercado_filtro)
         linhas.append({
-            'perfil': perfil,
-            'c_ccee': c_ccee, 'v_ccee': v_ccee, 'net_ccee': round(c_ccee - v_ccee, 6),
-            'c_book': c_book, 'v_book': v_book, 'net_book': round(c_book - v_book, 6),
+            'Perfil':         perfil,
+            'Compras CCEE':   c_ccee,
+            'Vendas CCEE':    v_ccee,
+            'NET CCEE':       round(c_ccee - v_ccee, 6),
+            'Compras BOOK':   c_book,
+            'Vendas BOOK':    v_book,
+            'NET BOOK':       round(c_book - v_book, 6),
         })
 
-    # totais
-    tot = {k: sum(r[k] for r in linhas) for k in ['c_ccee','v_ccee','c_book','v_book']}
-    tot['net_ccee'] = round(tot['c_ccee'] - tot['v_ccee'], 6)
-    tot['net_book'] = round(tot['c_book'] - tot['v_book'], 6)
+    df_tab = pd.DataFrame(linhas)
 
-    def fmt(v):
-        return f"{v:,.6f}" if v != 0 else "0"
+    # linha de total
+    tot = pd.DataFrame([{
+        'Perfil':       f'TOTAL {empresa}',
+        'Compras CCEE': df_tab['Compras CCEE'].sum(),
+        'Vendas CCEE':  df_tab['Vendas CCEE'].sum(),
+        'NET CCEE':     round(df_tab['Compras CCEE'].sum() - df_tab['Vendas CCEE'].sum(), 6),
+        'Compras BOOK': df_tab['Compras BOOK'].sum(),
+        'Vendas BOOK':  df_tab['Vendas BOOK'].sum(),
+        'NET BOOK':     round(df_tab['Compras BOOK'].sum() - df_tab['Vendas BOOK'].sum(), 6),
+    }])
+    df_tab = pd.concat([df_tab, tot], ignore_index=True)
 
-    def cell_net(v):
-        cor = "#c0392b" if v < 0 else ("#27ae60" if v > 0 else "#333")
-        return f'<td style="text-align:right;padding:3px 8px;color:{cor};font-weight:700;">{fmt(v)}</td>'
+    def colorir(val, col):
+        if 'NET' in col:
+            if isinstance(val, float) and val < 0:  return 'color: #c0392b; font-weight: bold'
+            if isinstance(val, float) and val > 0:  return 'color: #27ae60; font-weight: bold'
+        return ''
 
-    def cell_val(v, positivo_verde=True):
-        if v == 0:
-            return f'<td style="text-align:right;padding:3px 8px;color:#888;">0</td>'
-        cor = "#27ae60" if positivo_verde else "#c0392b"
-        return f'<td style="text-align:right;padding:3px 8px;color:{cor};font-weight:600;">{fmt(v)}</td>'
+    def highlight_total(row):
+        if 'TOTAL' in str(row['Perfil']):
+            return ['background-color: #1a3a2a; color: white; font-weight: bold'] * len(row)
+        return [''] * len(row)
 
-    rows_html = ""
-    for r in linhas:
-        rows_html += f"""
-        <tr style="border-bottom:1px solid #eee;">
-          <td style="padding:4px 8px;font-size:13px;">{r['perfil']}</td>
-          {cell_val(r['c_ccee'])}
-          {cell_val(r['v_ccee'], False)}
-          {cell_net(r['net_ccee'])}
-          <td style="padding:3px 8px;color:#ccc;text-align:center;">|</td>
-          {cell_val(r['c_book'])}
-          {cell_val(r['v_book'], False)}
-          {cell_net(r['net_book'])}
-        </tr>"""
+    st.markdown(f"**{empresa} — {submercado_filtro}**")
 
-    rows_html += f"""
-    <tr style="background:#1a3a2a;color:white;font-weight:700;">
-      <td style="padding:5px 8px;font-size:13px;">{empresa}</td>
-      <td style="text-align:right;padding:3px 8px;">{fmt(tot['c_ccee'])}</td>
-      <td style="text-align:right;padding:3px 8px;">{fmt(tot['v_ccee'])}</td>
-      <td style="text-align:right;padding:3px 8px;{'color:#c0392b' if tot['net_ccee']<0 else 'color:#7dffb3' if tot['net_ccee']>0 else ''}">{fmt(tot['net_ccee'])}</td>
-      <td style="padding:3px 8px;color:#555;text-align:center;">|</td>
-      <td style="text-align:right;padding:3px 8px;">{fmt(tot['c_book'])}</td>
-      <td style="text-align:right;padding:3px 8px;">{fmt(tot['v_book'])}</td>
-      <td style="text-align:right;padding:3px 8px;{'color:#c0392b' if tot['net_book']<0 else 'color:#7dffb3' if tot['net_book']>0 else ''}">{fmt(tot['net_book'])}</td>
-    </tr>"""
+    col_ccee, col_book = st.columns(2)
 
-    th = "padding:5px 8px;text-align:right;font-size:12px;font-weight:700;color:white;"
-    st.markdown(f"""
-    <div style="border:1px solid #ddd;border-radius:10px;overflow:hidden;margin-bottom:16px;">
-      <table style="width:100%;border-collapse:collapse;font-size:13px;">
-        <thead>
-          <tr style="background:#1a3a2a;">
-            <th colspan="8" style="padding:8px 12px;text-align:center;font-size:14px;
-                color:white;letter-spacing:1px;">{empresa} — {submercado_filtro}</th>
-          </tr>
-          <tr style="background:#2d5a3d;color:white;">
-            <th style="padding:5px 8px;text-align:left;font-size:12px;font-weight:700;color:white;">PARTE</th>
-            <th colspan="3" style="padding:5px 8px;text-align:center;font-size:12px;
-                font-weight:700;color:#7dffb3;border-left:1px solid #3a6b4a;">⚡ CLIQ CCEE</th>
-            <th style="width:10px;background:#1a3a2a;"></th>
-            <th colspan="3" style="padding:5px 8px;text-align:center;font-size:12px;
-                font-weight:700;color:#a8e6cf;border-left:1px solid #3a6b4a;">📒 BOOK</th>
-          </tr>
-          <tr style="background:#3d6b4a;color:#ccc;font-size:11px;">
-            <th style="padding:3px 8px;text-align:left;color:#aaa;">—</th>
-            <th style="{th}border-left:1px solid #4a7a57;">COMPRAS (MWm)</th>
-            <th style="{th}">VENDAS (MWm)</th>
-            <th style="{th}">NET (MWm)</th>
-            <th style="width:10px;background:#2d5a3d;"></th>
-            <th style="{th}border-left:1px solid #4a7a57;">COMPRAS (MWm)</th>
-            <th style="{th}">VENDAS (MWm)</th>
-            <th style="{th}">NET (MWm)</th>
-          </tr>
-        </thead>
-        <tbody style="background:white;">
-          {rows_html}
-        </tbody>
-      </table>
-    </div>
-    """, unsafe_allow_html=True)
+    with col_ccee:
+        st.caption("⚡ CLIQ CCEE")
+        df_ccee = df_tab[['Perfil', 'Compras CCEE', 'Vendas CCEE', 'NET CCEE']].copy()
+        st.dataframe(
+            df_ccee.style
+                .apply(highlight_total, axis=1)
+                .applymap(lambda v: colorir(v, 'NET CCEE'), subset=['NET CCEE']),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                'Compras CCEE': st.column_config.NumberColumn(format="%.6f"),
+                'Vendas CCEE':  st.column_config.NumberColumn(format="%.6f"),
+                'NET CCEE':     st.column_config.NumberColumn(format="%.6f"),
+            }
+        )
+
+    with col_book:
+        st.caption("📒 BOOK")
+        df_bk = df_tab[['Perfil', 'Compras BOOK', 'Vendas BOOK', 'NET BOOK']].copy()
+        st.dataframe(
+            df_bk.style
+                .apply(highlight_total, axis=1)
+                .applymap(lambda v: colorir(v, 'NET BOOK'), subset=['NET BOOK']),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                'Compras BOOK': st.column_config.NumberColumn(format="%.6f"),
+                'Vendas BOOK':  st.column_config.NumberColumn(format="%.6f"),
+                'NET BOOK':     st.column_config.NumberColumn(format="%.6f"),
+            }
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
