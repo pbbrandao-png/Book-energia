@@ -94,8 +94,7 @@ def buscar_modulacao_cliq(row):
     if cod in CONTRATOS_ESPECIAIS_CCEAR: return "Carga"
     for db_key in ['db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
         df_cliq = st.session_state.get(db_key)
-        if df_cliq is None: continue
-        if cod in df_cliq.index:
+        if df_cliq is not None and cod in df_cliq.index:
             try:
                 mod = df_cliq.loc[cod, 'TIPO_MODULACAO']
                 if isinstance(mod, pd.Series): mod = mod.iloc[0]
@@ -234,17 +233,14 @@ if get_file_id(arq_cceal2) != st.session_state['fid_cceal2']:
 # 7. PROCESSAMENTO DA TABELA
 if st.session_state['df_bruto'] is not None:
     try:
-        # ─────────────────────────────────────────────────────────────────────
-        # SEÇÃO DE GERENCIAMENTO DE AJUSTES
-        # ─────────────────────────────────────────────────────────────────────
-        st.write("### 🛠️ Gerenciamento de Ajustes Manuais")
-        
-        with st.expander("➕ Adicionar Novo Ajuste"):
+        # --- SEÇÃO DE AJUSTES MANUAIS ---
+        st.write("### 🛠️ Ajustes Manuais de Boleta")
+        with st.expander("Expandir painel de edição"):
             c1, c2, c3, c4 = st.columns([1, 2, 2, 2])
-            edit_bol  = c1.text_input("ID Boleta", key="in_bol")
-            edit_vend = c2.text_input("Novo Vendedor", key="in_vend")
-            edit_comp = c3.text_input("Novo Comprador", key="in_comp")
-            edit_cliq = c4.text_input("Novo Cliq Paradigma", key="in_cliq")
+            edit_bol  = c1.text_input("ID Boleta")
+            edit_vend = c2.text_input("Novo Vendedor")
+            edit_comp = c3.text_input("Novo Comprador")
+            edit_cliq = c4.text_input("Novo Cliq Paradigma")
             
             if st.button("Gravar Alteração"):
                 if edit_bol:
@@ -253,27 +249,14 @@ if st.session_state['df_bruto'] is not None:
                         'Comprador': edit_comp if edit_comp else None,
                         'CliqCCEE Paradigma': edit_cliq if edit_cliq else None
                     }
-                    st.success(f"Ajuste para Boleta {edit_bol} salvo!")
+                    st.success(f"Boleta {edit_bol} atualizada!")
                     st.rerun()
-                else:
-                    st.error("Informe o ID da Boleta.")
-
-        if st.session_state['ajustes_manuais']:
-            st.write("**Ajustes Ativos:**")
-            for bol_id, dados in list(st.session_state['ajustes_manuais'].items()):
-                cols = st.columns([1, 2, 2, 2, 1])
-                cols[0].write(f"**{bol_id}**")
-                cols[1].write(f"Vend: {dados['Vendedor'] if dados['Vendedor'] else '---'}")
-                cols[2].write(f"Comp: {dados['Comprador'] if dados['Comprador'] else '---'}")
-                cols[3].write(f"Cliq: {dados['CliqCCEE Paradigma'] if dados['CliqCCEE Paradigma'] else '---'}")
-                if cols[4].button("Excluir", key=f"del_{bol_id}"):
-                    del st.session_state['ajustes_manuais'][bol_id]
+            
+            if st.session_state['ajustes_manuais']:
+                if st.button("Limpar todos os ajustes"):
+                    st.session_state['ajustes_manuais'] = {}
                     st.rerun()
-            st.markdown("---")
 
-        # ─────────────────────────────────────────────────────────────────────
-        # LÓGICA DE PROCESSAMENTO ORIGINAL
-        # ─────────────────────────────────────────────────────────────────────
         df_base = st.session_state['df_bruto'].copy()
         col_mes = df_base.columns[14]
         df_base[col_mes] = pd.to_numeric(df_base[col_mes], errors='coerce')
@@ -313,10 +296,10 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
             df_conferencia['Vendedor']  = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
 
-            # --- APLICAÇÃO DOS AJUSTES ---
+            # --- APLICAR AJUSTES MANUAIS ---
             df_conferencia['Editado'] = False
-            for bol_id, info in st.session_state['ajustes_manuais'].items():
-                mask = df_conferencia['Boleta_Key'] == bol_id
+            for bol, info in st.session_state['ajustes_manuais'].items():
+                mask = df_conferencia['Boleta_Key'] == bol
                 if mask.any():
                     df_conferencia.loc[mask, 'Editado'] = True
                     if info['Vendedor']: df_conferencia.loc[mask, 'Vendedor'] = info['Vendedor']
@@ -394,12 +377,25 @@ if st.session_state['df_bruto'] is not None:
                 mask_p = df_final['Parte'].str.contains("BISMUT|GET", na=False, case=False)
                 mask_c = df_final['Contraparte'].str.upper().str.startswith("MATRIX", na=False) & ~df_final['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False)
                 df_final.loc[mask_p & mask_c, ['Montante MWh', 'Volume MWm']] = 0.0
-            if ocultar_vazio: df_final = df_final[df_final['Volume MWm'] == 0] # Corrigido para lógica de ocultar conforme toggle
+            if ocultar_vazio: df_final = df_final[df_final['Volume MWm'] != 0]
 
+            # Validação de Match
+            bases_carregadas = [k.replace('db_', '').upper() for k in ['db_ccear', 'db_cbr', 'db_matrix', 'db_bismut'] if st.session_state.get(k) is not None]
+            with st.expander(f"🔍 Validação de Match CCEE", expanded=False):
+                if not bases_carregadas: st.warning("Nenhuma base Cliq CCEE carregada.")
+                else:
+                    _, sem_match, _ = gerar_relatorio_match(df_final)
+                    if sem_match.empty: st.success("Nenhuma linha sem match!")
+                    else: 
+                        st.warning(f"{len(sem_match)} linha(s) sem contrato correspondente.")
+                        st.dataframe(sem_match.reset_index(drop=True), use_container_width=True, hide_index=True)
+
+            # --- ESTILIZAÇÃO E EXIBIÇÃO ---
             ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 'CliqCCEE Paradigma', 'Modulacao WBC', 'Modulação CCEE', '% Modulacao Min', '% Modulacao Max', 'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 'Contrato CliqCCEE', 'Status do Contrato', 'SITUAÇÃO PGTO', 'Volume BOOK', 'Volume CliqCCEE', 'Situacao ERP', 'Razao Social', 'Pendência Financeira', 'Editado']
             
             def highlight_rows(row):
-                if row['Editado']: return ['background-color: #fff4cc'] * len(row)
+                if row['Editado']:
+                    return ['background-color: #fff4cc'] * len(row) # Amarelo claro
                 return [''] * len(row)
 
             st.dataframe(
@@ -407,7 +403,7 @@ if st.session_state['df_bruto'] is not None:
                 use_container_width=True, 
                 hide_index=True, 
                 column_config={
-                    "Editado": None,
+                    "Editado": None, # Oculta a coluna técnica
                     "Montante MWh": st.column_config.NumberColumn(format="%.3f"), 
                     "Volume MWm": st.column_config.NumberColumn(format="%.6f"), 
                     "Volume BOOK": st.column_config.NumberColumn(format="%.6f"), 
@@ -415,38 +411,5 @@ if st.session_state['df_bruto'] is not None:
                     "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f")
                 }
             )
-
-            # ─────────────────────────────────────────────────────────────────────
-            # IMPLEMENTAÇÃO DO RELATÓRIO DE MATCH CCEE
-            # ─────────────────────────────────────────────────────────────────────
-            st.markdown("---")
-            st.subheader("🔍 Conferência de Registro (Match CCEE)")
-            
-            with st.spinner("Analisando correspondências nas bases Cliq..."):
-                df_com, df_sem, df_inc = gerar_relatorio_match(df_final)
-
-            col_m1, col_m2, col_m3 = st.columns(3)
-            col_m1.metric("Com Match", len(df_com))
-            col_m2.metric("Sem Match", len(df_sem), delta_color="inverse")
-            col_m3.metric("Dados Incompletos", len(df_inc))
-
-            tab1, tab2, tab3 = st.tabs(["✅ Com Match", "❌ Sem Match", "⚠️ Incompletos/Vazios"])
-            
-            with tab1:
-                if not df_com.empty:
-                    st.dataframe(df_com, use_container_width=True, hide_index=True)
-                else:
-                    st.info("Nenhum contrato com match confirmado.")
-
-            with tab2:
-                if not df_sem.empty:
-                    st.warning("Estes contratos possuem volume, mas as siglas Vendedor/Comprador não batem com os arquivos Cliq.")
-                    st.dataframe(df_sem, use_container_width=True, hide_index=True)
-                else:
-                    st.success("Todos os contratos validados possuem match!")
-
-            with tab3:
-                st.dataframe(df_inc, use_container_width=True, hide_index=True)
-
         else: st.warning("Sem dados para este período.")
     except Exception as e: st.error(f"Erro no processamento: {e}")
