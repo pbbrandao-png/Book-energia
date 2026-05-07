@@ -234,36 +234,63 @@ if get_file_id(arq_cceal2) != st.session_state['fid_cceal2']:
 if st.session_state['df_bruto'] is not None:
     try:
         # --- SEÇÃO DE AJUSTES MANUAIS ---
-        st.write("### 🛠️ Ajustes Manuais de Boleta")
-        with st.expander("Expandir painel de edição"):
-            c1, c2, c3, c4 = st.columns([1, 2, 2, 2])
-            edit_bol  = c1.text_input("ID Boleta")
-            edit_vend = c2.text_input("Novo Vendedor")
-            edit_comp = c3.text_input("Novo Comprador")
-            edit_cliq = c4.text_input("Novo Cliq Paradigma")
+        st.write("### 🛠️ Ajustes de Boleta")
+        with st.expander("Expandir painel de ajustes (Individual ou Lote)"):
+            tab_manual, tab_lote = st.tabs(["Edição Individual", "Upload em Lote"])
             
-            if st.button("Gravar Alteração"):
-                if edit_bol:
-                    st.session_state['ajustes_manuais'][tratar_chave(edit_bol)] = {
-                        'Vendedor': edit_vend if edit_vend else None,
-                        'Comprador': edit_comp if edit_comp else None,
-                        'CliqCCEE Paradigma': edit_cliq if edit_cliq else None
-                    }
-                    st.success(f"Boleta {edit_bol} atualizada!")
-                    st.rerun()
+            with tab_manual:
+                c1, c2, c3, c4 = st.columns([1, 2, 2, 2])
+                edit_bol  = c1.text_input("ID Boleta", key="input_bol")
+                edit_vend = c2.text_input("Novo Vendedor", key="input_vend")
+                edit_comp = c3.text_input("Novo Comprador", key="input_comp")
+                edit_cliq = c4.text_input("Novo Cliq Paradigma", key="input_cliq")
+                
+                if st.button("Gravar Alteração"):
+                    if edit_bol:
+                        st.session_state['ajustes_manuais'][tratar_chave(edit_bol)] = {
+                            'Vendedor': edit_vend if edit_vend else None,
+                            'Comprador': edit_comp if edit_comp else None,
+                            'CliqCCEE Paradigma': edit_cliq if edit_cliq else None
+                        }
+                        st.success(f"Boleta {edit_bol} atualizada!")
+                        st.rerun()
             
-            # --- LISTA DE BOLETAS ALTERADAS (NOVA IMPLEMENTAÇÃO) ---
+            with tab_lote:
+                st.write("Suba uma planilha com as colunas: **BOLETA**, **Vendedor**, **Comprador**, **CliqCCEE Paradigma**")
+                arquivo_lote = st.file_uploader("Planilha de Ajustes", type=['xlsx'], key="upload_lote")
+                if arquivo_lote:
+                    try:
+                        df_lote = pd.read_excel(arquivo_lote)
+                        # Padronização de nomes de colunas para evitar erros de case
+                        df_lote.columns = [c.strip() for c in df_lote.columns]
+                        if 'BOLETA' in df_lote.columns:
+                            for _, r in df_lote.iterrows():
+                                b_id = tratar_chave(r['BOLETA'])
+                                if b_id:
+                                    st.session_state['ajustes_manuais'][b_id] = {
+                                        'Vendedor': str(r['Vendedor']).strip() if 'Vendedor' in r and not pd.isna(r['Vendedor']) else None,
+                                        'Comprador': str(r['Comprador']).strip() if 'Comprador' in r and not pd.isna(r['Comprador']) else None,
+                                        'CliqCCEE Paradigma': tratar_chave(r['CliqCCEE Paradigma']) if 'CliqCCEE Paradigma' in r and not pd.isna(r['CliqCCEE Paradigma']) else None
+                                    }
+                            st.success("Ajustes em lote carregados com sucesso!")
+                            st.rerun()
+                        else:
+                            st.error("Coluna 'BOLETA' não encontrada no arquivo.")
+                    except Exception as e_lote:
+                        st.error(f"Erro ao processar lote: {e_lote}")
+
+            # Listagem de Ajustes Ativos
             if st.session_state['ajustes_manuais']:
                 st.markdown("---")
-                st.write("**Boletas com Ajustes Ativos:**")
+                st.write("**Ajustes Ativos:**")
                 for bol_id, dados in list(st.session_state['ajustes_manuais'].items()):
                     col_info, col_del = st.columns([6, 1])
-                    info_txt = f"ID: {bol_id} | "
-                    if dados['Vendedor']: info_txt += f"Vend: {dados['Vendedor']} | "
-                    if dados['Comprador']: info_txt += f"Comp: {dados['Comprador']} | "
-                    if dados['CliqCCEE Paradigma']: info_txt += f"Cliq: {dados['CliqCCEE Paradigma']}"
+                    info_parts = [f"ID: {bol_id}"]
+                    if dados['Vendedor']: info_parts.append(f"Vend: {dados['Vendedor']}")
+                    if dados['Comprador']: info_parts.append(f"Comp: {dados['Comprador']}")
+                    if dados['CliqCCEE Paradigma']: info_parts.append(f"Cliq: {dados['CliqCCEE Paradigma']}")
                     
-                    col_info.info(info_txt)
+                    col_info.info(" | ".join(info_parts))
                     if col_del.button("Remover", key=f"del_{bol_id}"):
                         del st.session_state['ajustes_manuais'][bol_id]
                         st.rerun()
