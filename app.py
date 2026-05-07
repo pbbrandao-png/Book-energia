@@ -835,7 +835,12 @@ if st.session_state['df_bruto'] is not None:
 
             # <<<NOVO>>> Lista de perfis a exibir no card.
             # Para adicionar um novo perfil: inclua a sigla aqui.
-            PERFIS_POSICAO = ["BISMUT COM"]
+            PERFIS_POSICAO = [
+                "BISMUT COM I5",
+                "BISMUT COM I0",
+                "BISMUT COM I1",
+                "BISMUT COM",
+            ]
 
             for perfil in PERFIS_POSICAO:
                 renderizar_card_posicao(perfil, sub_card, df_final)
