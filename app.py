@@ -252,7 +252,22 @@ if st.session_state['df_bruto'] is not None:
                     st.success(f"Boleta {edit_bol} atualizada!")
                     st.rerun()
             
+            # --- LISTA DE BOLETAS ALTERADAS (NOVA IMPLEMENTAÇÃO) ---
             if st.session_state['ajustes_manuais']:
+                st.markdown("---")
+                st.write("**Boletas com Ajustes Ativos:**")
+                for bol_id, dados in list(st.session_state['ajustes_manuais'].items()):
+                    col_info, col_del = st.columns([6, 1])
+                    info_txt = f"ID: {bol_id} | "
+                    if dados['Vendedor']: info_txt += f"Vend: {dados['Vendedor']} | "
+                    if dados['Comprador']: info_txt += f"Comp: {dados['Comprador']} | "
+                    if dados['CliqCCEE Paradigma']: info_txt += f"Cliq: {dados['CliqCCEE Paradigma']}"
+                    
+                    col_info.info(info_txt)
+                    if col_del.button("Remover", key=f"del_{bol_id}"):
+                        del st.session_state['ajustes_manuais'][bol_id]
+                        st.rerun()
+
                 if st.button("Limpar todos os ajustes"):
                     st.session_state['ajustes_manuais'] = {}
                     st.rerun()
