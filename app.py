@@ -273,8 +273,6 @@ if st.session_state['df_bruto'] is not None:
                                     }
                             st.success("Ajustes em lote carregados com sucesso!")
                             st.rerun()
-                        else:
-                            st.error("Coluna 'BOLETA' não encontrada no arquivo.")
                     except Exception as e_lote:
                         st.error(f"Erro ao processar lote: {e_lote}")
 
@@ -292,10 +290,6 @@ if st.session_state['df_bruto'] is not None:
                     if col_del.button("Remover", key=f"del_{bol_id}"):
                         del st.session_state['ajustes_manuais'][bol_id]
                         st.rerun()
-
-                if st.button("Limpar todos os ajustes"):
-                    st.session_state['ajustes_manuais'] = {}
-                    st.rerun()
 
         df_base = st.session_state['df_bruto'].copy()
         col_mes = df_base.columns[14]
@@ -387,24 +381,7 @@ if st.session_state['df_bruto'] is not None:
                 return 0.0
 
             df_conferencia['Volume CliqCCEE'] = df_conferencia.apply(buscar_volume_cliq, axis=1).fillna(0.0).round(6)
-            
-            # --- NOVA COLUNA: VALIDAÇÃO VOLUME ---
-            def validar_volume_logic(row):
-                if row['Contrato CliqCCEE'] in ['Verificar', '-', '']: return "-"
-                return "OK" if round(row['Volume BOOK'], 6) == round(row['Volume CliqCCEE'], 6) else "VERIFICAR"
-
-            df_conferencia['Validação Volume'] = df_conferencia.apply(validar_volume_logic, axis=1)
-
-            df_pagos = df_conferencia[df_conferencia['Situacao ERP'].astype(str).str.upper() == 'PAGO'].copy()
-            dict_soma_pagos = df_pagos.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
-
-            def validar_pagamento(row):
-                if row['Contrato CliqCCEE'] in ['Verificar', '-', '']: return "-"
-                total_pago = dict_soma_pagos.get(row['Contrato CliqCCEE'], 0.0)
-                return "Pago" if round(total_pago, 6) >= round(row['Volume BOOK'], 6) and row['Volume BOOK'] > 0 else "-"
-
-            df_conferencia['SITUAÇÃO PGTO'] = df_conferencia.apply(validar_pagamento, axis=1)
-            df_conferencia['Pendência Financeira'] = df_conferencia['Razao Social'].str.strip().str.upper().map(st.session_state['dict_pendencias']).fillna(0.0)
+            df_conferencia['Validação Volume'] = df_conferencia.apply(lambda r: "OK" if round(r['Volume BOOK'], 6) == round(r['Volume CliqCCEE'], 6) else "VERIFICAR" if r['Contrato CliqCCEE'] not in ['Verificar', '-', ''] else "-", axis=1)
 
             st.write("### Filtros")
             f1, f2, f3, f4, f5, f6, f7 = st.columns([1.5, 1.5, 1.5, 1.5, 1.2, 1.2, 1.2])
@@ -429,6 +406,20 @@ if st.session_state['df_bruto'] is not None:
                 df_final.loc[mask_p & mask_c, ['Montante MWh', 'Volume MWm']] = 0.0
             if ocultar_vazio: df_final = df_final[df_final['Volume MWm'] != 0]
 
+            # ─────────────────────────────────────────────────────────────────
+            # BALÕES DE MÉTRICAS (RESUMO)
+            # ─────────────────────────────────────────────────────────────────
+            st.write("### Resumo de Contratos")
+            m1, m2, m3 = st.columns(3)
+            total_c = len(df_final)
+            compras = len(df_final[df_final['Operacao'].str.upper() == 'COMPRA'])
+            vendas  = len(df_final[df_final['Operacao'].str.upper() == 'VENDA'])
+            
+            m1.metric("Total de Contratos", total_c)
+            m2.metric("Operações de Compra", compras)
+            m3.metric("Operações de Venda", vendas)
+            # ─────────────────────────────────────────────────────────────────
+
             bases_carregadas = [k.replace('db_', '').upper() for k in ['db_ccear', 'db_cbr', 'db_matrix', 'db_bismut'] if st.session_state.get(k) is not None]
             with st.expander(f"🔍 Validação de Match CCEE", expanded=False):
                 if not bases_carregadas: st.warning("Nenhuma base Cliq CCEE carregada.")
@@ -439,12 +430,10 @@ if st.session_state['df_bruto'] is not None:
                         st.warning(f"{len(sem_match)} linha(s) sem contrato correspondente.")
                         st.dataframe(sem_match.reset_index(drop=True), use_container_width=True, hide_index=True)
 
-            # --- ESTILIZAÇÃO E EXIBIÇÃO ---
             ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 'CliqCCEE Paradigma', 'Modulacao WBC', 'Modulação CCEE', '% Modulacao Min', '% Modulacao Max', 'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 'Contrato CliqCCEE', 'Status do Contrato', 'SITUAÇÃO PGTO', 'Volume BOOK', 'Volume CliqCCEE', 'Validação Volume', 'Situacao ERP', 'Razao Social', 'Pendência Financeira', 'Editado']
             
             def highlight_rows(row):
-                if row['Editado']:
-                    return ['background-color: #fff4cc'] * len(row)
+                if row['Editado']: return ['background-color: #fff4cc'] * len(row)
                 return [''] * len(row)
 
             st.dataframe(
