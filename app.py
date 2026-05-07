@@ -7,7 +7,7 @@ from datetime import datetime
 st.set_page_config(layout="wide", page_title="Book de Energia")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LISTA DE DESTAQUE - CONTRATOS ESPECIAIS
+# LISTA DE DESTAQUE - CONTRATOS ESPECIAIS (BUSCA EM CCEAR_Q + CONVERSÃO MWH)
 # ─────────────────────────────────────────────────────────────────────────────
 CONTRATOS_ESPECIAIS_CCEAR = [
     "2813298", "2813299", "2813300", "2813301", "2813302", "2813303",
@@ -59,7 +59,7 @@ def carregar_csv_cliq(arquivo):
     except Exception:
         return None
 
-# 3. REGRAS DE BUSCA CLIQ
+# 3. MAPEAMENTO E REGRAS DE BUSCA CLIQ
 COLUNAS_CLIQ = {
     'matrix': {'vendedor': 'SIGLA_PERFIL_VENDEDOR', 'comprador': 'SIGLA_PERFIL_COMPRADOR'},
     'bismut': {'vendedor': 'SIGLA_PERFIL_VENDEDOR', 'comprador': 'SIGLA_PERFIL_COMPRADOR'},
@@ -91,7 +91,8 @@ def buscar_cliq_ccee(cod_paradigma, cod_mes_anterior, df_cliq, tipo_base, nome_v
 def buscar_modulacao_cliq(row):
     cod = row['Contrato CliqCCEE']
     if cod in ['Verificar', '-', '']: return "-"
-    if cod in CONTRATOS_ESPECIAIS_CCEAR: return "Carga"
+    if cod in CONTRATOS_ESPECIAIS_CCEAR:
+        return "Carga"
     for db_key in ['db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
         df_cliq = st.session_state.get(db_key)
         if df_cliq is not None and cod in df_cliq.index:
@@ -100,53 +101,86 @@ def buscar_modulacao_cliq(row):
                 if isinstance(mod, pd.Series): mod = mod.iloc[0]
                 if not pd.isna(mod) and str(mod).strip() != "":
                     return str(mod).strip().capitalize()
-            except: continue
+            except:
+                continue
     return "-"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# VALIDAÇÃO DE MATCH CCEE
+# ─────────────────────────────────────────────────────────────────────────────
 def verificar_match_ccee_linha(vendedor, comprador, submercado_wbc, is_bismut):
-    if not vendedor or not comprador or not submercado_wbc: return None, []
+    if not vendedor or not comprador or not submercado_wbc:
+        return None, []
+
     sub_upper = submercado_wbc.strip().upper()
     vend_upper = vendedor.strip().upper()
     comp_upper = comprador.strip().upper()
+
     bases = ['db_bismut'] if is_bismut else ['db_ccear', 'db_cbr', 'db_matrix']
     bases_consultadas = []
+
     for db_key in bases:
         df_cliq = st.session_state.get(db_key)
-        if df_cliq is None: continue
+        if df_cliq is None:
+            continue
+
         colunas_necessarias = {'SUBMERCADO_ENTREGA', 'SIGLA_PERFIL_VENDEDOR', 'SIGLA_PERFIL_COMPRADOR'}
         df_temp = df_cliq.reset_index()
-        if not colunas_necessarias.issubset(df_temp.columns): continue
+        if not colunas_necessarias.issubset(df_temp.columns):
+            continue
+
         bases_consultadas.append(db_key.replace('db_', '').upper())
+
         mask = (
             (df_temp['SUBMERCADO_ENTREGA'].astype(str).str.strip().str.upper() == sub_upper) &
             (df_temp['SIGLA_PERFIL_VENDEDOR'].astype(str).str.strip().str.upper() == vend_upper) &
             (df_temp['SIGLA_PERFIL_COMPRADOR'].astype(str).str.strip().str.upper() == comp_upper)
         )
-        if mask.any(): return True, bases_consultadas
+
+        if mask.any():
+            return True, bases_consultadas
+
     return False, bases_consultadas
+
 
 def gerar_relatorio_match(df_conferencia):
     resultados = []
+
     for _, row in df_conferencia.iterrows():
         volume = pd.to_numeric(row.get('Volume MWm', 0), errors='coerce')
-        if pd.isna(volume) or volume == 0: continue
+        if pd.isna(volume) or volume == 0:
+            continue
+
         vendedor   = str(row.get('Vendedor', '')).strip() if row.get('Vendedor', '-') != '-' else ''
         comprador  = str(row.get('Comprador', '')).strip() if row.get('Comprador', '-') != '-' else ''
         submercado = str(row.get('Submercado', '')).strip()
         is_bismut  = 'BISMUT' in str(row.get('Parte', '')).upper()
         boleta     = row.iloc[0] if len(row) > 0 else ''
+
         match, bases = verificar_match_ccee_linha(vendedor, comprador, submercado, is_bismut)
+
         resultados.append({
-            'Boleta': boleta, 'Parte': row.get('Parte', ''), 'Contraparte': row.get('Contraparte', ''),
-            'Submercado': submercado, 'Vendedor': vendedor, 'Comprador': comprador,
-            'Bases Consultadas': ', '.join(bases) if bases else '-', '_match': match
+            'Boleta':      boleta,
+            'Parte':       row.get('Parte', ''),
+            'Contraparte': row.get('Contraparte', ''),
+            'Submercado':  submercado,
+            'Vendedor':    vendedor,
+            'Comprador':   comprador,
+            'Bases Consultadas': ', '.join(bases) if bases else '-',
+            '_match':      match,
         })
+
     df_res = pd.DataFrame(resultados)
-    if df_res.empty: return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+    if df_res.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
     sem_match = df_res[df_res['_match'] == False].drop(columns=['_match'])
     com_match = df_res[df_res['_match'] == True].drop(columns=['_match'])
     incompleto = df_res[df_res['_match'].isna()].drop(columns=['_match'])
+
     return com_match, sem_match, incompleto
+
 
 # 4. INICIALIZAÇÃO DO SESSION STATE
 meses_nomes = ["Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho",
@@ -155,50 +189,59 @@ anos = [str(a) for a in range(2024, 2031)]
 
 for chave in ['df_bruto', 'dict_mes_anterior', 'dict_comprador', 'dict_vendedor', 'dict_mapa', 'dict_pendencias',
               'db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
-    if chave not in st.session_state: st.session_state[chave] = {} if 'dict' in chave else None
+    if chave not in st.session_state:
+        st.session_state[chave] = {} if 'dict' in chave else None
 
 for chave in ['fid_subido', 'fid_anterior', 'fid_pessoas', 'chave_matrix', 'fid_cceal2', 'fid_mapa', 'fid_pendencias']:
-    if chave not in st.session_state: st.session_state[chave] = None
+    if chave not in st.session_state:
+        st.session_state[chave] = None
 
-if 'mes_sel' not in st.session_state: st.session_state['mes_sel'] = meses_nomes[datetime.now().month - 1]
-if 'ano_sel' not in st.session_state: st.session_state['ano_sel'] = str(datetime.now().year)
+if 'mes_sel' not in st.session_state:
+    st.session_state['mes_sel'] = meses_nomes[datetime.now().month - 1]
+if 'ano_sel' not in st.session_state:
+    st.session_state['ano_sel'] = str(datetime.now().year)
 
 # 5. INTERFACE LATERAL
 st.sidebar.title("Configurações")
-st.sidebar.selectbox("Mês", meses_nomes, key='mes_sel')
-st.sidebar.selectbox("Ano", anos, key='ano_sel')
-
-mes_nome_sel = st.session_state['mes_sel']
-ano_sel_val  = st.session_state['ano_sel']
+mes_nome_sel = st.sidebar.selectbox("Mês", meses_nomes, index=meses_nomes.index(st.session_state['mes_sel']), key='mes_sel')
+ano_sel_val  = st.sidebar.selectbox("Ano", anos, index=anos.index(st.session_state['ano_sel']) if st.session_state['ano_sel'] in anos else 0, key='ano_sel')
 mes_num_sel  = meses_nomes.index(mes_nome_sel) + 1
 
 st.sidebar.markdown("---")
 arquivo_subido     = st.sidebar.file_uploader("1. Contratos Aprovados (Excel)", type=['xlsx', 'xlsm'])
-arquivo_anterior   = st.sidebar.file_uploader("2. Base Mês Anterior.xlsx", type=['xlsx'])
-arquivo_pessoas    = st.sidebar.file_uploader("3. Exportador (4).xlsx", type=['xlsx'])
-arquivo_mapa       = st.sidebar.file_uploader("4. Mapa Financeiro (Excel)", type=['xlsx'])
+arquivo_anterior   = st.sidebar.file_uploader("2. Base Mês Anterior.xlsx",      type=['xlsx'])
+arquivo_pessoas    = st.sidebar.file_uploader("3. Exportador (4).xlsx",          type=['xlsx'])
+arquivo_mapa       = st.sidebar.file_uploader("4. Mapa Financeiro (Excel)",      type=['xlsx'])
 arquivo_pendencias = st.sidebar.file_uploader("5. Pendências Financeiras (Excel)", type=['xlsx'])
 
 st.sidebar.subheader("Bases Cliq CCEE")
-arq_ccear  = st.sidebar.file_uploader("Cliq CCEAR_Q", type=['xlsx', 'csv'])
+arq_ccear  = st.sidebar.file_uploader("Cliq CCEAR_Q",    type=['xlsx', 'csv'])
 arq_cbr    = st.sidebar.file_uploader("Cliq CBR Mercado", type=['xlsx', 'csv'])
-arq_cceal1 = st.sidebar.file_uploader("Cliq Matrix", type=['xlsx', 'csv'])
-arq_cceal2 = st.sidebar.file_uploader("Cliq Bismut", type=['xlsx', 'csv'])
+arq_cceal1 = st.sidebar.file_uploader("Cliq Matrix",      type=['xlsx', 'csv'])
+arq_cceal2 = st.sidebar.file_uploader("Cliq Bismut",      type=['xlsx', 'csv'])
 
-st.title(f"Livro de Energia - {mes_nome_sel}/{ano_sel_val}")
+# ── FIX: lê o valor atualizado direto do session_state após os widgets serem renderizados
+mes_titulo = st.session_state['mes_sel']
+ano_titulo = st.session_state['ano_sel']
+st.title(f"Book de Energia - {mes_titulo}/{ano_titulo}")
 
 # 6. CARREGAMENTO DOS DADOS
 if get_file_id(arquivo_subido) != st.session_state['fid_subido']:
     st.session_state['fid_subido'] = get_file_id(arquivo_subido)
-    if arquivo_subido: st.session_state['df_bruto'] = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
+    if arquivo_subido:
+        st.session_state['df_bruto'] = pd.read_excel(arquivo_subido, sheet_name='Contratos_Selecionados')
 
 if get_file_id(arquivo_anterior) != st.session_state['fid_anterior']:
     st.session_state['fid_anterior'] = get_file_id(arquivo_anterior)
     if arquivo_anterior:
         try:
             df_apoio = pd.read_excel(arquivo_anterior, dtype=str)
-            st.session_state['dict_mes_anterior'] = pd.Series(df_apoio.iloc[:, 1].values, index=df_apoio.iloc[:, 0].apply(tratar_chave).values).to_dict()
-        except: st.session_state['dict_mes_anterior'] = {}
+            st.session_state['dict_mes_anterior'] = pd.Series(
+                df_apoio.iloc[:, 1].values,
+                index=df_apoio.iloc[:, 0].apply(tratar_chave).values
+            ).to_dict()
+        except:
+            st.session_state['dict_mes_anterior'] = {}
 
 if get_file_id(arquivo_pendencias) != st.session_state['fid_pendencias']:
     st.session_state['fid_pendencias'] = get_file_id(arquivo_pendencias)
@@ -211,7 +254,8 @@ if get_file_id(arquivo_pendencias) != st.session_state['fid_pendencias']:
             df_p_simples['razao_social_pend'] = df_p_simples['razao_social_pend'].astype(str).str.strip().str.upper()
             df_somado = df_p_simples.groupby('razao_social_pend')['valor_pendente'].sum().reset_index()
             st.session_state['dict_pendencias'] = dict(zip(df_somado['razao_social_pend'], df_somado['valor_pendente']))
-        except: st.session_state['dict_pendencias'] = {}
+        except:
+            st.session_state['dict_pendencias'] = {}
 
 if get_file_id(arquivo_pessoas) != st.session_state['fid_pessoas']:
     st.session_state['fid_pessoas'] = get_file_id(arquivo_pessoas)
@@ -225,17 +269,20 @@ if get_file_id(arquivo_mapa) != st.session_state['fid_mapa']:
     st.session_state['fid_mapa'] = get_file_id(arquivo_mapa)
     if arquivo_mapa:
         df_m = pd.read_excel(arquivo_mapa)
-        st.session_state['dict_mapa'] = pd.Series(df_m['Situacao_ERP'].values, index=df_m['Codigo_WBC'].apply(tratar_chave).values).to_dict()
+        st.session_state['dict_mapa'] = pd.Series(
+            df_m['Situacao_ERP'].values,
+            index=df_m['Codigo_WBC'].apply(tratar_chave).values
+        ).to_dict()
 
 if (get_file_id(arq_ccear), get_file_id(arq_cbr), get_file_id(arq_cceal1)) != st.session_state['chave_matrix']:
     st.session_state['chave_matrix'] = (get_file_id(arq_ccear), get_file_id(arq_cbr), get_file_id(arq_cceal1))
-    st.session_state['db_ccear'] = carregar_csv_cliq(arq_ccear)
-    st.session_state['db_cbr'] = carregar_csv_cliq(arq_cbr)
+    st.session_state['db_ccear']  = carregar_csv_cliq(arq_ccear)
+    st.session_state['db_cbr']    = carregar_csv_cliq(arq_cbr)
     st.session_state['db_matrix'] = carregar_csv_cliq(arq_cceal1)
 
 if get_file_id(arq_cceal2) != st.session_state['fid_cceal2']:
     st.session_state['fid_cceal2'] = get_file_id(arq_cceal2)
-    st.session_state['db_bismut'] = carregar_csv_cliq(arq_cceal2)
+    st.session_state['db_bismut']  = carregar_csv_cliq(arq_cceal2)
 
 # 7. PROCESSAMENTO DA TABELA
 if st.session_state['df_bruto'] is not None:
@@ -251,42 +298,75 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Boleta_Key'] = df_conferencia[col_boleta].apply(tratar_chave)
             df_lookup = df_filtrada.drop_duplicates(subset=[col_boleta]).set_index(col_boleta)
 
-            df_conferencia['Operacao'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[1]]).astype(str)
-            df_conferencia['Parte'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[62]]).astype(str).str.strip()
+            # Colunas da Tabela
+            df_conferencia['Operacao']     = df_conferencia[col_boleta].map(df_lookup[df_base.columns[1]]).astype(str)
+            df_conferencia['Parte']        = df_conferencia[col_boleta].map(df_lookup[df_base.columns[62]]).astype(str).str.strip()
             df_conferencia['Razao Social'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[2]]).astype(str).str.strip()
 
-            mapa_energia = {'Incentivada-50%': 'Incentivada-I5', 'Incentivada-100%': 'Incentivada-I1', 'Incentivada-0%': 'Incentivada-I0', 'Incentivada-CQ50%': 'Incentivada-CQ5'}
-            df_conferencia['Tipo Energia'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[5]]).astype(str).str.strip().replace(mapa_energia)
+            mapa_energia = {
+                'Incentivada-50%':  'Incentivada-I5',
+                'Incentivada-100%': 'Incentivada-I1',
+                'Incentivada-0%':   'Incentivada-I0',
+                'Incentivada-CQ50%':'Incentivada-CQ5'
+            }
+            df_conferencia['Tipo Energia'] = (
+                df_conferencia[col_boleta]
+                .map(df_lookup[df_base.columns[5]])
+                .astype(str).str.strip()
+                .replace(mapa_energia)
+            )
 
-            df_conferencia['Contraparte'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[6]])
-            df_conferencia['CP/LP'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[12]])
+            df_conferencia['Contraparte']      = df_conferencia[col_boleta].map(df_lookup[df_base.columns[6]])
+            df_conferencia['CP/LP']            = df_conferencia[col_boleta].map(df_lookup[df_base.columns[12]])
             df_conferencia['CNPJ Contraparte'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[4]]).apply(formatar_cnpj)
-            df_conferencia['Submercado'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[8]]).replace({'SE/CO': 'Sudeste', 'N': 'Norte', 'NE': 'Nordeste', 'S': 'Sul'})
+            df_conferencia['Submercado']       = (
+                df_conferencia[col_boleta]
+                .map(df_lookup[df_base.columns[8]])
+                .replace({'SE/CO': 'Sudeste', 'N': 'Norte', 'NE': 'Nordeste', 'S': 'Sul'})
+            )
 
-            df_conferencia['Montante MWh'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[17]]), errors='coerce').fillna(0).round(3)
+            df_conferencia['Montante MWh'] = (
+                pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[17]]), errors='coerce')
+                .fillna(0).round(3)
+            )
             v_mwh = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[20]]), errors='coerce')
             h_mes = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[15]]), errors='coerce')
             df_conferencia['Volume MWm'] = (v_mwh / h_mes).fillna(0).round(6)
 
-            df_conferencia['Situacao ERP'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mapa']).fillna("-")
+            df_conferencia['Situacao ERP']    = df_conferencia['Boleta_Key'].map(st.session_state['dict_mapa']).fillna("-")
             df_conferencia['CliqCCEE Paradigma'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[60]]).apply(tratar_chave)
-            df_conferencia['Modulacao WBC'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[63]]).apply(limpar_modulacao)
-            df_conferencia['% Modulacao Min'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[28]]), errors='coerce').fillna("-")
-            df_conferencia['% Modulacao Max'] = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[29]]), errors='coerce').fillna("-")
+            df_conferencia['Modulacao WBC']      = df_conferencia[col_boleta].map(df_lookup[df_base.columns[63]]).apply(limpar_modulacao)
+
+            df_conferencia['% Modulacao Min'] = pd.to_numeric(
+                df_conferencia[col_boleta].map(df_lookup[df_base.columns[28]]), errors='coerce'
+            ).fillna("-")
+            df_conferencia['% Modulacao Max'] = pd.to_numeric(
+                df_conferencia[col_boleta].map(df_lookup[df_base.columns[29]]), errors='coerce'
+            ).fillna("-")
+
             df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mes_anterior']).fillna("-")
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
             df_conferencia['Vendedor']  = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
 
+            # Resolve Contrato CliqCCEE
             def resolver_cliq(row):
-                vend, comp = (row['Vendedor'] if row['Vendedor'] != "-" else ""), (row['Comprador'] if row['Comprador'] != "-" else "")
-                if 'BISMUT' in str(row['Parte']).upper(): return buscar_cliq_ccee(row['CliqCCEE Paradigma'], row['Contrato CliqCCEE mes anterior'], st.session_state['db_bismut'], 'bismut', vend, comp)
+                vend = row['Vendedor']  if row['Vendedor']  != "-" else ""
+                comp = row['Comprador'] if row['Comprador'] != "-" else ""
+                if 'BISMUT' in str(row['Parte']).upper():
+                    return buscar_cliq_ccee(
+                        row['CliqCCEE Paradigma'], row['Contrato CliqCCEE mes anterior'],
+                        st.session_state['db_bismut'], 'bismut', vend, comp
+                    )
                 for t, k in [('ccear', 'db_ccear'), ('cbr', 'db_cbr'), ('matrix', 'db_matrix')]:
-                    res = buscar_cliq_ccee(row['CliqCCEE Paradigma'], row['Contrato CliqCCEE mes anterior'], st.session_state[k], t, vend, comp)
+                    res = buscar_cliq_ccee(
+                        row['CliqCCEE Paradigma'], row['Contrato CliqCCEE mes anterior'],
+                        st.session_state[k], t, vend, comp
+                    )
                     if res != "Verificar": return res
                 return "Verificar"
 
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
-            df_conferencia['Modulação CCEE'] = df_conferencia.apply(buscar_modulacao_cliq, axis=1)
+            df_conferencia['Modulação CCEE']     = df_conferencia.apply(buscar_modulacao_cliq, axis=1)
 
             def buscar_status_cliq(row):
                 cod = row['Contrato CliqCCEE']
@@ -295,11 +375,13 @@ if st.session_state['df_bruto'] is not None:
                     df_cliq = st.session_state.get(db_key)
                     if df_cliq is not None and cod in df_cliq.index:
                         status = df_cliq.loc[cod, 'SITUACAO_CONTRATO']
-                        return str(status.iloc[0] if isinstance(status, pd.Series) else status).strip()
+                        if isinstance(status, pd.Series): status = status.iloc[0]
+                        return str(status).strip() if not pd.isna(status) else "-"
                 return "-"
 
             df_conferencia['Status do Contrato'] = df_conferencia.apply(buscar_status_cliq, axis=1)
-            df_soma_cliq = df_conferencia[~df_conferencia['Contrato CliqCCEE'].isin(['Verificar', '-', ''])].copy()
+
+            df_soma_cliq  = df_conferencia[~df_conferencia['Contrato CliqCCEE'].isin(['Verificar', '-', ''])].copy()
             dict_soma_book = df_soma_cliq.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
             df_conferencia['Volume BOOK'] = df_conferencia['Contrato CliqCCEE'].map(dict_soma_book).fillna(0.0).round(6)
 
@@ -311,62 +393,128 @@ if st.session_state['df_bruto'] is not None:
                     df_cliq = st.session_state.get('db_ccear')
                     if df_cliq is not None and cod in df_cliq.index:
                         val = df_cliq.loc[cod, 'MONTANTE_MENSAL_MWh']
-                        val = val.iloc[0] if isinstance(val, pd.Series) else val
-                        if not pd.isna(val) and val != "": return float(str(val).replace(',', '.')) / h_mes_valor
+                        if isinstance(val, pd.Series): val = val.iloc[0]
+                        if not pd.isna(val) and val != "":
+                            try: return float(str(val).replace(',', '.')) / h_mes_valor
+                            except: pass
+                    return 0.0
                 for db_key in ['db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
                     df_cliq = st.session_state.get(db_key)
                     if df_cliq is not None and cod in df_cliq.index:
                         val = df_cliq.loc[cod, 'MWmedio']
-                        val = val.iloc[0] if isinstance(val, pd.Series) else val
-                        if not pd.isna(val) and val != "": return float(str(val).replace(',', '.'))
+                        if isinstance(val, pd.Series): val = val.iloc[0]
+                        if pd.isna(val) or val == "": continue
+                        try: return float(str(val).replace(',', '.'))
+                        except: continue
                 return 0.0
 
             df_conferencia['Volume CliqCCEE'] = df_conferencia.apply(buscar_volume_cliq, axis=1).fillna(0.0).round(6)
+
             df_pagos = df_conferencia[df_conferencia['Situacao ERP'].astype(str).str.upper() == 'PAGO'].copy()
             dict_soma_pagos = df_pagos.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
 
             def validar_pagamento(row):
                 if row['Contrato CliqCCEE'] in ['Verificar', '-', '']: return "-"
                 total_pago = dict_soma_pagos.get(row['Contrato CliqCCEE'], 0.0)
-                return "Pago" if round(total_pago, 6) >= round(row['Volume BOOK'], 6) and row['Volume BOOK'] > 0 else "-"
+                if round(total_pago, 6) >= round(row['Volume BOOK'], 6) and row['Volume BOOK'] > 0:
+                    return "Pago"
+                return "-"
 
-            df_conferencia['SITUAÇÃO PGTO'] = df_conferencia.apply(validar_pagamento, axis=1)
-            df_conferencia['Pendência Financeira'] = df_conferencia['Razao Social'].str.strip().str.upper().map(st.session_state['dict_pendencias']).fillna(0.0)
+            df_conferencia['SITUAÇÃO PGTO']     = df_conferencia.apply(validar_pagamento, axis=1)
+            df_conferencia['Pendência Financeira'] = (
+                df_conferencia['Razao Social'].str.strip().str.upper()
+                .map(st.session_state['dict_pendencias']).fillna(0.0)
+            )
 
+            # ─────────────────────────────────────────────────────────────────
+            # FILTROS E TABELA PRINCIPAL
+            # ─────────────────────────────────────────────────────────────────
             st.write("### Filtros")
             f1, f2, f3, f4, f5, f6 = st.columns([2, 2, 2, 1.2, 1.2, 1.2])
-            op_f = f1.selectbox("Operação", ["Todos"] + sorted(df_conferencia['Operacao'].unique()))
-            parte_f = f2.selectbox("Parte", ["Todos"] + sorted(df_conferencia['Parte'].unique()))
-            cliq_f = f3.selectbox("Contrato CliqCCEE", ["Todos"] + sorted(df_conferencia['Contrato CliqCCEE'].unique()))
-            zerar_intra = f4.toggle("Zerar Intraportfólio", value=False)
-            zerar_entre = f5.toggle("Zerar Entre Empresas", value=False)
+            op_f          = f1.selectbox("Operação",          ["Todos"] + sorted(df_conferencia['Operacao'].unique()))
+            parte_f       = f2.selectbox("Parte",             ["Todos"] + sorted(df_conferencia['Parte'].unique()))
+            cliq_f        = f3.selectbox("Contrato CliqCCEE", ["Todos"] + sorted(df_conferencia['Contrato CliqCCEE'].unique()))
+            zerar_intra   = f4.toggle("Zerar Intraportfólio",  value=False)
+            zerar_entre   = f5.toggle("Zerar Entre Empresas",  value=False)
             ocultar_vazio = f6.toggle("Ocultar Volumes Zerados", value=False)
 
             df_final = df_conferencia.copy()
-            if op_f != "Todos": df_final = df_final[df_final['Operacao'] == op_f]
+            if op_f    != "Todos": df_final = df_final[df_final['Operacao'] == op_f]
             if parte_f != "Todos": df_final = df_final[df_final['Parte'] == parte_f]
-            if cliq_f != "Todos": df_final = df_final[df_final['Contrato CliqCCEE'] == cliq_f]
+            if cliq_f  != "Todos": df_final = df_final[df_final['Contrato CliqCCEE'] == cliq_f]
+
             if zerar_intra:
                 mask_i = df_final['Vendedor'].str.lower().str.strip() == df_final['Comprador'].str.lower().str.strip()
                 df_final.loc[mask_i, ['Montante MWh', 'Volume MWm']] = 0.0
-            if zerar_entre:
-                mask_p = df_final['Parte'].str.contains("BISMUT|GET", na=False, case=False)
-                mask_c = df_final['Contraparte'].str.upper().str.startswith("MATRIX", na=False) & ~df_final['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False)
-                df_final.loc[mask_p & mask_c, ['Montante MWh', 'Volume MWm']] = 0.0
-            if ocultar_vazio: df_final = df_final[df_final['Volume MWm'] != 0]
 
-            # PAINEL VALIDAÇÃO MATCH
-            bases_carregadas = [k.replace('db_', '').upper() for k in ['db_ccear', 'db_cbr', 'db_matrix', 'db_bismut'] if st.session_state.get(k) is not None]
-            with st.expander(f"🔍 Validação de Match CCEE | bases: {', '.join(bases_carregadas) if bases_carregadas else 'nenhuma'}", expanded=False):
-                if not bases_carregadas: st.warning("Nenhuma base Cliq CCEE carregada.")
+            if zerar_entre:
+                mask_p = (
+                    df_final['Parte'].str.contains("BISMUT", na=False, case=False) |
+                    df_final['Parte'].str.contains("GET",    na=False, case=False)
+                )
+                mask_c = (
+                    df_final['Contraparte'].str.upper().str.startswith("MATRIX", na=False) &
+                    ~df_final['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False)
+                )
+                df_final.loc[mask_p & mask_c, ['Montante MWh', 'Volume MWm']] = 0.0
+
+            if ocultar_vazio:
+                df_final = df_final[df_final['Volume MWm'] != 0]
+
+            # ─────────────────────────────────────────────────────────────────
+            # PAINEL DE VALIDAÇÃO DE MATCH CCEE  (usa df_final já filtrado)
+            # ─────────────────────────────────────────────────────────────────
+            bases_carregadas = [
+                k.replace('db_', '').upper()
+                for k in ['db_ccear', 'db_cbr', 'db_matrix', 'db_bismut']
+                if st.session_state.get(k) is not None
+            ]
+
+            with st.expander(
+                f"🔍 Validação de Match CCEE  |  bases: {', '.join(bases_carregadas) if bases_carregadas else 'nenhuma'}",
+                expanded=False
+            ):
+                if not bases_carregadas:
+                    st.warning("Nenhuma base Cliq CCEE carregada. Faça o upload das bases na barra lateral.")
                 else:
                     _, sem_match, _ = gerar_relatorio_match(df_final)
-                    if sem_match.empty: st.success("Nenhuma linha sem match!")
+                    colunas_exibir = ['Boleta', 'Parte', 'Contraparte', 'Submercado', 'Vendedor', 'Comprador', 'Bases Consultadas']
+                    if sem_match.empty:
+                        st.success("Nenhuma linha sem match! Todos os contratos foram encontrados nas bases CCEE.")
                     else:
                         st.warning(f"{len(sem_match)} linha(s) sem contrato correspondente nas bases CCEE.")
-                        st.dataframe(sem_match[['Boleta', 'Parte', 'Contraparte', 'Submercado', 'Vendedor', 'Comprador', 'Bases Consultadas']].reset_index(drop=True), use_container_width=True, hide_index=True)
+                        st.dataframe(
+                            sem_match[colunas_exibir].reset_index(drop=True),
+                            use_container_width=True,
+                            hide_index=True
+                        )
 
-            ordem = [col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP', 'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm', 'CliqCCEE Paradigma', 'Modulacao WBC', 'Modulação CCEE', '% Modulacao Min', '% Modulacao Max', 'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 'Contrato CliqCCEE', 'Status do Contrato', 'SITUAÇÃO PGTO', 'Volume BOOK', 'Volume CliqCCEE', 'Situacao ERP', 'Razao Social', 'Pendência Financeira']
-            st.dataframe(df_final[ordem].sort_values(by=col_boleta), use_container_width=True, hide_index=True, column_config={"Montante MWh": st.column_config.NumberColumn(format="%.3f"), "Volume MWm": st.column_config.NumberColumn(format="%.6f"), "Volume BOOK": st.column_config.NumberColumn(format="%.6f"), "Volume CliqCCEE": st.column_config.NumberColumn(format="%.6f"), "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f")})
-        else: st.warning("Sem dados para este período.")
-    except Exception as e: st.error(f"Erro: {e}")
+            # ORDEM FINAL DAS COLUNAS
+            ordem = [
+                col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP',
+                'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm',
+                'CliqCCEE Paradigma', 'Modulacao WBC', 'Modulação CCEE',
+                '% Modulacao Min', '% Modulacao Max',
+                'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 'Contrato CliqCCEE',
+                'Status do Contrato', 'SITUAÇÃO PGTO', 'Volume BOOK', 'Volume CliqCCEE',
+                'Situacao ERP', 'Razao Social', 'Pendência Financeira'
+            ]
+
+            st.dataframe(
+                df_final[ordem].sort_values(by=col_boleta),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Montante MWh":         st.column_config.NumberColumn(format="%.3f"),
+                    "Volume MWm":           st.column_config.NumberColumn(format="%.6f"),
+                    "Volume BOOK":          st.column_config.NumberColumn(format="%.6f"),
+                    "Volume CliqCCEE":      st.column_config.NumberColumn(format="%.6f"),
+                    "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f"),
+                }
+            )
+
+        else:
+            st.warning("Sem dados para este período.")
+
+    except Exception as e:
+        st.error(f"Erro: {e}")
