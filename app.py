@@ -847,6 +847,148 @@ if st.session_state['df_bruto'] is not None:
                         }
                     )
 
+            # ─────────────────────────────────────────────────────────────────
+            # TABELAS MATRIX CCEE + WBC
+            # ─────────────────────────────────────────────────────────────────
+            st.write("### 📊 Tabela 2 - MATRIX CCEE  |  Tabela 2 - MATRIX WBC")
+
+            PERFIS_MATRIX = [
+                "MATRIX COM I5",
+                "MATRIX COM",
+                "MATRIX COM I1",
+                "MATRIX COM I0",
+                "MATRIX COM CQ5",
+            ]
+
+            # Bases CCEE exceto bismut
+            DBS_MATRIX = ['db_ccear', 'db_cbr', 'db_matrix']
+
+            # ── Filtro de Submercado para Matrix CCEE ────────────────────
+            submercados_matrix = ["Todos"]
+            for db_key in DBS_MATRIX:
+                df_m = st.session_state.get(db_key)
+                if df_m is not None:
+                    df_mt = df_m.reset_index()
+                    if 'SUBMERCADO_ENTREGA' in df_mt.columns:
+                        subs = sorted(
+                            df_mt['SUBMERCADO_ENTREGA'].dropna().astype(str).str.strip()
+                            .replace('', pd.NA).dropna().unique().tolist()
+                        )
+                        for s in subs:
+                            if s not in submercados_matrix:
+                                submercados_matrix.append(s)
+            submercados_matrix = ["Todos"] + sorted(submercados_matrix[1:])
+
+            filtro_submercado_matrix = st.selectbox(
+                "Filtro Submercado (Tabela Matrix CCEE)",
+                options=submercados_matrix,
+                key="filtro_submercado_matrix_ccee"
+            )
+
+            # ── Tabela MATRIX CCEE ────────────────────────────────────────
+            def calcular_mwmedio_matrix(perfil, coluna_perfil, filtro_sub):
+                """Soma MWmedio das bases ccear/cbr/matrix filtrando por perfil e submercado."""
+                total = 0.0
+                for db_key in DBS_MATRIX:
+                    df_cliq = st.session_state.get(db_key)
+                    if df_cliq is None:
+                        continue
+                    df_temp = df_cliq.reset_index()
+                    if coluna_perfil not in df_temp.columns or 'MWmedio' not in df_temp.columns:
+                        continue
+                    mask = df_temp[coluna_perfil].astype(str).str.strip().str.upper() == perfil.upper()
+                    if filtro_sub != "Todos" and 'SUBMERCADO_ENTREGA' in df_temp.columns:
+                        mask = mask & (df_temp['SUBMERCADO_ENTREGA'].astype(str).str.strip() == filtro_sub)
+                    df_filtrado = df_temp[mask].copy()
+                    df_filtrado['MWmedio'] = pd.to_numeric(
+                        df_filtrado['MWmedio'].astype(str).str.strip().str.replace(',', '.'), errors='coerce'
+                    ).fillna(0.0)
+                    total += df_filtrado['MWmedio'].sum()
+                return round(total, 6)
+
+            rows_matrix_ccee = []
+            for perfil in PERFIS_MATRIX:
+                comprador_val = calcular_mwmedio_matrix(perfil, 'SIGLA_PERFIL_COMPRADOR', filtro_submercado_matrix)
+                vendedor_val  = calcular_mwmedio_matrix(perfil, 'SIGLA_PERFIL_VENDEDOR',  filtro_submercado_matrix)
+                rows_matrix_ccee.append({
+                    'PERFIL':    perfil,
+                    'Comprador': comprador_val,
+                    'Vendedor':  vendedor_val,
+                    'NET':       round(comprador_val - vendedor_val, 6),
+                })
+
+            df_matrix_ccee_tabela = pd.DataFrame(rows_matrix_ccee)
+
+            # ── Tabela MATRIX WBC ─────────────────────────────────────────
+            PARTE_MATRIX_WBC = "MATRIX COMERCIALIZADORA DE ENERGIA ELETRICA S/A"
+
+            df_mwbc_base = df_conferencia[
+                df_conferencia['Parte'].astype(str).str.strip().str.upper() == PARTE_MATRIX_WBC.upper()
+            ].copy()
+
+            if zerar_intra:
+                mask_mi = df_mwbc_base['Vendedor'].str.lower().str.strip() == df_mwbc_base['Comprador'].str.lower().str.strip()
+                df_mwbc_base.loc[mask_mi, 'Volume MWm'] = 0.0
+            if zerar_entre:
+                mask_mp = df_mwbc_base['Parte'].str.contains("BISMUT|GET", na=False, case=False)
+                mask_mc = (df_mwbc_base['Contraparte'].str.upper().str.startswith("MATRIX", na=False) &
+                           ~df_mwbc_base['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False))
+                df_mwbc_base.loc[mask_mp & mask_mc, 'Volume MWm'] = 0.0
+
+            rows_mwbc = []
+            for perfil in PERFIS_MATRIX:
+                mask_comp = df_mwbc_base['Comprador'].astype(str).str.strip().str.upper() == perfil.upper()
+                mask_vend = df_mwbc_base['Vendedor'].astype(str).str.strip().str.upper()  == perfil.upper()
+                soma_comp = round(pd.to_numeric(df_mwbc_base.loc[mask_comp, 'Volume MWm'], errors='coerce').fillna(0.0).sum(), 6)
+                soma_vend = round(pd.to_numeric(df_mwbc_base.loc[mask_vend, 'Volume MWm'], errors='coerce').fillna(0.0).sum(), 6)
+                rows_mwbc.append({
+                    'PERFIL':    perfil,
+                    'Comprador': soma_comp,
+                    'Vendedor':  soma_vend,
+                    'NET':       round(soma_comp - soma_vend, 6),
+                })
+
+            df_mwbc_tabela = pd.DataFrame(rows_mwbc)
+
+            # ── Total nas tabelas Matrix ──────────────────────────────────
+            df_matrix_ccee_com_total = adicionar_total(df_matrix_ccee_tabela)
+            df_mwbc_com_total        = adicionar_total(df_mwbc_tabela)
+
+            # ── Renderização lado a lado ──────────────────────────────────
+            col_m1, col_m2 = st.columns(2)
+
+            with col_m1:
+                st.markdown("**MATRIX CCEE**")
+                bases_matrix_ok = any(st.session_state.get(k) is not None for k in DBS_MATRIX)
+                if not bases_matrix_ok:
+                    st.warning("Nenhuma base Cliq Matrix/CCEAR/CBR carregada.")
+                else:
+                    st.dataframe(
+                        df_matrix_ccee_com_total.style.apply(highlight_total, axis=1),
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "PERFIL":    st.column_config.TextColumn("PERFIL"),
+                            "Comprador": st.column_config.NumberColumn("Comprador", format="%.6f"),
+                            "Vendedor":  st.column_config.NumberColumn("Vendedor",  format="%.6f"),
+                            "NET":       st.column_config.NumberColumn("NET",       format="%.6f"),
+                        }
+                    )
+
+            with col_m2:
+                st.markdown(f"**MATRIX WBC** — {PARTE_MATRIX_WBC}")
+                st.dataframe(
+                    df_mwbc_com_total.style.apply(highlight_total, axis=1),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "PERFIL":    st.column_config.TextColumn("PERFIL"),
+                        "Comprador": st.column_config.NumberColumn("Comprador", format="%.6f"),
+                        "Vendedor":  st.column_config.NumberColumn("Vendedor",  format="%.6f"),
+                        "NET":       st.column_config.NumberColumn("NET",       format="%.6f"),
+                    }
+                )
+
             with col_t2:
                 st.markdown(f"**BISMUT WBC** — {PARTE_BISMUT_WBC}")
                 st.dataframe(
