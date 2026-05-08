@@ -809,6 +809,24 @@ if st.session_state['df_bruto'] is not None:
 
             df_wbc_tabela = pd.DataFrame(rows_wbc)
 
+            # ── Adiciona linha TOTAL nas tabelas ─────────────────────────
+            def adicionar_total(df):
+                total = {
+                    'PERFIL':    'TOTAL',
+                    'Comprador': round(df['Comprador'].sum(), 6),
+                    'Vendedor':  round(df['Vendedor'].sum(), 6),
+                    'NET':       round(df['NET'].sum(), 6),
+                }
+                return pd.concat([df, pd.DataFrame([total])], ignore_index=True)
+
+            df_bismut_ccee_com_total = adicionar_total(df_bismut_ccee_tabela)
+            df_wbc_com_total         = adicionar_total(df_wbc_tabela)
+
+            def highlight_total(row):
+                if row['PERFIL'] == 'TOTAL':
+                    return ['font-weight: bold; background-color: #e8f0fe'] * len(row)
+                return [''] * len(row)
+
             # ── Renderização lado a lado ──────────────────────────────────
             col_t1, col_t2 = st.columns(2)
 
@@ -818,7 +836,7 @@ if st.session_state['df_bruto'] is not None:
                     st.warning("Base Cliq Bismut não carregada.")
                 else:
                     st.dataframe(
-                        df_bismut_ccee_tabela,
+                        df_bismut_ccee_com_total.style.apply(highlight_total, axis=1),
                         use_container_width=True,
                         hide_index=True,
                         column_config={
@@ -832,7 +850,7 @@ if st.session_state['df_bruto'] is not None:
             with col_t2:
                 st.markdown(f"**BISMUT WBC** — {PARTE_BISMUT_WBC}")
                 st.dataframe(
-                    df_wbc_tabela,
+                    df_wbc_com_total.style.apply(highlight_total, axis=1),
                     use_container_width=True,
                     hide_index=True,
                     column_config={
