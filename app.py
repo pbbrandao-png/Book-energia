@@ -706,6 +706,81 @@ if st.session_state['df_bruto'] is not None:
                     "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f"),
                 }
             )
+            # ─────────────────────────────────────────────────────────────────
+            # TABELA BISMUT CCEE
+            # ─────────────────────────────────────────────────────────────────
+            st.write("### 📊 Tabela 1 - BISMUT CCEE")
+
+            db_bismut_ccee = st.session_state.get('db_bismut')
+
+            submercados_disponiveis = ["Todos"]
+            if db_bismut_ccee is not None:
+                df_bism_temp = db_bismut_ccee.reset_index()
+                if 'SUBMERCADO_ENTREGA' in df_bism_temp.columns:
+                    subs_unicos = sorted(
+                        df_bism_temp['SUBMERCADO_ENTREGA'].dropna().astype(str).str.strip()
+                        .replace('', pd.NA).dropna().unique().tolist()
+                    )
+                    submercados_disponiveis += subs_unicos
+
+            filtro_submercado = st.selectbox(
+                "Filtro Submercado",
+                options=submercados_disponiveis,
+                key="filtro_submercado_bismut_ccee"
+            )
+
+            PERFIS_BISMUT = [
+                "BISMUT COM I5",
+                "BISMUT COM I0",
+                "BISMUT COM I1",
+                "BISMUT COM",
+            ]
+
+            def calcular_mwmedio_bismut(perfil, coluna_perfil, filtro_sub):
+                """Soma MWmedio da base bismut filtrando por perfil na coluna_perfil e submercado."""
+                if db_bismut_ccee is None:
+                    return 0.0
+                df_temp = db_bismut_ccee.reset_index()
+                if coluna_perfil not in df_temp.columns or 'MWmedio' not in df_temp.columns:
+                    return 0.0
+                mask = df_temp[coluna_perfil].astype(str).str.strip().str.upper() == perfil.upper()
+                if filtro_sub != "Todos":
+                    if 'SUBMERCADO_ENTREGA' in df_temp.columns:
+                        mask = mask & (
+                            df_temp['SUBMERCADO_ENTREGA'].astype(str).str.strip() == filtro_sub
+                        )
+                df_filtrado = df_temp[mask].copy()
+                df_filtrado['MWmedio'] = pd.to_numeric(
+                    df_filtrado['MWmedio'].astype(str).str.strip().str.replace(',', '.'), errors='coerce'
+                ).fillna(0.0)
+                return round(df_filtrado['MWmedio'].sum(), 6)
+
+            rows_bismut_ccee = []
+            for perfil in PERFIS_BISMUT:
+                comprador_val = calcular_mwmedio_bismut(perfil, 'SIGLA_PERFIL_COMPRADOR', filtro_submercado)
+                vendedor_val  = calcular_mwmedio_bismut(perfil, 'SIGLA_PERFIL_VENDEDOR',  filtro_submercado)
+                rows_bismut_ccee.append({
+                    'PERFIL':    perfil,
+                    'Comprador': comprador_val,
+                    'Vendedor':  vendedor_val,
+                })
+
+            df_bismut_ccee_tabela = pd.DataFrame(rows_bismut_ccee)
+
+            if db_bismut_ccee is None:
+                st.warning("Base Cliq Bismut não carregada. Carregue o arquivo na sidebar para visualizar esta tabela.")
+            else:
+                st.dataframe(
+                    df_bismut_ccee_tabela,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "PERFIL":    st.column_config.TextColumn("PERFIL"),
+                        "Comprador": st.column_config.NumberColumn("Comprador", format="%.6f"),
+                        "Vendedor":  st.column_config.NumberColumn("Vendedor",  format="%.6f"),
+                    }
+                )
+
         else:
             st.warning("Sem dados para este período.")
 
