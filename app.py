@@ -133,7 +133,8 @@ def buscar_modulacao_cliq(row):
     if cod in CONTRATOS_ESPECIAIS_CCEAR: return "Carga"
     for db_key in ['db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
         df_cliq = st.session_state.get(db_key)
-        if df_cliq is not None and cod in df_cliq.index:
+        if df_cliq is None: continue
+        if cod in df_cliq.index:
             try:
                 mod = df_cliq.loc[cod, 'TIPO_MODULACAO']
                 if isinstance(mod, pd.Series): mod = mod.iloc[0]
@@ -198,148 +199,6 @@ def gerar_relatorio_match(df_conferencia):
     com_match  = df_res[df_res['_match'] == True].drop(columns=['_match'])
     incompleto = df_res[df_res['_match'].isna()].drop(columns=['_match'])
     return com_match, sem_match, incompleto
-
-# ─────────────────────────────────────────────────────────────────────────────
-# <<<NOVO>>> FUNÇÃO: CARD DE POSIÇÃO POR SUBMERCADO (CCEE vs BOOK)
-# Como usar para outros perfis/bases no futuro:
-#   - Duplique esta função passando diferentes db_keys e col_perfil
-#   - O parâmetro `perfil` é a sigla do perfil na base Cliq (ex: "BISMUT COM")
-#   - `submercado_filtro` pode ser "Todos" ou um nome como "Sudeste"
-#   - O mapa SUBMERCADO_CLIQ traduz o nome exibido para o código na base CCEE
-# ─────────────────────────────────────────────────────────────────────────────
-SUBMERCADO_CLIQ = {
-    "Sudeste": "SE/CO",
-    "Norte":   "N",
-    "Nordeste": "NE",
-    "Sul":     "S",
-}
-
-def calcular_posicao_ccee(perfil, submercado_filtro, db_keys=None):
-    """
-    Soma MWmedio nas bases Cliq onde perfil aparece como comprador ou vendedor.
-    Retorna (compras_mwm, vendas_mwm).
-    """
-    if db_keys is None:
-        db_keys = ['db_bismut', 'db_matrix', 'db_cbr', 'db_ccear']
-
-    compras = 0.0
-    vendas  = 0.0
-    perfil_upper = perfil.strip().upper()
-    sub_cliq = SUBMERCADO_CLIQ.get(submercado_filtro, None)  # None = todos
-
-    for db_key in db_keys:
-        df_cliq = st.session_state.get(db_key)
-        if df_cliq is None:
-            continue
-        df_temp = df_cliq.reset_index()
-        if 'SIGLA_PERFIL_COMPRADOR' not in df_temp.columns:
-            continue
-
-        # filtro de submercado
-        if sub_cliq:
-            df_temp = df_temp[
-                df_temp['SUBMERCADO_ENTREGA'].astype(str).str.strip().str.upper() == sub_cliq.upper()
-            ]
-
-        # compras: perfil é comprador
-        mask_comp = df_temp['SIGLA_PERFIL_COMPRADOR'].astype(str).str.strip().str.upper() == perfil_upper
-        vals_comp = pd.to_numeric(df_temp.loc[mask_comp, 'MWmedio'].str.replace(',', '.'), errors='coerce').fillna(0)
-        compras += vals_comp.sum()
-
-        # vendas: perfil é vendedor
-        mask_vend = df_temp['SIGLA_PERFIL_VENDEDOR'].astype(str).str.strip().str.upper() == perfil_upper
-        vals_vend = pd.to_numeric(df_temp.loc[mask_vend, 'MWmedio'].str.replace(',', '.'), errors='coerce').fillna(0)
-        vendas += vals_vend.sum()
-
-    return round(compras, 6), round(vendas, 6)
-
-
-def calcular_posicao_book(df_final, perfil, submercado_filtro):
-    """
-    Soma Volume BOOK do df_final onde perfil aparece como Comprador ou Vendedor.
-    Retorna (compras_mwm, vendas_mwm).
-    """
-    df = df_final.copy()
-    perfil_upper = perfil.strip().upper()
-
-    if submercado_filtro != "Todos":
-        df = df[df['Submercado'].astype(str).str.strip() == submercado_filtro]
-
-    # Deduplicar por Contrato CliqCCEE para não somar Volume BOOK N vezes
-    df_dedup = df[~df['Contrato CliqCCEE'].isin(['Verificar', '-', ''])].drop_duplicates(subset='Contrato CliqCCEE')
-
-    mask_comp = df_dedup['Comprador'].astype(str).str.strip().str.upper() == perfil_upper
-    compras = pd.to_numeric(df_dedup.loc[mask_comp, 'Volume BOOK'], errors='coerce').fillna(0).sum()
-
-    mask_vend = df_dedup['Vendedor'].astype(str).str.strip().str.upper() == perfil_upper
-    vendas = pd.to_numeric(df_dedup.loc[mask_vend, 'Volume BOOK'], errors='coerce').fillna(0).sum()
-
-    return round(compras, 6), round(vendas, 6)
-
-
-def renderizar_card_posicao(perfil, submercado_filtro, df_final):
-    """
-    Renderiza o card de posição CCEE vs BOOK para um perfil.
-    Como adicionar um novo perfil/empresa no futuro:
-      1. Chame esta função passando o novo perfil (ex: "MATRIX COM")
-      2. Certifique-se de que o perfil existe como SIGLA_PERFIL nas bases Cliq carregadas
-    """
-    c_ccee, v_ccee = calcular_posicao_ccee(perfil, submercado_filtro)
-    c_book, v_book = calcular_posicao_book(df_final, perfil, submercado_filtro)
-    net_ccee = round(c_ccee - v_ccee, 6)
-    net_book = round(c_book - v_book, 6)
-
-    def cor_net(val):
-        if val < 0: return "color:#c0392b; font-weight:bold"
-        if val > 0: return "color:#27ae60; font-weight:bold"
-        return "color:#555"
-
-    st.markdown(f"""
-    <div style="border:1px solid #ddd; border-radius:10px; padding:12px 16px; margin-bottom:10px; background:#fafafa;">
-      <div style="font-weight:700; font-size:15px; margin-bottom:10px; color:#333;">
-        📊 {perfil} — {submercado_filtro}
-      </div>
-      <div style="display:flex; gap:24px; flex-wrap:wrap;">
-        <!-- CCEE -->
-        <div style="flex:1; min-width:220px; background:#eaf4fb; border-radius:8px; padding:10px 14px;">
-          <div style="font-size:12px; font-weight:600; color:#2980b9; margin-bottom:6px;">⚡ CLIQ CCEE</div>
-          <table style="width:100%; font-size:13px; border-collapse:collapse;">
-            <tr>
-              <td style="color:#555; padding:2px 0;">Compras</td>
-              <td style="text-align:right; color:#27ae60; font-weight:600;">{c_ccee:,.6f} MWm</td>
-            </tr>
-            <tr>
-              <td style="color:#555; padding:2px 0;">Vendas</td>
-              <td style="text-align:right; color:#c0392b; font-weight:600;">{v_ccee:,.6f} MWm</td>
-            </tr>
-            <tr style="border-top:1px solid #bcd;">
-              <td style="color:#333; padding:4px 0; font-weight:600;">NET</td>
-              <td style="text-align:right; padding:4px 0;"><span style="{cor_net(net_ccee)}">{net_ccee:,.6f} MWm</span></td>
-            </tr>
-          </table>
-        </div>
-        <!-- BOOK -->
-        <div style="flex:1; min-width:220px; background:#eafaf1; border-radius:8px; padding:10px 14px;">
-          <div style="font-size:12px; font-weight:600; color:#27ae60; margin-bottom:6px;">📒 BOOK</div>
-          <table style="width:100%; font-size:13px; border-collapse:collapse;">
-            <tr>
-              <td style="color:#555; padding:2px 0;">Compras</td>
-              <td style="text-align:right; color:#27ae60; font-weight:600;">{c_book:,.6f} MWm</td>
-            </tr>
-            <tr>
-              <td style="color:#555; padding:2px 0;">Vendas</td>
-              <td style="text-align:right; color:#c0392b; font-weight:600;">{v_book:,.6f} MWm</td>
-            </tr>
-            <tr style="border-top:1px solid #bde;">
-              <td style="color:#333; padding:4px 0; font-weight:600;">NET</td>
-              <td style="text-align:right; padding:4px 0;"><span style="{cor_net(net_book)}">{net_book:,.6f} MWm</span></td>
-            </tr>
-          </table>
-        </div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. INICIALIZAÇÃO
@@ -627,8 +486,6 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
             df_conferencia['Vendedor']  = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
 
-            # Ajustes manuais
-            df_conferencia['Editado'] = False
             for bol, info in st.session_state['ajustes_manuais'].items():
                 mask = df_conferencia['Boleta_Key'] == bol
                 if mask.any():
@@ -659,7 +516,6 @@ if st.session_state['df_bruto'] is not None:
                 return "OK" if wbc == ccee else "Verificar"
 
             df_conferencia['Check Modulação'] = df_conferencia.apply(check_modulacao, axis=1)
-
             df_conferencia['Lim Min CCEE'] = df_conferencia['Contrato CliqCCEE'].apply(
                 lambda cod: buscar_limite_cliq(cod, 'LIMITE_MINIMO_MODULACAO_MW'))
             df_conferencia['Lim Max CCEE'] = df_conferencia['Contrato CliqCCEE'].apply(
@@ -732,13 +588,6 @@ if st.session_state['df_bruto'] is not None:
                 .map(st.session_state['dict_pendencias']).fillna(0.0)
             )
 
-            # ─────────────────────────────────────────────────────────────────
-            # <<<NOVO>>> FILTROS — incluído filtro de Contraparte (multiselect)
-            # Para adicionar outro filtro multiselect no futuro:
-            #   1. Crie uma variável com st.multiselect(...)
-            #   2. Adicione um bloco "if selecionados: df_final = df_final[...]"
-            #      usando .isin(selecionados) igual ao exemplo abaixo
-            # ─────────────────────────────────────────────────────────────────
             st.write("### Filtros")
             f1, f2, f3, f4, f5 = st.columns([1.5, 1.5, 1.5, 1.5, 1.5])
             op_f        = f1.selectbox("Operação",          ["Todos"] + sorted(df_conferencia['Operacao'].unique()))
@@ -753,16 +602,8 @@ if st.session_state['df_bruto'] is not None:
             ))
             check_mod_f = f5.selectbox("Check Modulação / Limites", ["Todos"] + todas_opts_mod)
 
-            # <<<NOVO>>> Filtro Contraparte (multiselect — linha separada para dar espaço)
-            opcoes_contraparte = sorted(
-                [str(x) for x in df_conferencia['Contraparte'].dropna().unique() if str(x).strip() != ""]
-            )
-            contraparte_f = st.multiselect(
-                "Contraparte (selecione uma ou mais — vazio = todas)",
-                options=opcoes_contraparte,
-                default=[],
-                placeholder="Todas as contrapartes"
-            )
+            opcoes_contraparte = sorted([str(x) for x in df_conferencia['Contraparte'].dropna().unique() if str(x).strip() != ""])
+            contraparte_f = st.multiselect("Contraparte (selecione uma ou mais — vazio = todas)", options=opcoes_contraparte, default=[])
 
             f6, f7, f8 = st.columns([1.5, 1.5, 1.5])
             zerar_intra   = f6.toggle("Zerar Intraportfólio")
@@ -775,86 +616,32 @@ if st.session_state['df_bruto'] is not None:
             if cliq_f      != "Todos": df_final = df_final[df_final['Contrato CliqCCEE'] == cliq_f]
             if valid_vol_f != "Todos": df_final = df_final[df_final['Validação Volume'] == valid_vol_f]
             if check_mod_f != "Todos":
-                mask_mod = (
-                    (df_final['Check Modulação'] == check_mod_f) |
-                    (df_final['Check Lim Min']   == check_mod_f) |
-                    (df_final['Check Lim Max']   == check_mod_f)
-                )
+                mask_mod = ((df_final['Check Modulação'] == check_mod_f) | (df_final['Check Lim Min'] == check_mod_f) | (df_final['Check Lim Max'] == check_mod_f))
                 df_final = df_final[mask_mod]
-
-            # <<<NOVO>>> aplica filtro de contraparte (multiselect)
-            if contraparte_f:
-                df_final = df_final[df_final['Contraparte'].astype(str).isin(contraparte_f)]
+            if contraparte_f: df_final = df_final[df_final['Contraparte'].astype(str).isin(contraparte_f)]
 
             if zerar_intra:
                 mask_i = df_final['Vendedor'].str.lower().str.strip() == df_final['Comprador'].str.lower().str.strip()
                 df_final.loc[mask_i, ['Montante MWh', 'Volume MWm']] = 0.0
             if zerar_entre:
                 mask_p = df_final['Parte'].str.contains("BISMUT|GET", na=False, case=False)
-                mask_c = (df_final['Contraparte'].str.upper().str.startswith("MATRIX", na=False) &
-                          ~df_final['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False))
+                mask_c = (df_final['Contraparte'].str.upper().str.startswith("MATRIX", na=False) & ~df_final['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False))
                 df_final.loc[mask_p & mask_c, ['Montante MWh', 'Volume MWm']] = 0.0
-            if ocultar_vazio:
-                df_final = df_final[df_final['Volume MWm'] != 0]
+            if ocultar_vazio: df_final = df_final[df_final['Volume MWm'] != 0]
 
-            # ─────────────────────────────────────────────────────────────────
-            # <<<NOVO>>> CARD: Resumo de Operações
-            # Para adicionar mais métricas aqui no futuro:
-            #   - Adicione mais colunas com st.columns() e st.metric()
-            #   - Use df_final filtrado para que o card reflita os filtros ativos
-            # ─────────────────────────────────────────────────────────────────
             st.write("### 📦 Resumo de Operações")
-            n_compras = int((df_final['Operacao'].astype(str).str.upper() == 'COMPRA').sum())
-            n_vendas  = int((df_final['Operacao'].astype(str).str.upper() == 'VENDA').sum())
-            n_total   = len(df_final)
-            n_outros  = n_total - n_compras - n_vendas
-
             mc1, mc2, mc3, mc4 = st.columns(4)
-            mc1.metric("🛒 Compras",    n_compras)
-            mc2.metric("📤 Vendas",     n_vendas)
-            mc3.metric("🔄 Outros",     n_outros)
-            mc4.metric("📋 Total",      n_total)
+            mc1.metric("🛒 Compras", int((df_final['Operacao'].astype(str).str.upper() == 'COMPRA').sum()))
+            mc2.metric("📤 Vendas",  int((df_final['Operacao'].astype(str).str.upper() == 'VENDA').sum()))
+            mc3.metric("🔄 Outros",  len(df_final) - int((df_final['Operacao'].astype(str).str.upper() == 'COMPRA').sum()) - int((df_final['Operacao'].astype(str).str.upper() == 'VENDA').sum()))
+            mc4.metric("📋 Total",   len(df_final))
 
-            # ─────────────────────────────────────────────────────────────────
-            # <<<NOVO>>> CARD: Posição por Submercado (CCEE vs BOOK)
-            # Como adicionar um novo perfil/empresa no futuro:
-            #   1. Adicione o perfil à lista PERFIS_POSICAO abaixo
-            #      (use exatamente a SIGLA_PERFIL que aparece nas bases Cliq)
-            #   2. O card será renderizado automaticamente para cada perfil
-            # ─────────────────────────────────────────────────────────────────
-            st.write("### 📊 Posição por Perfil")
-
-            # <<<NOVO>>> Seletor de submercado para o card de posição
-            submercados_opcoes = ["Todos", "Sudeste", "Norte", "Nordeste", "Sul"]
-            sub_card = st.selectbox(
-                "Submercado (card de posição)",
-                submercados_opcoes,
-                index=0,
-                key="sub_card_posicao"
-            )
-
-            # <<<NOVO>>> Lista de perfis a exibir no card.
-            # Para adicionar um novo perfil: inclua a sigla aqui.
-            PERFIS_POSICAO = ["BISMUT COM"]
-
-            for perfil in PERFIS_POSICAO:
-                renderizar_card_posicao(perfil, sub_card, df_final)
-
-            # ─────────────────────────────────────────────────────────────────
-            # Validação de Match CCEE (existente)
-            # ─────────────────────────────────────────────────────────────────
-            bases_carregadas = [
-                k.replace('db_', '').upper()
-                for k in ['db_ccear', 'db_cbr', 'db_matrix', 'db_bismut']
-                if st.session_state.get(k) is not None
-            ]
             with st.expander("🔍 Validação de Match CCEE", expanded=False):
-                if not bases_carregadas:
+                if not any(st.session_state.get(k) is not None for k in ['db_ccear', 'db_cbr', 'db_matrix', 'db_bismut']):
                     st.warning("Nenhuma base Cliq CCEE carregada.")
                 else:
                     _, sem_match, _ = gerar_relatorio_match(df_final)
-                    if sem_match.empty:
-                        st.success("Nenhuma linha sem match!")
+                    if sem_match.empty: st.success("Nenhuma linha sem match!")
                     else:
                         st.warning(f"{len(sem_match)} linha(s) sem contrato correspondente.")
                         st.dataframe(sem_match.reset_index(drop=True), use_container_width=True, hide_index=True)
@@ -862,35 +649,28 @@ if st.session_state['df_bruto'] is not None:
             ordem = [
                 col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP',
                 'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm',
-                'CliqCCEE Paradigma',
-                'Modulacao WBC', 'Modulação CCEE', 'Check Modulação',
-                '% Modulacao Min', 'Lim Min CCEE', 'Check Lim Min',
-                '% Modulacao Max', 'Lim Max CCEE', 'Check Lim Max',
+                'CliqCCEE Paradigma', 'Modulacao WBC', 'Modulação CCEE', 'Check Modulação',
+                '% Modulacao Min', 'Lim Min CCEE', 'Check Lim Min', '% Modulacao Max', 'Lim Max CCEE', 'Check Lim Max',
                 'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 'Contrato CliqCCEE',
                 'Status do Contrato', 'SITUAÇÃO PGTO', 'Volume BOOK', 'Volume CliqCCEE',
                 'Validação Volume', 'Situacao ERP', 'Razao Social', 'Pendência Financeira', 'Editado'
             ]
 
             def highlight_rows(row):
-                return ['background-color: #fff4cc'] * len(row) if row['Editado'] else [''] * len(row)
+                return ['background-color: #fff4cc'] * len(row) if row.get('Editado') else [''] * len(row)
 
             st.dataframe(
                 df_final[ordem].sort_values(by=col_boleta).style.apply(highlight_rows, axis=1),
-                use_container_width=True,
-                hide_index=True,
+                use_container_width=True, hide_index=True,
                 column_config={
-                    "Editado":              None,
-                    "Montante MWh":         st.column_config.NumberColumn(format="%.3f"),
-                    "Volume MWm":           st.column_config.NumberColumn(format="%.6f"),
-                    "Volume BOOK":          st.column_config.NumberColumn(format="%.6f"),
-                    "Volume CliqCCEE":      st.column_config.NumberColumn(format="%.6f"),
-                    "Lim Min CCEE":         st.column_config.NumberColumn(format="%.6f"),
-                    "Lim Max CCEE":         st.column_config.NumberColumn(format="%.6f"),
+                    "Editado": None, "Montante MWh": st.column_config.NumberColumn(format="%.3f"),
+                    "Volume MWm": st.column_config.NumberColumn(format="%.6f"),
+                    "Volume BOOK": st.column_config.NumberColumn(format="%.6f"),
+                    "Volume CliqCCEE": st.column_config.NumberColumn(format="%.6f"),
+                    "Lim Min CCEE": st.column_config.NumberColumn(format="%.6f"),
+                    "Lim Max CCEE": st.column_config.NumberColumn(format="%.6f"),
                     "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f"),
                 }
             )
-        else:
-            st.warning("Sem dados para este período.")
-
-    except Exception as e:
-        st.error(f"Erro no processamento: {e}")
+        else: st.warning("Sem dados para este período.")
+    except Exception as e: st.error(f"Erro no processamento: {e}")
