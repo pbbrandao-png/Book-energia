@@ -759,4 +759,4 @@ if st.session_state['df_bruto'] is not None:
     except Exception as e:
         st.error(f"Erro no processamento: {e}")
 
-}
+
