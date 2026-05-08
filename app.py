@@ -706,8 +706,57 @@ if st.session_state['df_bruto'] is not None:
                     "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f"),
                 }
             )
+
+            # ─────────────────────────────────────────────────────────────────────────────
+            # NOVA TABELA: BISMUT CCEE (Solicitação Adicional)
+            # ─────────────────────────────────────────────────────────────────────────────
+            st.markdown("---")
+            st.write("### 🏢 BISMUT CCEE - Resumo por Perfil")
+            
+            df_bismut_base = st.session_state.get('db_bismut')
+            
+            if df_bismut_base is not None:
+                # 1. Filtro de Submercado para esta tabela
+                subs_bismut = ["Todos"] + sorted(df_bismut_base['SUBMERCADO_ENTREGA'].unique().tolist())
+                sub_bismut_sel = st.selectbox("Filtrar Submercado (Bismut CCEE)", subs_bismut, key="sub_bismut_filtro")
+                
+                # Preparação dos dados
+                df_b_proc = df_bismut_base.copy()
+                df_b_proc['MWmedio'] = pd.to_numeric(df_b_proc['MWmedio'].astype(str).str.replace(',', '.'), errors='coerce').fillna(0.0)
+                
+                if sub_b_bismut_sel != "Todos":
+                    df_b_proc = df_b_proc[df_b_proc['SUBMERCADO_ENTREGA'] == sub_b_bismut_sel]
+                
+                # Lista de perfis alvo
+                perfis_alvo = ["BISMUT COM I5", "BISMUT COM I0", "BISMUT COM I1", "BISMUT COM"]
+                dados_tabela_bismut = []
+                
+                for perfil in perfis_alvo:
+                    # Compras: Perfil está na coluna SIGLA_PERFIL_COMPRADOR
+                    v_compra = df_b_proc[df_b_proc['SIGLA_PERFIL_COMPRADOR'].str.strip().str.upper() == perfil.upper()]['MWmedio'].sum()
+                    
+                    # Vendas: Perfil está na coluna SIGLA_PERFIL_VENDEDOR
+                    v_venda = df_b_proc[df_b_proc['SIGLA_PERFIL_VENDEDOR'].str.strip().str.upper() == perfil.upper()]['MWmedio'].sum()
+                    
+                    dados_tabela_bismut.append({
+                        "PERFIL": perfil,
+                        "Comprador": v_compra,
+                        "Vendedor": v_venda
+                    })
+                
+                df_resumo_bismut = pd.DataFrame(dados_tabela_bismut)
+                
+                st.table(df_resumo_bismut.style.format({
+                    "Comprador": "{:.6f}",
+                    "Vendedor": "{:.6f}"
+                }))
+            else:
+                st.info("Aguardando carregamento da base Cliq Bismut para gerar o resumo por perfil.")
+
         else:
             st.warning("Sem dados para este período.")
 
     except Exception as e:
         st.error(f"Erro no processamento: {e}")
+
+}
