@@ -707,12 +707,13 @@ if st.session_state['df_bruto'] is not None:
                 }
             )
             # ─────────────────────────────────────────────────────────────────
-            # TABELA BISMUT CCEE
+            # TABELAS BISMUT CCEE + WBC
             # ─────────────────────────────────────────────────────────────────
-            st.write("### 📊 Tabela 1 - BISMUT CCEE")
+            st.write("### 📊 Tabela 1 - BISMUT CCEE  |  Tabela 2 - BISMUT WBC")
 
             db_bismut_ccee = st.session_state.get('db_bismut')
 
+            # --- Filtro de Submercado (afeta apenas Tabela 1 - CCEE) ---
             submercados_disponiveis = ["Todos"]
             if db_bismut_ccee is not None:
                 df_bism_temp = db_bismut_ccee.reset_index()
@@ -724,7 +725,7 @@ if st.session_state['df_bruto'] is not None:
                     submercados_disponiveis += subs_unicos
 
             filtro_submercado = st.selectbox(
-                "Filtro Submercado",
+                "Filtro Submercado (Tabela CCEE)",
                 options=submercados_disponiveis,
                 key="filtro_submercado_bismut_ccee"
             )
@@ -736,6 +737,7 @@ if st.session_state['df_bruto'] is not None:
                 "BISMUT COM",
             ]
 
+            # ── Tabela 1: BISMUT CCEE ─────────────────────────────────────
             def calcular_mwmedio_bismut(perfil, coluna_perfil, filtro_sub):
                 """Soma MWmedio da base bismut filtrando por perfil na coluna_perfil e submercado."""
                 if db_bismut_ccee is None:
@@ -763,21 +765,81 @@ if st.session_state['df_bruto'] is not None:
                     'PERFIL':    perfil,
                     'Comprador': comprador_val,
                     'Vendedor':  vendedor_val,
+                    'NET':       round(comprador_val - vendedor_val, 6),
                 })
 
             df_bismut_ccee_tabela = pd.DataFrame(rows_bismut_ccee)
 
-            if db_bismut_ccee is None:
-                st.warning("Base Cliq Bismut não carregada. Carregue o arquivo na sidebar para visualizar esta tabela.")
-            else:
+            # ── Tabela 2: BISMUT WBC ──────────────────────────────────────
+            # Aplica apenas zerar_intra e zerar_entre (sem filtros de tela)
+            PARTE_BISMUT_WBC = "BISMUT COMERCIALIZADORA DE ENERGIA S/A"
+
+            df_wbc_base = df_conferencia[
+                df_conferencia['Parte'].astype(str).str.strip().str.upper() == PARTE_BISMUT_WBC.upper()
+            ].copy()
+
+            # Aplica flags de zeragem
+            if zerar_intra:
+                mask_wi = df_wbc_base['Vendedor'].str.lower().str.strip() == df_wbc_base['Comprador'].str.lower().str.strip()
+                df_wbc_base.loc[mask_wi, 'Volume MWm'] = 0.0
+            if zerar_entre:
+                mask_wp = df_wbc_base['Parte'].str.contains("BISMUT|GET", na=False, case=False)
+                mask_wc = (df_wbc_base['Contraparte'].str.upper().str.startswith("MATRIX", na=False) &
+                           ~df_wbc_base['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False))
+                df_wbc_base.loc[mask_wp & mask_wc, 'Volume MWm'] = 0.0
+
+            rows_wbc = []
+            for perfil in PERFIS_BISMUT:
+                # Comprador: linhas onde Comprador == perfil e Operacao == COMPRA
+                mask_comp = (
+                    df_wbc_base['Comprador'].astype(str).str.strip().str.upper() == perfil.upper()
+                )
+                # Vendedor: linhas onde Vendedor == perfil e Operacao == VENDA
+                mask_vend = (
+                    df_wbc_base['Vendedor'].astype(str).str.strip().str.upper() == perfil.upper()
+                )
+                soma_comp = round(pd.to_numeric(df_wbc_base.loc[mask_comp, 'Volume MWm'], errors='coerce').fillna(0.0).sum(), 6)
+                soma_vend = round(pd.to_numeric(df_wbc_base.loc[mask_vend, 'Volume MWm'], errors='coerce').fillna(0.0).sum(), 6)
+                rows_wbc.append({
+                    'PERFIL':    perfil,
+                    'Comprador': soma_comp,
+                    'Vendedor':  soma_vend,
+                    'NET':       round(soma_comp - soma_vend, 6),
+                })
+
+            df_wbc_tabela = pd.DataFrame(rows_wbc)
+
+            # ── Renderização lado a lado ──────────────────────────────────
+            col_t1, col_t2 = st.columns(2)
+
+            with col_t1:
+                st.markdown("**BISMUT CCEE**")
+                if db_bismut_ccee is None:
+                    st.warning("Base Cliq Bismut não carregada.")
+                else:
+                    st.dataframe(
+                        df_bismut_ccee_tabela,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "PERFIL":    st.column_config.TextColumn("PERFIL"),
+                            "Comprador": st.column_config.NumberColumn("Comprador", format="%.6f"),
+                            "Vendedor":  st.column_config.NumberColumn("Vendedor",  format="%.6f"),
+                            "NET":       st.column_config.NumberColumn("NET",       format="%.6f"),
+                        }
+                    )
+
+            with col_t2:
+                st.markdown(f"**BISMUT WBC** — {PARTE_BISMUT_WBC}")
                 st.dataframe(
-                    df_bismut_ccee_tabela,
+                    df_wbc_tabela,
                     use_container_width=True,
                     hide_index=True,
                     column_config={
                         "PERFIL":    st.column_config.TextColumn("PERFIL"),
                         "Comprador": st.column_config.NumberColumn("Comprador", format="%.6f"),
                         "Vendedor":  st.column_config.NumberColumn("Vendedor",  format="%.6f"),
+                        "NET":       st.column_config.NumberColumn("NET",       format="%.6f"),
                     }
                 )
 
