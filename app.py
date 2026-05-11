@@ -497,7 +497,7 @@ def render_reconciliacao(titulo, df_ccee, df_wbc):
             st.success("Todos os perfis estão reconciliados (NET CCEE = NET WBC).")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# NOVA FUNÇÃO: BOLETAS QUE PRECISAM SER VERIFICADAS
+# BOLETAS DIVERGENTES
 # ─────────────────────────────────────────────────────────────────────────────
 def render_boletas_divergentes(titulo, perfis, df_wbc_base, db_keys, filtro_sub="Todos"):
     """
@@ -608,6 +608,311 @@ def render_boletas_divergentes(titulo, perfis, df_wbc_base, db_keys, filtro_sub=
         if not df_ok.empty:
             with st.expander("Ver boletas OK", expanded=False):
                 st.dataframe(df_ok, use_container_width=True, hide_index=True, column_config=col_cfg)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MATCH DE CONTRATOS DE COMPRA
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _match_boletas_cliqs(boletas, cliqs, tem_volume_ccee):
+    """
+    Algoritmo de match entre boletas WBC de compra e contratos CLIQ.
+
+    Parâmetros
+    ----------
+    boletas : list[dict]  — 'id' e 'volume' de cada boleta
+    cliqs   : list[dict]  — 'id' e 'volume' de cada CLIQ disponível
+    tem_volume_ccee : bool
+        True  → respeita volumes (match volumétrico).
+        False → garante vínculo para toda boleta, ignora volumes.
+
+    Retorna
+    -------
+    list[dict] com chaves: 'boleta_id', 'cliq_id', 'volume_match', 'status'
+    """
+    resultado = []
+
+    # ------------------------------------------------------------------
+    # CASO 1 – Volume CCEE zerado: vincular cada boleta a ≥1 CLIQ,
+    #          sem restrição de volume. CLIQs podem ser reutilizados.
+    # ------------------------------------------------------------------
+    if not tem_volume_ccee:
+        if not cliqs:
+            for b in boletas:
+                resultado.append({
+                    'boleta_id':    b['id'],
+                    'cliq_id':      '—',
+                    'volume_match': 0.0,
+                    'status':       '⚠️ Sem CLIQ disponível',
+                })
+            return resultado
+
+        cliq_idx = 0
+        for b in boletas:
+            cliq = cliqs[cliq_idx % len(cliqs)]
+            resultado.append({
+                'boleta_id':    b['id'],
+                'cliq_id':      cliq['id'],
+                'volume_match': 0.0,
+                'status':       '✅ Vinculado (sem volume CCEE)',
+            })
+            # Avança para o próximo CLIQ apenas se ainda houver disponíveis únicos
+            if cliq_idx < len(cliqs) - 1:
+                cliq_idx += 1
+        return resultado
+
+    # ------------------------------------------------------------------
+    # CASO 2 – Volume CCEE preenchido: match volumétrico
+    #
+    # Estratégia (em ordem de prioridade):
+    #   1. Match exato 1-para-1 (1 CLIQ cobre exatamente 1 boleta)
+    #   2. Composição N→1: vários CLIQs somados cobrem 1 boleta
+    #      (ex: CLIQ 10 + CLIQ 10 → Boleta 20)
+    #   3. Composição 1→N: 1 CLIQ dividido entre várias boletas
+    #      (ex: CLIQ 10 → Boleta 5 + Boleta 5)
+    #   CLIQs só são reutilizados quando há menos CLIQs do que boletas.
+    # ------------------------------------------------------------------
+
+    # Controle de saldo restante por CLIQ
+    cliq_restante = {c['id']: c['volume'] for c in cliqs}
+    cliq_lista    = [c['id'] for c in cliqs]
+
+    def _pode_reutilizar():
+        return len(cliqs) < len(boletas)
+
+    def _repor_cliq(cid):
+        vol_original = next((c['volume'] for c in cliqs if c['id'] == cid), 0.0)
+        cliq_restante[cid] = vol_original
+
+    for b in boletas:
+        vol_boleta          = round(b['volume'], 6)
+        vol_restante_boleta = vol_boleta
+
+        if vol_boleta <= 0:
+            resultado.append({
+                'boleta_id':    b['id'],
+                'cliq_id':      '—',
+                'volume_match': 0.0,
+                'status':       '⚠️ Volume boleta zerado/inválido',
+            })
+            continue
+
+        # Tentativa 1: um único CLIQ cobre o volume exato da boleta
+        cliq_exato = next(
+            (cid for cid in cliq_lista
+             if abs(cliq_restante.get(cid, 0.0) - vol_boleta) < 1e-5),
+            None
+        )
+        if cliq_exato is not None:
+            cliq_restante[cliq_exato] -= vol_boleta
+            resultado.append({
+                'boleta_id':    b['id'],
+                'cliq_id':      cliq_exato,
+                'volume_match': vol_boleta,
+                'status':       '✅ Match exato',
+            })
+            continue
+
+        # Tentativa 2: composição de múltiplos CLIQs (N→1 boleta)
+        linhas_parciais = []
+
+        for cid in cliq_lista:
+            if vol_restante_boleta <= 1e-6:
+                break
+            disp = cliq_restante.get(cid, 0.0)
+            if disp <= 1e-6:
+                # CLIQ esgotado — reutiliza se houver menos CLIQs que boletas
+                if _pode_reutilizar():
+                    _repor_cliq(cid)
+                    disp = cliq_restante[cid]
+                else:
+                    continue
+
+            alocado             = round(min(disp, vol_restante_boleta), 6)
+            cliq_restante[cid] -= alocado
+            vol_restante_boleta = round(vol_restante_boleta - alocado, 6)
+
+            linhas_parciais.append({
+                'boleta_id':    b['id'],
+                'cliq_id':      cid,
+                'volume_match': alocado,
+                'status':       '✅ Match parcial composto',
+            })
+
+        if abs(vol_restante_boleta) < 1e-5:
+            # Volume totalmente coberto
+            resultado.extend(linhas_parciais)
+        else:
+            # Volume parcialmente coberto — registra o que foi alocado e aponta saldo descoberto
+            resultado.extend(linhas_parciais)
+            resultado.append({
+                'boleta_id':    b['id'],
+                'cliq_id':      '—',
+                'volume_match': round(vol_boleta - vol_restante_boleta, 6),
+                'status':       f'⚠️ Volume descoberto: {round(vol_restante_boleta, 6)} MWm',
+            })
+
+    return resultado
+
+
+def render_match_contratos_compra(titulo, perfis, df_wbc_base, db_keys, filtro_sub="Todos"):
+    """
+    Exibe a área de match entre boletas de compra (WBC) e contratos CLIQ.
+
+    Monta a lista de CLIQs diretamente das bases CLIQ já carregadas no
+    session_state (db_matrix, db_bismut, db_ccear, db_cbr), filtrando
+    pelo perfil comprador — sem precisar de um DataFrame externo.
+
+    Parâmetros
+    ----------
+    titulo      : str        — título do expander
+    perfis      : list[str]  — perfis a processar
+    df_wbc_base : DataFrame  — boletas WBC do bloco (saída de df_wbc_para_parte)
+    db_keys     : list[str]  — chaves das bases CLIQ a consultar
+    filtro_sub  : str        — filtro de submercado (default "Todos")
+    """
+    with st.expander(f"🔗 Match Contratos de Compra — {titulo}", expanded=False):
+
+        todos_matches = []
+
+        for perfil in perfis:
+            # Determina o modo de match pelo NET CCEE do perfil
+            comp_ccee       = calcular_mwmedio_em_bases(perfil, 'SIGLA_PERFIL_COMPRADOR', filtro_sub, db_keys)
+            vend_ccee       = calcular_mwmedio_em_bases(perfil, 'SIGLA_PERFIL_VENDEDOR',  filtro_sub, db_keys)
+            net_ccee        = round(comp_ccee - vend_ccee, 6)
+            tem_volume_ccee = abs(net_ccee) > 1e-5
+
+            # Boletas de compra deste perfil no WBC
+            mask_c    = df_wbc_base['Comprador'].astype(str).str.strip().str.upper() == perfil.upper()
+            df_compra = df_wbc_base[mask_c].copy()
+
+            boletas = [
+                {
+                    'id':     str(row.iloc[0]),
+                    'volume': pd.to_numeric(row.get('Volume MWm', 0), errors='coerce') or 0.0,
+                }
+                for _, row in df_compra.iterrows()
+            ]
+
+            if not boletas:
+                continue
+
+            # CLIQs onde este perfil é comprador, extraídos das bases CLIQ
+            cliqs = []
+            vistos = set()
+            for db_key in db_keys:
+                df_cliq = st.session_state.get(db_key)
+                if df_cliq is None:
+                    continue
+                df_temp = df_cliq.reset_index()
+                if 'SIGLA_PERFIL_COMPRADOR' not in df_temp.columns:
+                    continue
+                mask_cliq = (
+                    df_temp['SIGLA_PERFIL_COMPRADOR'].astype(str).str.strip().str.upper() == perfil.upper()
+                )
+                if filtro_sub != "Todos" and 'SUBMERCADO_ENTREGA' in df_temp.columns:
+                    mask_cliq = mask_cliq & (
+                        df_temp['SUBMERCADO_ENTREGA'].astype(str).str.strip() == filtro_sub
+                    )
+                # Filtra contratos que não sejam RASCUNHO
+                if 'SITUACAO_CONTRATO' in df_temp.columns:
+                    mask_cliq = mask_cliq & (
+                        df_temp['SITUACAO_CONTRATO'].astype(str).str.strip().str.upper() != 'RASCUNHO'
+                    )
+                for _, crow in df_temp[mask_cliq].iterrows():
+                    cod = tratar_chave(crow.get('CODIGO_CONTRATO', crow.name if hasattr(crow, 'name') else ''))
+                    if not cod or cod in vistos:
+                        continue
+                    vistos.add(cod)
+                    # Volume: MWmedio ou MONTANTE_MENSAL_MWh convertido
+                    if cod in CONTRATOS_ESPECIAIS_CCEAR and 'MONTANTE_MENSAL_MWh' in crow:
+                        try:
+                            h = df_compra['Volume MWm'].count()  # fallback
+                            v = float(str(crow['MONTANTE_MENSAL_MWh']).replace(',', '.'))
+                            vol_cliq = v / 744.0  # usa 744h como referência padrão
+                        except Exception:
+                            vol_cliq = 0.0
+                    else:
+                        try:
+                            vol_cliq = float(str(crow.get('MWmedio', 0)).replace(',', '.'))
+                        except Exception:
+                            vol_cliq = 0.0
+                    cliqs.append({'id': cod, 'volume': round(vol_cliq, 6)})
+
+            # Executa o algoritmo de match
+            matches = _match_boletas_cliqs(boletas, cliqs, tem_volume_ccee)
+
+            for m in matches:
+                m['Perfil']     = perfil
+                m['NET CCEE']   = net_ccee
+                m['Modo Match'] = 'Com Volume CCEE' if tem_volume_ccee else 'Sem Volume CCEE'
+                todos_matches.append(m)
+
+        # ------------------------------------------------------------------
+        # Exibição
+        # ------------------------------------------------------------------
+        if not todos_matches:
+            st.info("Nenhuma boleta de compra encontrada para os perfis selecionados.")
+            return
+
+        df_match = pd.DataFrame(todos_matches).rename(columns={
+            'boleta_id':    'Boleta',
+            'cliq_id':      'CLIQ Vinculado',
+            'volume_match': 'Volume Match (MWm)',
+            'status':       'Status Match',
+        })
+
+        cols_order = ['Perfil', 'Boleta', 'CLIQ Vinculado', 'Volume Match (MWm)',
+                      'NET CCEE', 'Modo Match', 'Status Match']
+        df_match = df_match[[c for c in cols_order if c in df_match.columns]]
+
+        df_ok_m   = df_match[df_match['Status Match'].str.startswith('✅')]
+        df_warn_m = df_match[~df_match['Status Match'].str.startswith('✅')]
+
+        col_cfg = {
+            'Volume Match (MWm)': st.column_config.NumberColumn(format="%.6f"),
+            'NET CCEE':           st.column_config.NumberColumn(format="%.6f"),
+        }
+
+        if not df_warn_m.empty:
+            st.warning(f"{len(df_warn_m)} vínculo(s) com pendência.")
+            st.dataframe(
+                df_warn_m.reset_index(drop=True),
+                use_container_width=True, hide_index=True,
+                column_config=col_cfg,
+            )
+
+        if not df_ok_m.empty:
+            lbl        = "Ver vínculos OK" if not df_warn_m.empty else "Vínculos de Match"
+            expanded_ok = df_warn_m.empty
+            with st.expander(lbl, expanded=expanded_ok):
+                st.dataframe(
+                    df_ok_m.reset_index(drop=True),
+                    use_container_width=True, hide_index=True,
+                    column_config=col_cfg,
+                )
+
+        # Resumo agregado por perfil
+        with st.expander("📊 Resumo do Match por Perfil", expanded=False):
+            resumo = (
+                df_match
+                .groupby(['Perfil', 'Modo Match'])
+                .agg(
+                    Boletas            =('Boleta',             'nunique'),
+                    CLIQs_Vinculados   =('CLIQ Vinculado',     'nunique'),
+                    Volume_Total_Match =('Volume Match (MWm)', 'sum'),
+                    Pendencias         =('Status Match',        lambda x: x.str.startswith('⚠️').sum()),
+                )
+                .reset_index()
+            )
+            st.dataframe(
+                resumo,
+                use_container_width=True, hide_index=True,
+                column_config={
+                    'Volume_Total_Match': st.column_config.NumberColumn(format="%.6f"),
+                },
+            )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 7. PROCESSAMENTO DA TABELA
@@ -1016,6 +1321,11 @@ if st.session_state['df_bruto'] is not None:
                 df_wbc_para_parte(PARTE_BISMUT_WBC.upper()),
                 ['db_bismut'], filtro_sub_bismut
             )
+            render_match_contratos_compra(
+                "BISMUT", PERFIS_BISMUT,
+                df_wbc_para_parte(PARTE_BISMUT_WBC.upper()),
+                ['db_bismut'], filtro_sub_bismut
+            )
 
             # ─────────────────────────────────────────────────────────────────
             # BLOCO MATRIX
@@ -1066,6 +1376,11 @@ if st.session_state['df_bruto'] is not None:
                 df_wbc_para_parte(PARTE_MATRIX_WBC.upper()),
                 DBS_MATRIX, filtro_sub_matrix
             )
+            render_match_contratos_compra(
+                "MATRIX", PERFIS_MATRIX,
+                df_wbc_para_parte(PARTE_MATRIX_WBC.upper()),
+                DBS_MATRIX, filtro_sub_matrix
+            )
 
             # ─────────────────────────────────────────────────────────────────
             # BLOCO GET ENERGY TRADING
@@ -1097,6 +1412,11 @@ if st.session_state['df_bruto'] is not None:
             )
             render_reconciliacao("GET ENERGY TRADING", df_get_ccee_tab, df_get_wbc_tab)
             render_boletas_divergentes(
+                "GET ENERGY TRADING", PERFIS_GET,
+                df_wbc_para_parte(PARTE_GET_WBC.upper()),
+                ['db_bismut'], filtro_sub_get
+            )
+            render_match_contratos_compra(
                 "GET ENERGY TRADING", PERFIS_GET,
                 df_wbc_para_parte(PARTE_GET_WBC.upper()),
                 ['db_bismut'], filtro_sub_get
@@ -1140,6 +1460,11 @@ if st.session_state['df_bruto'] is not None:
                 df_wbc_para_parte(PARTE_CINERGY_WBC.upper()),
                 ['db_bismut'], filtro_sub_cinergy
             )
+            render_match_contratos_compra(
+                "CINERGY", PERFIS_CINERGY,
+                df_wbc_para_parte(PARTE_CINERGY_WBC.upper()),
+                ['db_bismut'], filtro_sub_cinergy
+            )
 
             # ─────────────────────────────────────────────────────────────────
             # BLOCO MTX CAMANDUCAIA
@@ -1167,6 +1492,11 @@ if st.session_state['df_bruto'] is not None:
             )
             render_reconciliacao("MTX CAMANDUCAIA", df_mtx_ccee_tab, df_mtx_wbc_tab)
             render_boletas_divergentes(
+                "MTX CAMANDUCAIA", PERFIS_MTX,
+                df_wbc_para_parte(PARTE_MTX_WBC.upper()),
+                ['db_bismut'], filtro_sub_mtx
+            )
+            render_match_contratos_compra(
                 "MTX CAMANDUCAIA", PERFIS_MTX,
                 df_wbc_para_parte(PARTE_MTX_WBC.upper()),
                 ['db_bismut'], filtro_sub_mtx
@@ -1202,6 +1532,11 @@ if st.session_state['df_bruto'] is not None:
             )
             render_reconciliacao("ARGENTUM", df_argentum_ccee_tab, df_argentum_wbc_tab)
             render_boletas_divergentes(
+                "ARGENTUM", PERFIS_ARGENTUM,
+                df_wbc_para_parte(PARTE_ARGENTUM_WBC.upper()),
+                ['db_bismut'], filtro_sub_argentum
+            )
+            render_match_contratos_compra(
                 "ARGENTUM", PERFIS_ARGENTUM,
                 df_wbc_para_parte(PARTE_ARGENTUM_WBC.upper()),
                 ['db_bismut'], filtro_sub_argentum
