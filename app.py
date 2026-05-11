@@ -229,11 +229,15 @@ anos = [str(a) for a in range(2024, 2031)]
 
 st.sidebar.title("Configurações")
 
-_idx_mes_default = datetime.now().month - 1
-_idx_ano_default = anos.index(str(datetime.now().year)) if str(datetime.now().year) in anos else 0
+# ── FIX: inicializa índices apenas na primeira execução ──────────────────────
+if '_idx_mes' not in st.session_state:
+    st.session_state['_idx_mes'] = datetime.now().month - 1
+if '_idx_ano' not in st.session_state:
+    st.session_state['_idx_ano'] = anos.index(str(datetime.now().year)) if str(datetime.now().year) in anos else 0
 
-mes_sel = st.sidebar.selectbox("Mês", meses_nomes, index=st.session_state.get('_idx_mes', _idx_mes_default))
-ano_sel = st.sidebar.selectbox("Ano", anos,         index=st.session_state.get('_idx_ano', _idx_ano_default))
+mes_sel = st.sidebar.selectbox("Mês", meses_nomes, index=st.session_state['_idx_mes'], key="sel_mes")
+ano_sel = st.sidebar.selectbox("Ano", anos,         index=st.session_state['_idx_ano'], key="sel_ano")
+# Persiste a seleção do usuário para próximos reruns
 st.session_state['_idx_mes'] = meses_nomes.index(mes_sel)
 st.session_state['_idx_ano'] = anos.index(ano_sel)
 
@@ -283,6 +287,7 @@ if st.sidebar.button("🗑️ Limpar todos os arquivos salvos"):
     st.session_state['ajustes_manuais'] = {}
     st.rerun()
 
+# ── Título usa sempre o valor do selectbox (já resolvido acima) ───────────────
 st.title(f"Livro de Energia - {mes_sel}/{ano_sel}")
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -361,6 +366,146 @@ if get_file_id(arq_cceal2) != st.session_state.get('fid_cceal2'):
         val = carregar_csv_cliq(arq_cceal2)
         st.session_state['db_bismut'] = val
         salvar_disco('db_bismut', val)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HELPERS COMPARTILHADOS PARA AS TABELAS CCEE/WBC
+# ─────────────────────────────────────────────────────────────────────────────
+
+def adicionar_total(df):
+    total = {
+        'PERFIL':    'TOTAL',
+        'Comprador': round(df['Comprador'].sum(), 6),
+        'Vendedor':  round(df['Vendedor'].sum(), 6),
+        'NET':       round(df['NET'].sum(), 6),
+    }
+    return pd.concat([df, pd.DataFrame([total])], ignore_index=True)
+
+def highlight_total(row):
+    if row['PERFIL'] == 'TOTAL':
+        return ['font-weight: bold; background-color: #e8f0fe'] * len(row)
+    return [''] * len(row)
+
+COL_CONFIG_PERFIL = {
+    "PERFIL":    st.column_config.TextColumn("PERFIL"),
+    "Comprador": st.column_config.NumberColumn("Comprador", format="%.6f"),
+    "Vendedor":  st.column_config.NumberColumn("Vendedor",  format="%.6f"),
+    "NET":       st.column_config.NumberColumn("NET",       format="%.6f"),
+}
+
+def calcular_mwmedio_em_bases(perfil, coluna_perfil, filtro_sub, db_keys):
+    """Soma MWmedio das bases indicadas filtrando por perfil e (opcionalmente) submercado."""
+    total = 0.0
+    for db_key in db_keys:
+        df_cliq = st.session_state.get(db_key)
+        if df_cliq is None:
+            continue
+        df_temp = df_cliq.reset_index()
+        if coluna_perfil not in df_temp.columns or 'MWmedio' not in df_temp.columns:
+            continue
+        mask = df_temp[coluna_perfil].astype(str).str.strip().str.upper() == perfil.upper()
+        if filtro_sub != "Todos" and 'SUBMERCADO_ENTREGA' in df_temp.columns:
+            mask = mask & (df_temp['SUBMERCADO_ENTREGA'].astype(str).str.strip() == filtro_sub)
+        df_f = df_temp[mask].copy()
+        df_f['MWmedio'] = pd.to_numeric(
+            df_f['MWmedio'].astype(str).str.strip().str.replace(',', '.'), errors='coerce'
+        ).fillna(0.0)
+        total += df_f['MWmedio'].sum()
+    return round(total, 6)
+
+def build_ccee_tabela(perfis, db_keys, filtro_sub):
+    rows = []
+    for perfil in perfis:
+        comp = calcular_mwmedio_em_bases(perfil, 'SIGLA_PERFIL_COMPRADOR', filtro_sub, db_keys)
+        vend = calcular_mwmedio_em_bases(perfil, 'SIGLA_PERFIL_VENDEDOR',  filtro_sub, db_keys)
+        rows.append({'PERFIL': perfil, 'Comprador': comp, 'Vendedor': vend, 'NET': round(comp - vend, 6)})
+    return adicionar_total(pd.DataFrame(rows))
+
+def build_wbc_tabela(perfis, df_wbc_base):
+    rows = []
+    for perfil in perfis:
+        mask_c = df_wbc_base['Comprador'].astype(str).str.strip().str.upper() == perfil.upper()
+        mask_v = df_wbc_base['Vendedor'].astype(str).str.strip().str.upper()  == perfil.upper()
+        soma_c = round(pd.to_numeric(df_wbc_base.loc[mask_c, 'Volume MWm'], errors='coerce').fillna(0.0).sum(), 6)
+        soma_v = round(pd.to_numeric(df_wbc_base.loc[mask_v, 'Volume MWm'], errors='coerce').fillna(0.0).sum(), 6)
+        rows.append({'PERFIL': perfil, 'Comprador': soma_c, 'Vendedor': soma_v, 'NET': round(soma_c - soma_v, 6)})
+    return adicionar_total(pd.DataFrame(rows))
+
+def render_tabela_par(titulo_ccee, titulo_wbc, df_ccee, df_wbc, aviso_sem_base=None):
+    """Renderiza lado a lado: CCEE (esq) | WBC (dir)."""
+    col_l, col_r = st.columns(2)
+    with col_l:
+        st.markdown(f"**{titulo_ccee}**")
+        if aviso_sem_base:
+            st.warning(aviso_sem_base)
+        else:
+            st.dataframe(
+                df_ccee.style.apply(highlight_total, axis=1),
+                use_container_width=True, hide_index=True,
+                column_config=COL_CONFIG_PERFIL
+            )
+    with col_r:
+        st.markdown(f"**{titulo_wbc}**")
+        st.dataframe(
+            df_wbc.style.apply(highlight_total, axis=1),
+            use_container_width=True, hide_index=True,
+            column_config=COL_CONFIG_PERFIL
+        )
+
+def render_reconciliacao(titulo, df_ccee, df_wbc):
+    """
+    Exibe tabela de reconciliação NET CCEE vs NET WBC.
+    Aponta perfis onde o NET diverge e possíveis causas.
+    """
+    # Remove linha TOTAL para comparação
+    df_c = df_ccee[df_ccee['PERFIL'] != 'TOTAL'].copy()
+    df_w = df_wbc[df_wbc['PERFIL'] != 'TOTAL'].copy()
+
+    df_rec = df_c[['PERFIL', 'NET']].rename(columns={'NET': 'NET_CCEE'}).merge(
+        df_w[['PERFIL', 'NET']].rename(columns={'NET': 'NET_WBC'}),
+        on='PERFIL', how='outer'
+    ).fillna(0.0)
+
+    df_rec['DIFERENÇA'] = (df_rec['NET_CCEE'] - df_rec['NET_WBC']).round(6)
+    df_rec['STATUS'] = df_rec['DIFERENÇA'].apply(
+        lambda d: "✅ OK" if abs(d) < 1e-5 else "⚠️ Verificar"
+    )
+
+    # Possíveis causas para diferenças
+    causas = []
+    for _, row in df_rec[df_rec['STATUS'] != "✅ OK"].iterrows():
+        perfil = row['PERFIL']
+        diff   = row['DIFERENÇA']
+        if abs(diff) > 0:
+            causas.append(
+                f"**{perfil}**: NET CCEE = {row['NET_CCEE']:.6f} | NET WBC = {row['NET_WBC']:.6f} | "
+                f"Diferença = **{diff:.6f}**"
+            )
+
+    with st.expander(f"🔎 Reconciliação NET — {titulo}", expanded=False):
+        st.dataframe(
+            df_rec.style.apply(
+                lambda r: ['background-color: #fdecea' if r['STATUS'] != '✅ OK' else '' for _ in r],
+                axis=1
+            ),
+            use_container_width=True, hide_index=True,
+            column_config={
+                "PERFIL":     st.column_config.TextColumn("PERFIL"),
+                "NET_CCEE":   st.column_config.NumberColumn("NET CCEE",  format="%.6f"),
+                "NET_WBC":    st.column_config.NumberColumn("NET WBC",   format="%.6f"),
+                "DIFERENÇA":  st.column_config.NumberColumn("Diferença", format="%.6f"),
+                "STATUS":     st.column_config.TextColumn("Status"),
+            }
+        )
+        if causas:
+            st.markdown("**Perfis com divergência:**")
+            for c in causas:
+                st.markdown(f"- {c}")
+            st.markdown(
+                "_Possíveis causas: boleta não cadastrada na base Cliq, contrato com status RASCUNHO, "
+                "operação intraportfólio não zerada, entre empresas não zerada, ou contrato sem match CCEE._"
+            )
+        else:
+            st.success("Todos os perfis estão reconciliados (NET CCEE = NET WBC).")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 7. PROCESSAMENTO DA TABELA
@@ -706,15 +851,32 @@ if st.session_state['df_bruto'] is not None:
                     "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f"),
                 }
             )
+
+            # ═════════════════════════════════════════════════════════════════
+            # HELPER: filtra df_conferencia por Parte e aplica flags de zeragem
+            # ═════════════════════════════════════════════════════════════════
+            def df_wbc_para_parte(nome_parte_upper):
+                df_w = df_conferencia[
+                    df_conferencia['Parte'].astype(str).str.strip().str.upper() == nome_parte_upper
+                ].copy()
+                if zerar_intra:
+                    mask_zi = df_w['Vendedor'].str.lower().str.strip() == df_w['Comprador'].str.lower().str.strip()
+                    df_w.loc[mask_zi, 'Volume MWm'] = 0.0
+                if zerar_entre:
+                    mask_zp = df_w['Parte'].str.contains("BISMUT|GET", na=False, case=False)
+                    mask_zc = (df_w['Contraparte'].str.upper().str.startswith("MATRIX", na=False) &
+                               ~df_w['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False))
+                    df_w.loc[mask_zp & mask_zc, 'Volume MWm'] = 0.0
+                return df_w
+
             # ─────────────────────────────────────────────────────────────────
-            # TABELAS BISMUT CCEE + WBC
+            # BLOCO BISMUT
             # ─────────────────────────────────────────────────────────────────
-            st.write("### 📊 Tabela 1 - BISMUT CCEE  |  Tabela 2 - BISMUT WBC")
+            st.write("### 📊 Tabela — BISMUT CCEE  |  BISMUT WBC")
 
             db_bismut_ccee = st.session_state.get('db_bismut')
 
-            # --- Filtro de Submercado (afeta apenas Tabela 1 - CCEE) ---
-            submercados_disponiveis = ["Todos"]
+            submercados_bismut = ["Todos"]
             if db_bismut_ccee is not None:
                 df_bism_temp = db_bismut_ccee.reset_index()
                 if 'SUBMERCADO_ENTREGA' in df_bism_temp.columns:
@@ -722,11 +884,11 @@ if st.session_state['df_bruto'] is not None:
                         df_bism_temp['SUBMERCADO_ENTREGA'].dropna().astype(str).str.strip()
                         .replace('', pd.NA).dropna().unique().tolist()
                     )
-                    submercados_disponiveis += subs_unicos
+                    submercados_bismut += subs_unicos
 
-            filtro_submercado = st.selectbox(
-                "Filtro Submercado (Tabela CCEE)",
-                options=submercados_disponiveis,
+            filtro_sub_bismut = st.selectbox(
+                "Filtro Submercado (Tabela CCEE Bismut)",
+                options=submercados_bismut,
                 key="filtro_submercado_bismut_ccee"
             )
 
@@ -736,121 +898,42 @@ if st.session_state['df_bruto'] is not None:
                 "BISMUT COM I1",
                 "BISMUT COM",
             ]
-
-            # ── Tabela 1: BISMUT CCEE ─────────────────────────────────────
-            def calcular_mwmedio_bismut(perfil, coluna_perfil, filtro_sub):
-                """Soma MWmedio da base bismut filtrando por perfil na coluna_perfil e submercado."""
-                if db_bismut_ccee is None:
-                    return 0.0
-                df_temp = db_bismut_ccee.reset_index()
-                if coluna_perfil not in df_temp.columns or 'MWmedio' not in df_temp.columns:
-                    return 0.0
-                mask = df_temp[coluna_perfil].astype(str).str.strip().str.upper() == perfil.upper()
-                if filtro_sub != "Todos":
-                    if 'SUBMERCADO_ENTREGA' in df_temp.columns:
-                        mask = mask & (
-                            df_temp['SUBMERCADO_ENTREGA'].astype(str).str.strip() == filtro_sub
-                        )
-                df_filtrado = df_temp[mask].copy()
-                df_filtrado['MWmedio'] = pd.to_numeric(
-                    df_filtrado['MWmedio'].astype(str).str.strip().str.replace(',', '.'), errors='coerce'
-                ).fillna(0.0)
-                return round(df_filtrado['MWmedio'].sum(), 6)
-
-            rows_bismut_ccee = []
-            for perfil in PERFIS_BISMUT:
-                comprador_val = calcular_mwmedio_bismut(perfil, 'SIGLA_PERFIL_COMPRADOR', filtro_submercado)
-                vendedor_val  = calcular_mwmedio_bismut(perfil, 'SIGLA_PERFIL_VENDEDOR',  filtro_submercado)
-                rows_bismut_ccee.append({
-                    'PERFIL':    perfil,
-                    'Comprador': comprador_val,
-                    'Vendedor':  vendedor_val,
-                    'NET':       round(comprador_val - vendedor_val, 6),
-                })
-
-            df_bismut_ccee_tabela = pd.DataFrame(rows_bismut_ccee)
-
-            # ── Tabela 2: BISMUT WBC ──────────────────────────────────────
-            # Aplica apenas zerar_intra e zerar_entre (sem filtros de tela)
             PARTE_BISMUT_WBC = "BISMUT COMERCIALIZADORA DE ENERGIA S/A"
 
-            df_wbc_base = df_conferencia[
-                df_conferencia['Parte'].astype(str).str.strip().str.upper() == PARTE_BISMUT_WBC.upper()
-            ].copy()
+            df_bismut_ccee_tab = build_ccee_tabela(PERFIS_BISMUT, ['db_bismut'], filtro_sub_bismut)
+            df_bismut_wbc_tab  = build_wbc_tabela(PERFIS_BISMUT, df_wbc_para_parte(PARTE_BISMUT_WBC.upper()))
 
-            # Aplica flags de zeragem
-            if zerar_intra:
-                mask_wi = df_wbc_base['Vendedor'].str.lower().str.strip() == df_wbc_base['Comprador'].str.lower().str.strip()
-                df_wbc_base.loc[mask_wi, 'Volume MWm'] = 0.0
-            if zerar_entre:
-                mask_wp = df_wbc_base['Parte'].str.contains("BISMUT|GET", na=False, case=False)
-                mask_wc = (df_wbc_base['Contraparte'].str.upper().str.startswith("MATRIX", na=False) &
-                           ~df_wbc_base['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False))
-                df_wbc_base.loc[mask_wp & mask_wc, 'Volume MWm'] = 0.0
-
-            rows_wbc = []
-            for perfil in PERFIS_BISMUT:
-                # Comprador: linhas onde Comprador == perfil e Operacao == COMPRA
-                mask_comp = (
-                    df_wbc_base['Comprador'].astype(str).str.strip().str.upper() == perfil.upper()
-                )
-                # Vendedor: linhas onde Vendedor == perfil e Operacao == VENDA
-                mask_vend = (
-                    df_wbc_base['Vendedor'].astype(str).str.strip().str.upper() == perfil.upper()
-                )
-                soma_comp = round(pd.to_numeric(df_wbc_base.loc[mask_comp, 'Volume MWm'], errors='coerce').fillna(0.0).sum(), 6)
-                soma_vend = round(pd.to_numeric(df_wbc_base.loc[mask_vend, 'Volume MWm'], errors='coerce').fillna(0.0).sum(), 6)
-                rows_wbc.append({
-                    'PERFIL':    perfil,
-                    'Comprador': soma_comp,
-                    'Vendedor':  soma_vend,
-                    'NET':       round(soma_comp - soma_vend, 6),
-                })
-
-            df_wbc_tabela = pd.DataFrame(rows_wbc)
-
-            # ── Adiciona linha TOTAL nas tabelas ─────────────────────────
-            def adicionar_total(df):
-                total = {
-                    'PERFIL':    'TOTAL',
-                    'Comprador': round(df['Comprador'].sum(), 6),
-                    'Vendedor':  round(df['Vendedor'].sum(), 6),
-                    'NET':       round(df['NET'].sum(), 6),
-                }
-                return pd.concat([df, pd.DataFrame([total])], ignore_index=True)
-
-            df_bismut_ccee_com_total = adicionar_total(df_bismut_ccee_tabela)
-            df_wbc_com_total         = adicionar_total(df_wbc_tabela)
-
-            def highlight_total(row):
-                if row['PERFIL'] == 'TOTAL':
-                    return ['font-weight: bold; background-color: #e8f0fe'] * len(row)
-                return [''] * len(row)
-
-            # ── Renderização lado a lado ──────────────────────────────────
-            col_t1, col_t2 = st.columns(2)
-
-            with col_t1:
-                st.markdown("**BISMUT CCEE**")
-                if db_bismut_ccee is None:
-                    st.warning("Base Cliq Bismut não carregada.")
-                else:
-                    st.dataframe(
-                        df_bismut_ccee_com_total.style.apply(highlight_total, axis=1),
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "PERFIL":    st.column_config.TextColumn("PERFIL"),
-                            "Comprador": st.column_config.NumberColumn("Comprador", format="%.6f"),
-                            "Vendedor":  st.column_config.NumberColumn("Vendedor",  format="%.6f"),
-                            "NET":       st.column_config.NumberColumn("NET",       format="%.6f"),
-                        }
-                    )
+            render_tabela_par(
+                "BISMUT CCEE", f"BISMUT WBC — {PARTE_BISMUT_WBC}",
+                df_bismut_ccee_tab, df_bismut_wbc_tab,
+                aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
+            )
+            render_reconciliacao("BISMUT", df_bismut_ccee_tab, df_bismut_wbc_tab)
 
             # ─────────────────────────────────────────────────────────────────
-            # TABELAS MATRIX CCEE + WBC
+            # BLOCO MATRIX
             # ─────────────────────────────────────────────────────────────────
-            st.write("### 📊 Tabela 2 - MATRIX CCEE  |  Tabela 2 - MATRIX WBC")
+            st.write("### 📊 Tabela — MATRIX CCEE  |  MATRIX WBC")
+
+            DBS_MATRIX = ['db_ccear', 'db_cbr', 'db_matrix']
+
+            submercados_matrix = ["Todos"]
+            for db_key in DBS_MATRIX:
+                df_m = st.session_state.get(db_key)
+                if df_m is not None:
+                    df_mt = df_m.reset_index()
+                    if 'SUBMERCADO_ENTREGA' in df_mt.columns:
+                        for s in sorted(df_mt['SUBMERCADO_ENTREGA'].dropna().astype(str).str.strip()
+                                        .replace('', pd.NA).dropna().unique().tolist()):
+                            if s not in submercados_matrix:
+                                submercados_matrix.append(s)
+            submercados_matrix = ["Todos"] + sorted(submercados_matrix[1:])
+
+            filtro_sub_matrix = st.selectbox(
+                "Filtro Submercado (Tabela Matrix CCEE)",
+                options=submercados_matrix,
+                key="filtro_submercado_matrix_ccee"
+            )
 
             PERFIS_MATRIX = [
                 "MATRIX COM I5",
@@ -859,149 +942,138 @@ if st.session_state['df_bruto'] is not None:
                 "MATRIX COM I0",
                 "MATRIX COM CQ5",
             ]
-
-            # Bases CCEE exceto bismut
-            DBS_MATRIX = ['db_ccear', 'db_cbr', 'db_matrix']
-
-            # ── Filtro de Submercado para Matrix CCEE ────────────────────
-            submercados_matrix = ["Todos"]
-            for db_key in DBS_MATRIX:
-                df_m = st.session_state.get(db_key)
-                if df_m is not None:
-                    df_mt = df_m.reset_index()
-                    if 'SUBMERCADO_ENTREGA' in df_mt.columns:
-                        subs = sorted(
-                            df_mt['SUBMERCADO_ENTREGA'].dropna().astype(str).str.strip()
-                            .replace('', pd.NA).dropna().unique().tolist()
-                        )
-                        for s in subs:
-                            if s not in submercados_matrix:
-                                submercados_matrix.append(s)
-            submercados_matrix = ["Todos"] + sorted(submercados_matrix[1:])
-
-            filtro_submercado_matrix = st.selectbox(
-                "Filtro Submercado (Tabela Matrix CCEE)",
-                options=submercados_matrix,
-                key="filtro_submercado_matrix_ccee"
-            )
-
-            # ── Tabela MATRIX CCEE ────────────────────────────────────────
-            def calcular_mwmedio_matrix(perfil, coluna_perfil, filtro_sub):
-                """Soma MWmedio das bases ccear/cbr/matrix filtrando por perfil e submercado."""
-                total = 0.0
-                for db_key in DBS_MATRIX:
-                    df_cliq = st.session_state.get(db_key)
-                    if df_cliq is None:
-                        continue
-                    df_temp = df_cliq.reset_index()
-                    if coluna_perfil not in df_temp.columns or 'MWmedio' not in df_temp.columns:
-                        continue
-                    mask = df_temp[coluna_perfil].astype(str).str.strip().str.upper() == perfil.upper()
-                    if filtro_sub != "Todos" and 'SUBMERCADO_ENTREGA' in df_temp.columns:
-                        mask = mask & (df_temp['SUBMERCADO_ENTREGA'].astype(str).str.strip() == filtro_sub)
-                    df_filtrado = df_temp[mask].copy()
-                    df_filtrado['MWmedio'] = pd.to_numeric(
-                        df_filtrado['MWmedio'].astype(str).str.strip().str.replace(',', '.'), errors='coerce'
-                    ).fillna(0.0)
-                    total += df_filtrado['MWmedio'].sum()
-                return round(total, 6)
-
-            rows_matrix_ccee = []
-            for perfil in PERFIS_MATRIX:
-                comprador_val = calcular_mwmedio_matrix(perfil, 'SIGLA_PERFIL_COMPRADOR', filtro_submercado_matrix)
-                vendedor_val  = calcular_mwmedio_matrix(perfil, 'SIGLA_PERFIL_VENDEDOR',  filtro_submercado_matrix)
-                rows_matrix_ccee.append({
-                    'PERFIL':    perfil,
-                    'Comprador': comprador_val,
-                    'Vendedor':  vendedor_val,
-                    'NET':       round(comprador_val - vendedor_val, 6),
-                })
-
-            df_matrix_ccee_tabela = pd.DataFrame(rows_matrix_ccee)
-
-            # ── Tabela MATRIX WBC ─────────────────────────────────────────
             PARTE_MATRIX_WBC = "MATRIX COMERCIALIZADORA DE ENERGIA ELETRICA S/A"
 
-            df_mwbc_base = df_conferencia[
-                df_conferencia['Parte'].astype(str).str.strip().str.upper() == PARTE_MATRIX_WBC.upper()
-            ].copy()
+            df_matrix_ccee_tab = build_ccee_tabela(PERFIS_MATRIX, DBS_MATRIX, filtro_sub_matrix)
+            df_matrix_wbc_tab  = build_wbc_tabela(PERFIS_MATRIX, df_wbc_para_parte(PARTE_MATRIX_WBC.upper()))
 
-            if zerar_intra:
-                mask_mi = df_mwbc_base['Vendedor'].str.lower().str.strip() == df_mwbc_base['Comprador'].str.lower().str.strip()
-                df_mwbc_base.loc[mask_mi, 'Volume MWm'] = 0.0
-            if zerar_entre:
-                mask_mp = df_mwbc_base['Parte'].str.contains("BISMUT|GET", na=False, case=False)
-                mask_mc = (df_mwbc_base['Contraparte'].str.upper().str.startswith("MATRIX", na=False) &
-                           ~df_mwbc_base['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False))
-                df_mwbc_base.loc[mask_mp & mask_mc, 'Volume MWm'] = 0.0
+            bases_matrix_ok = any(st.session_state.get(k) is not None for k in DBS_MATRIX)
+            render_tabela_par(
+                "MATRIX CCEE", f"MATRIX WBC — {PARTE_MATRIX_WBC}",
+                df_matrix_ccee_tab, df_matrix_wbc_tab,
+                aviso_sem_base="Nenhuma base Cliq Matrix/CCEAR/CBR carregada." if not bases_matrix_ok else None
+            )
+            render_reconciliacao("MATRIX", df_matrix_ccee_tab, df_matrix_wbc_tab)
 
-            rows_mwbc = []
-            for perfil in PERFIS_MATRIX:
-                mask_comp = df_mwbc_base['Comprador'].astype(str).str.strip().str.upper() == perfil.upper()
-                mask_vend = df_mwbc_base['Vendedor'].astype(str).str.strip().str.upper()  == perfil.upper()
-                soma_comp = round(pd.to_numeric(df_mwbc_base.loc[mask_comp, 'Volume MWm'], errors='coerce').fillna(0.0).sum(), 6)
-                soma_vend = round(pd.to_numeric(df_mwbc_base.loc[mask_vend, 'Volume MWm'], errors='coerce').fillna(0.0).sum(), 6)
-                rows_mwbc.append({
-                    'PERFIL':    perfil,
-                    'Comprador': soma_comp,
-                    'Vendedor':  soma_vend,
-                    'NET':       round(soma_comp - soma_vend, 6),
-                })
+            # ─────────────────────────────────────────────────────────────────
+            # BLOCO GET ENERGY TRADING  (base: Bismut)
+            # ─────────────────────────────────────────────────────────────────
+            st.write("### 📊 Tabela — GET ENERGY TRADING CCEE  |  GET ENERGY TRADING WBC")
 
-            df_mwbc_tabela = pd.DataFrame(rows_mwbc)
+            filtro_sub_get = st.selectbox(
+                "Filtro Submercado (Tabela GET CCEE)",
+                options=submercados_bismut,
+                key="filtro_submercado_get_ccee"
+            )
 
-            # ── Total nas tabelas Matrix ──────────────────────────────────
-            df_matrix_ccee_com_total = adicionar_total(df_matrix_ccee_tabela)
-            df_mwbc_com_total        = adicionar_total(df_mwbc_tabela)
+            PERFIS_GET = [
+                "GET ENERGY TRADING",
+                "GET ENERGY TRADING I5",
+                "GET ENERGY TRADING I0",
+                "GET ENERGY TRADING I1",
+                "GET ENERGY TRADING CQ5",
+            ]
+            PARTE_GET_WBC = "GET ENERGY TRADING"   # ajuste se o nome exato da Parte for diferente
 
-            # ── Renderização lado a lado ──────────────────────────────────
-            col_m1, col_m2 = st.columns(2)
+            df_get_ccee_tab = build_ccee_tabela(PERFIS_GET, ['db_bismut'], filtro_sub_get)
+            df_get_wbc_tab  = build_wbc_tabela(PERFIS_GET, df_wbc_para_parte(PARTE_GET_WBC.upper()))
 
-            with col_m1:
-                st.markdown("**MATRIX CCEE**")
-                bases_matrix_ok = any(st.session_state.get(k) is not None for k in DBS_MATRIX)
-                if not bases_matrix_ok:
-                    st.warning("Nenhuma base Cliq Matrix/CCEAR/CBR carregada.")
-                else:
-                    st.dataframe(
-                        df_matrix_ccee_com_total.style.apply(highlight_total, axis=1),
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "PERFIL":    st.column_config.TextColumn("PERFIL"),
-                            "Comprador": st.column_config.NumberColumn("Comprador", format="%.6f"),
-                            "Vendedor":  st.column_config.NumberColumn("Vendedor",  format="%.6f"),
-                            "NET":       st.column_config.NumberColumn("NET",       format="%.6f"),
-                        }
-                    )
+            render_tabela_par(
+                "GET ENERGY TRADING CCEE", f"GET ENERGY TRADING WBC — {PARTE_GET_WBC}",
+                df_get_ccee_tab, df_get_wbc_tab,
+                aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
+            )
+            render_reconciliacao("GET ENERGY TRADING", df_get_ccee_tab, df_get_wbc_tab)
 
-            with col_m2:
-                st.markdown(f"**MATRIX WBC** — {PARTE_MATRIX_WBC}")
-                st.dataframe(
-                    df_mwbc_com_total.style.apply(highlight_total, axis=1),
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "PERFIL":    st.column_config.TextColumn("PERFIL"),
-                        "Comprador": st.column_config.NumberColumn("Comprador", format="%.6f"),
-                        "Vendedor":  st.column_config.NumberColumn("Vendedor",  format="%.6f"),
-                        "NET":       st.column_config.NumberColumn("NET",       format="%.6f"),
-                    }
-                )
+            # ─────────────────────────────────────────────────────────────────
+            # BLOCO CINERGY  (base: Bismut)
+            # ─────────────────────────────────────────────────────────────────
+            st.write("### 📊 Tabela — CINERGY CCEE  |  CINERGY WBC")
 
-            with col_t2:
-                st.markdown(f"**BISMUT WBC** — {PARTE_BISMUT_WBC}")
-                st.dataframe(
-                    df_wbc_com_total.style.apply(highlight_total, axis=1),
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "PERFIL":    st.column_config.TextColumn("PERFIL"),
-                        "Comprador": st.column_config.NumberColumn("Comprador", format="%.6f"),
-                        "Vendedor":  st.column_config.NumberColumn("Vendedor",  format="%.6f"),
-                        "NET":       st.column_config.NumberColumn("NET",       format="%.6f"),
-                    }
-                )
+            filtro_sub_cinergy = st.selectbox(
+                "Filtro Submercado (Tabela CINERGY CCEE)",
+                options=submercados_bismut,
+                key="filtro_submercado_cinergy_ccee"
+            )
+
+            PERFIS_CINERGY = [
+                "CINERGY COM",
+                "CINERGY COM I1",
+                "CINERGY COM I5",
+                "CINERGY COM I0",
+                "CINERGY COM I8",
+                "CINERGY COM I5 2",
+                "CINERGY COM I1 2",
+                "CINERGY COM I0 2",
+                "CINERGY COM I8 2",
+            ]
+            PARTE_CINERGY_WBC = "CINERGY COM"   # ajuste conforme nome exato na planilha
+
+            df_cinergy_ccee_tab = build_ccee_tabela(PERFIS_CINERGY, ['db_bismut'], filtro_sub_cinergy)
+            df_cinergy_wbc_tab  = build_wbc_tabela(PERFIS_CINERGY, df_wbc_para_parte(PARTE_CINERGY_WBC.upper()))
+
+            render_tabela_par(
+                "CINERGY CCEE", f"CINERGY WBC — {PARTE_CINERGY_WBC}",
+                df_cinergy_ccee_tab, df_cinergy_wbc_tab,
+                aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
+            )
+            render_reconciliacao("CINERGY", df_cinergy_ccee_tab, df_cinergy_wbc_tab)
+
+            # ─────────────────────────────────────────────────────────────────
+            # BLOCO MTX CAMANDUCAIA  (base: Bismut)
+            # ─────────────────────────────────────────────────────────────────
+            st.write("### 📊 Tabela — MTX CAMANDUCAIA CCEE  |  MTX CAMANDUCAIA WBC")
+
+            filtro_sub_mtx = st.selectbox(
+                "Filtro Submercado (Tabela MTX CAMANDUCAIA CCEE)",
+                options=submercados_bismut,
+                key="filtro_submercado_mtx_ccee"
+            )
+
+            PERFIS_MTX = [
+                "MTX CAMANDUCAIA",
+            ]
+            PARTE_MTX_WBC = "MTX CAMANDUCAIA"   # ajuste conforme nome exato na planilha
+
+            df_mtx_ccee_tab = build_ccee_tabela(PERFIS_MTX, ['db_bismut'], filtro_sub_mtx)
+            df_mtx_wbc_tab  = build_wbc_tabela(PERFIS_MTX, df_wbc_para_parte(PARTE_MTX_WBC.upper()))
+
+            render_tabela_par(
+                "MTX CAMANDUCAIA CCEE", f"MTX CAMANDUCAIA WBC — {PARTE_MTX_WBC}",
+                df_mtx_ccee_tab, df_mtx_wbc_tab,
+                aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
+            )
+            render_reconciliacao("MTX CAMANDUCAIA", df_mtx_ccee_tab, df_mtx_wbc_tab)
+
+            # ─────────────────────────────────────────────────────────────────
+            # BLOCO ARGENTUM  (base: Bismut)
+            # ─────────────────────────────────────────────────────────────────
+            st.write("### 📊 Tabela — ARGENTUM CCEE  |  ARGENTUM WBC")
+
+            filtro_sub_argentum = st.selectbox(
+                "Filtro Submercado (Tabela ARGENTUM CCEE)",
+                options=submercados_bismut,
+                key="filtro_submercado_argentum_ccee"
+            )
+
+            PERFIS_ARGENTUM = [
+                "ARGENTUM COM",
+                "ARGENTUM COM I1",
+                "ARGENTUM COM I5",
+                "ARGENTUM COM I0",
+                "ARGENTUM COM I8",
+            ]
+            PARTE_ARGENTUM_WBC = "ARGENTUM COM"   # ajuste conforme nome exato na planilha
+
+            df_argentum_ccee_tab = build_ccee_tabela(PERFIS_ARGENTUM, ['db_bismut'], filtro_sub_argentum)
+            df_argentum_wbc_tab  = build_wbc_tabela(PERFIS_ARGENTUM, df_wbc_para_parte(PARTE_ARGENTUM_WBC.upper()))
+
+            render_tabela_par(
+                "ARGENTUM CCEE", f"ARGENTUM WBC — {PARTE_ARGENTUM_WBC}",
+                df_argentum_ccee_tab, df_argentum_wbc_tab,
+                aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
+            )
+            render_reconciliacao("ARGENTUM", df_argentum_ccee_tab, df_argentum_wbc_tab)
 
         else:
             st.warning("Sem dados para este período.")
