@@ -229,7 +229,6 @@ anos = [str(a) for a in range(2024, 2031)]
 
 st.sidebar.title("Configurações")
 
-# ── FIX: inicializa índices apenas na primeira execução ──────────────────────
 if '_idx_mes' not in st.session_state:
     st.session_state['_idx_mes'] = datetime.now().month - 1
 if '_idx_ano' not in st.session_state:
@@ -237,7 +236,6 @@ if '_idx_ano' not in st.session_state:
 
 mes_sel = st.sidebar.selectbox("Mês", meses_nomes, index=st.session_state['_idx_mes'], key="sel_mes")
 ano_sel = st.sidebar.selectbox("Ano", anos,         index=st.session_state['_idx_ano'], key="sel_ano")
-# Persiste a seleção do usuário para próximos reruns
 st.session_state['_idx_mes'] = meses_nomes.index(mes_sel)
 st.session_state['_idx_ano'] = anos.index(ano_sel)
 
@@ -287,7 +285,6 @@ if st.sidebar.button("🗑️ Limpar todos os arquivos salvos"):
     st.session_state['ajustes_manuais'] = {}
     st.rerun()
 
-# ── Título usa sempre o valor do selectbox (já resolvido acima) ───────────────
 st.title(f"Livro de Energia - {mes_sel}/{ano_sel}")
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -393,7 +390,6 @@ COL_CONFIG_PERFIL = {
 }
 
 def calcular_mwmedio_em_bases(perfil, coluna_perfil, filtro_sub, db_keys):
-    """Soma MWmedio das bases indicadas filtrando por perfil e (opcionalmente) submercado."""
     total = 0.0
     for db_key in db_keys:
         df_cliq = st.session_state.get(db_key)
@@ -431,7 +427,6 @@ def build_wbc_tabela(perfis, df_wbc_base):
     return adicionar_total(pd.DataFrame(rows))
 
 def render_tabela_par(titulo_ccee, titulo_wbc, df_ccee, df_wbc, aviso_sem_base=None):
-    """Renderiza lado a lado: CCEE (esq) | WBC (dir)."""
     col_l, col_r = st.columns(2)
     with col_l:
         st.markdown(f"**{titulo_ccee}**")
@@ -452,11 +447,6 @@ def render_tabela_par(titulo_ccee, titulo_wbc, df_ccee, df_wbc, aviso_sem_base=N
         )
 
 def render_reconciliacao(titulo, df_ccee, df_wbc):
-    """
-    Exibe tabela de reconciliação NET CCEE vs NET WBC.
-    Aponta perfis onde o NET diverge e possíveis causas.
-    """
-    # Remove linha TOTAL para comparação
     df_c = df_ccee[df_ccee['PERFIL'] != 'TOTAL'].copy()
     df_w = df_wbc[df_wbc['PERFIL'] != 'TOTAL'].copy()
 
@@ -470,7 +460,6 @@ def render_reconciliacao(titulo, df_ccee, df_wbc):
         lambda d: "✅ OK" if abs(d) < 1e-5 else "⚠️ Verificar"
     )
 
-    # Possíveis causas para diferenças
     causas = []
     for _, row in df_rec[df_rec['STATUS'] != "✅ OK"].iterrows():
         perfil = row['PERFIL']
@@ -506,6 +495,119 @@ def render_reconciliacao(titulo, df_ccee, df_wbc):
             )
         else:
             st.success("Todos os perfis estão reconciliados (NET CCEE = NET WBC).")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NOVA FUNÇÃO: BOLETAS QUE PRECISAM SER VERIFICADAS
+# ─────────────────────────────────────────────────────────────────────────────
+def render_boletas_divergentes(titulo, perfis, df_wbc_base, db_keys, filtro_sub="Todos"):
+    """
+    Exibe boletas que contribuem para NET ≠ 0 por perfil.
+    Compara cada boleta WBC com o esperado na CCEE e aponta o que verificar.
+    """
+    with st.expander(f"📋 Boletas para Verificar — {titulo}", expanded=False):
+        resultados = []
+
+        for perfil in perfis:
+            # NET CCEE para este perfil
+            comp_ccee = calcular_mwmedio_em_bases(perfil, 'SIGLA_PERFIL_COMPRADOR', filtro_sub, db_keys)
+            vend_ccee = calcular_mwmedio_em_bases(perfil, 'SIGLA_PERFIL_VENDEDOR',  filtro_sub, db_keys)
+            net_ccee  = round(comp_ccee - vend_ccee, 6)
+
+            # Boletas WBC onde este perfil aparece como comprador ou vendedor
+            mask_c = df_wbc_base['Comprador'].astype(str).str.strip().str.upper() == perfil.upper()
+            mask_v = df_wbc_base['Vendedor'].astype(str).str.strip().str.upper()  == perfil.upper()
+            df_perfil = df_wbc_base[mask_c | mask_v].copy()
+
+            # Sem boletas e sem divergência → ignora
+            if df_perfil.empty and abs(net_ccee) < 1e-5:
+                continue
+
+            # Itera pelas boletas do perfil
+            for _, row in df_perfil.iterrows():
+                vol  = pd.to_numeric(row.get('Volume MWm', 0), errors='coerce') or 0.0
+                lado = 'Comprador' if str(row.get('Comprador', '')).strip().upper() == perfil.upper() else 'Vendedor'
+                cliq = row.get('Contrato CliqCCEE', '-')
+                val_v = row.get('Validação Volume', '-')
+                check_mod = row.get('Check Modulação', '-')
+                check_min = row.get('Check Lim Min', '-')
+                check_max = row.get('Check Lim Max', '-')
+
+                # Define status da boleta
+                motivos = []
+                if cliq in ['Verificar', '-', '', None]:
+                    motivos.append("Sem Cliq CCEE")
+                if val_v == 'VERIFICAR':
+                    motivos.append("Volume divergente")
+                if check_mod == 'Verificar':
+                    motivos.append("Modulação divergente")
+                if check_min == 'Verificar':
+                    motivos.append("Lim Min divergente")
+                if check_max == 'Verificar':
+                    motivos.append("Lim Max divergente")
+
+                status = f"⚠️ {' | '.join(motivos)}" if motivos else "✅ OK"
+
+                resultados.append({
+                    'Perfil':            perfil,
+                    'Boleta':            row.iloc[0],
+                    'Operacao':          row.get('Operacao', '-'),
+                    'Lado no Perfil':    lado,
+                    'Contraparte':       row.get('Contraparte', '-'),
+                    'Submercado':        row.get('Submercado', '-'),
+                    'Volume MWm (WBC)':  round(vol, 6),
+                    'Contrato CliqCCEE': cliq,
+                    'Validação Volume':  val_v,
+                    'Check Modulação':   check_mod,
+                    'NET CCEE Perfil':   net_ccee,
+                    'Status':            status,
+                })
+
+            # Perfil com volume CCEE mas sem nenhuma boleta WBC
+            if df_perfil.empty and abs(net_ccee) > 1e-5:
+                resultados.append({
+                    'Perfil':            perfil,
+                    'Boleta':            '—',
+                    'Operacao':          '—',
+                    'Lado no Perfil':    '—',
+                    'Contraparte':       '—',
+                    'Submercado':        '—',
+                    'Volume MWm (WBC)':  0.0,
+                    'Contrato CliqCCEE': '—',
+                    'Validação Volume':  '—',
+                    'Check Modulação':   '—',
+                    'NET CCEE Perfil':   net_ccee,
+                    'Status':            '⚠️ Sem boleta WBC correspondente',
+                })
+
+        if not resultados:
+            st.success("Nenhuma boleta para verificar.")
+            return
+
+        df_res = pd.DataFrame(resultados)
+        df_verificar = df_res[df_res['Status'] != '✅ OK'].reset_index(drop=True)
+        df_ok        = df_res[df_res['Status'] == '✅ OK'].reset_index(drop=True)
+
+        col_cfg = {
+            'Volume MWm (WBC)': st.column_config.NumberColumn(format="%.6f"),
+            'NET CCEE Perfil':  st.column_config.NumberColumn(format="%.6f"),
+        }
+
+        if df_verificar.empty:
+            st.success("Todas as boletas estão OK.")
+        else:
+            st.warning(f"{len(df_verificar)} boleta(s) requerem verificação.")
+            st.dataframe(
+                df_verificar.style.apply(
+                    lambda r: ['background-color: #fdecea'] * len(r), axis=1
+                ),
+                use_container_width=True,
+                hide_index=True,
+                column_config=col_cfg,
+            )
+
+        if not df_ok.empty:
+            with st.expander("Ver boletas OK", expanded=False):
+                st.dataframe(df_ok, use_container_width=True, hide_index=True, column_config=col_cfg)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 7. PROCESSAMENTO DA TABELA
@@ -909,6 +1011,11 @@ if st.session_state['df_bruto'] is not None:
                 aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
             )
             render_reconciliacao("BISMUT", df_bismut_ccee_tab, df_bismut_wbc_tab)
+            render_boletas_divergentes(
+                "BISMUT", PERFIS_BISMUT,
+                df_wbc_para_parte(PARTE_BISMUT_WBC.upper()),
+                ['db_bismut'], filtro_sub_bismut
+            )
 
             # ─────────────────────────────────────────────────────────────────
             # BLOCO MATRIX
@@ -954,9 +1061,14 @@ if st.session_state['df_bruto'] is not None:
                 aviso_sem_base="Nenhuma base Cliq Matrix/CCEAR/CBR carregada." if not bases_matrix_ok else None
             )
             render_reconciliacao("MATRIX", df_matrix_ccee_tab, df_matrix_wbc_tab)
+            render_boletas_divergentes(
+                "MATRIX", PERFIS_MATRIX,
+                df_wbc_para_parte(PARTE_MATRIX_WBC.upper()),
+                DBS_MATRIX, filtro_sub_matrix
+            )
 
             # ─────────────────────────────────────────────────────────────────
-            # BLOCO GET ENERGY TRADING  (base: Bismut)
+            # BLOCO GET ENERGY TRADING
             # ─────────────────────────────────────────────────────────────────
             st.write("### 📊 Tabela — GET ENERGY TRADING CCEE  |  GET ENERGY TRADING WBC")
 
@@ -973,7 +1085,7 @@ if st.session_state['df_bruto'] is not None:
                 "GET ENERGY TRADING I1",
                 "GET ENERGY TRADING CQ5",
             ]
-            PARTE_GET_WBC = "GET ENERGY TRADING"   # ajuste se o nome exato da Parte for diferente
+            PARTE_GET_WBC = "GET ENERGY TRADING"
 
             df_get_ccee_tab = build_ccee_tabela(PERFIS_GET, ['db_bismut'], filtro_sub_get)
             df_get_wbc_tab  = build_wbc_tabela(PERFIS_GET, df_wbc_para_parte(PARTE_GET_WBC.upper()))
@@ -984,9 +1096,14 @@ if st.session_state['df_bruto'] is not None:
                 aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
             )
             render_reconciliacao("GET ENERGY TRADING", df_get_ccee_tab, df_get_wbc_tab)
+            render_boletas_divergentes(
+                "GET ENERGY TRADING", PERFIS_GET,
+                df_wbc_para_parte(PARTE_GET_WBC.upper()),
+                ['db_bismut'], filtro_sub_get
+            )
 
             # ─────────────────────────────────────────────────────────────────
-            # BLOCO CINERGY  (base: Bismut)
+            # BLOCO CINERGY
             # ─────────────────────────────────────────────────────────────────
             st.write("### 📊 Tabela — CINERGY CCEE  |  CINERGY WBC")
 
@@ -1007,7 +1124,7 @@ if st.session_state['df_bruto'] is not None:
                 "CINERGY COM I0 2",
                 "CINERGY COM I8 2",
             ]
-            PARTE_CINERGY_WBC = "CINERGY COM"   # ajuste conforme nome exato na planilha
+            PARTE_CINERGY_WBC = "CINERGY COM"
 
             df_cinergy_ccee_tab = build_ccee_tabela(PERFIS_CINERGY, ['db_bismut'], filtro_sub_cinergy)
             df_cinergy_wbc_tab  = build_wbc_tabela(PERFIS_CINERGY, df_wbc_para_parte(PARTE_CINERGY_WBC.upper()))
@@ -1018,9 +1135,14 @@ if st.session_state['df_bruto'] is not None:
                 aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
             )
             render_reconciliacao("CINERGY", df_cinergy_ccee_tab, df_cinergy_wbc_tab)
+            render_boletas_divergentes(
+                "CINERGY", PERFIS_CINERGY,
+                df_wbc_para_parte(PARTE_CINERGY_WBC.upper()),
+                ['db_bismut'], filtro_sub_cinergy
+            )
 
             # ─────────────────────────────────────────────────────────────────
-            # BLOCO MTX CAMANDUCAIA  (base: Bismut)
+            # BLOCO MTX CAMANDUCAIA
             # ─────────────────────────────────────────────────────────────────
             st.write("### 📊 Tabela — MTX CAMANDUCAIA CCEE  |  MTX CAMANDUCAIA WBC")
 
@@ -1033,7 +1155,7 @@ if st.session_state['df_bruto'] is not None:
             PERFIS_MTX = [
                 "MTX CAMANDUCAIA",
             ]
-            PARTE_MTX_WBC = "MTX CAMANDUCAIA"   # ajuste conforme nome exato na planilha
+            PARTE_MTX_WBC = "MTX CAMANDUCAIA"
 
             df_mtx_ccee_tab = build_ccee_tabela(PERFIS_MTX, ['db_bismut'], filtro_sub_mtx)
             df_mtx_wbc_tab  = build_wbc_tabela(PERFIS_MTX, df_wbc_para_parte(PARTE_MTX_WBC.upper()))
@@ -1044,9 +1166,14 @@ if st.session_state['df_bruto'] is not None:
                 aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
             )
             render_reconciliacao("MTX CAMANDUCAIA", df_mtx_ccee_tab, df_mtx_wbc_tab)
+            render_boletas_divergentes(
+                "MTX CAMANDUCAIA", PERFIS_MTX,
+                df_wbc_para_parte(PARTE_MTX_WBC.upper()),
+                ['db_bismut'], filtro_sub_mtx
+            )
 
             # ─────────────────────────────────────────────────────────────────
-            # BLOCO ARGENTUM  (base: Bismut)
+            # BLOCO ARGENTUM
             # ─────────────────────────────────────────────────────────────────
             st.write("### 📊 Tabela — ARGENTUM CCEE  |  ARGENTUM WBC")
 
@@ -1063,7 +1190,7 @@ if st.session_state['df_bruto'] is not None:
                 "ARGENTUM COM I0",
                 "ARGENTUM COM I8",
             ]
-            PARTE_ARGENTUM_WBC = "ARGENTUM COM"   # ajuste conforme nome exato na planilha
+            PARTE_ARGENTUM_WBC = "ARGENTUM COM"
 
             df_argentum_ccee_tab = build_ccee_tabela(PERFIS_ARGENTUM, ['db_bismut'], filtro_sub_argentum)
             df_argentum_wbc_tab  = build_wbc_tabela(PERFIS_ARGENTUM, df_wbc_para_parte(PARTE_ARGENTUM_WBC.upper()))
@@ -1074,6 +1201,11 @@ if st.session_state['df_bruto'] is not None:
                 aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
             )
             render_reconciliacao("ARGENTUM", df_argentum_ccee_tab, df_argentum_wbc_tab)
+            render_boletas_divergentes(
+                "ARGENTUM", PERFIS_ARGENTUM,
+                df_wbc_para_parte(PARTE_ARGENTUM_WBC.upper()),
+                ['db_bismut'], filtro_sub_argentum
+            )
 
         else:
             st.warning("Sem dados para este período.")
