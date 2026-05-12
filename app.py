@@ -626,7 +626,7 @@ if st.session_state['df_bruto'] is not None:
             )
 
             df_conferencia['Montante MWh'] = (
-                pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[17]]), errors='coerce')
+                pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[20]]), errors='coerce')
                 .fillna(0).round(3)
             )
             v_mwh = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[20]]), errors='coerce')
