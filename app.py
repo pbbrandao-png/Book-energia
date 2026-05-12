@@ -102,9 +102,6 @@ def carregar_csv_cliq(arquivo):
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ZIP BROWSER INLINE
-# Renderiza navegador de ZIP diretamente num container (sidebar ou main).
-# Retorna um BytesIO com .name e .size quando o usuário selecionar um arquivo,
-# ou None enquanto nenhum arquivo estiver selecionado.
 # ─────────────────────────────────────────────────────────────────────────────
 EXTS_PLANILHA = ('.xlsx', '.xlsm', '.csv')
 
@@ -127,21 +124,12 @@ def _listar_zip(zf, pasta_atual):
 
 
 def zip_browser_inline(zip_file_obj, state_prefix, container):
-    """
-    Renderiza o navegador de ZIP dentro de `container` (st.sidebar ou st).
-    - zip_file_obj : objeto retornado pelo file_uploader (já lido)
-    - state_prefix : prefixo único no session_state para este uploader
-    - container    : onde renderizar (st.sidebar ou st)
-
-    Retorna BytesIO do arquivo selecionado, ou None.
-    """
     zip_id = (zip_file_obj.name, zip_file_obj.size)
     key_id    = f"{state_prefix}_zip_id"
     key_pasta = f"{state_prefix}_zip_pasta"
     key_sel   = f"{state_prefix}_zip_selected"
     key_bytes = f"{state_prefix}_zip_bytes"
 
-    # Reinicia navegação se o zip mudou
     if st.session_state.get(key_id) != zip_id:
         st.session_state[key_id]    = zip_id
         st.session_state[key_pasta] = ''
@@ -152,7 +140,6 @@ def zip_browser_inline(zip_file_obj, state_prefix, container):
     pasta_atual = st.session_state.get(key_pasta, '')
     subpastas, arquivos = _listar_zip(zf, pasta_atual)
 
-    # Cabeçalho de navegação
     if pasta_atual:
         partes = pasta_atual.rstrip('/').split('/')
         pasta_pai = '/'.join(partes[:-1])
@@ -166,7 +153,6 @@ def zip_browser_inline(zip_file_obj, state_prefix, container):
     else:
         container.caption(f"📂 raiz de `{zip_file_obj.name}`")
 
-    # Pastas
     for pasta in subpastas:
         nome_exib = pasta[len(pasta_atual):].strip('/')
         if container.button(f"📁 {nome_exib}", key=f"{state_prefix}_pasta_{pasta}"):
@@ -174,7 +160,6 @@ def zip_browser_inline(zip_file_obj, state_prefix, container):
             st.session_state[key_sel]   = None
             st.rerun()
 
-    # Arquivos de planilha
     if arquivos:
         for arq_path in arquivos:
             nome_exib  = arq_path[len(pasta_atual):]
@@ -186,7 +171,6 @@ def zip_browser_inline(zip_file_obj, state_prefix, container):
     elif not subpastas:
         container.info("Nenhuma planilha encontrada nesta pasta.")
 
-    # Retorna BytesIO se houver seleção
     sel = st.session_state.get(key_sel)
     if sel:
         nome_curto = sel.split('/')[-1]
@@ -201,11 +185,6 @@ def zip_browser_inline(zip_file_obj, state_prefix, container):
 
 
 def uploader_com_zip(label, types, key, state_prefix, container):
-    """
-    Substitui file_uploader: aceita xlsx/xlsm/csv/zip.
-    Se o arquivo for ZIP, exibe navegador inline e retorna o arquivo interno
-    selecionado (BytesIO). Caso contrário retorna o arquivo diretamente.
-    """
     tipos_aceitos = list(set(types + ['zip']))
     arq = container.file_uploader(label, type=tipos_aceitos, key=key)
 
@@ -217,6 +196,135 @@ def uploader_com_zip(label, types, key, state_prefix, container):
             return zip_browser_inline(arq, state_prefix, st.sidebar if container is st.sidebar else st)
     else:
         return arq
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ★ NOVO: ZIP MULTI-BASE — um ZIP, quatro seletores de arquivo
+# Permite que o usuário suba um ZIP (ou dois) e atribua cada arquivo interno
+# a uma das quatro bases Cliq (CCEAR, CBR, Matrix, Bismut).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _listar_planilhas_zip(zf):
+    """Retorna lista de todos os caminhos de planilha dentro do ZIP."""
+    return sorted(
+        nome for nome in zf.namelist()
+        if nome.lower().endswith(EXTS_PLANILHA) and not nome.startswith('__MACOSX')
+    )
+
+
+def zip_multi_base_sidebar():
+    """
+    Renderiza na sidebar os uploaders dos dois ZIPs (Matrix/CBR/CCEAR e Bismut)
+    mais os quatro selectboxes de atribuição.
+    Retorna dict {'db_ccear': BytesIO|None, 'db_cbr': ..., 'db_matrix': ..., 'db_bismut': ...}
+    """
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📦 Bases Cliq CCEE")
+    st.sidebar.caption("Suba até dois ZIPs e atribua cada planilha à sua base.")
+
+    resultado = {k: None for k in ['db_ccear', 'db_cbr', 'db_matrix', 'db_bismut']}
+
+    BASES_LABELS = {
+        'db_ccear':  'CCEAR_Q',
+        'db_cbr':    'CBR Mercado',
+        'db_matrix': 'Matrix',
+        'db_bismut': 'Bismut',
+    }
+
+    def _processar_zip(zip_obj, prefix, container):
+        """Lê um ZIP e retorna dict {base_key: BytesIO} conforme seleção do usuário."""
+        parcial = {}
+        zip_id = (zip_obj.name, zip_obj.size)
+        key_id    = f"{prefix}_id"
+        key_bytes = f"{prefix}_bytes"
+
+        if st.session_state.get(key_id) != zip_id:
+            st.session_state[key_id]    = zip_id
+            st.session_state[key_bytes] = zip_obj.read()
+            # Limpa seleções anteriores para este ZIP
+            for base_k in BASES_LABELS:
+                st.session_state.pop(f"{prefix}_sel_{base_k}", None)
+
+        raw_bytes = st.session_state[key_bytes]
+        zf = zipfile.ZipFile(io.BytesIO(raw_bytes))
+        planilhas = _listar_planilhas_zip(zf)
+
+        if not planilhas:
+            container.warning("Nenhuma planilha encontrada no ZIP.")
+            return parcial
+
+        opcoes = ["— não usar —"] + [p.split('/')[-1] + f"  ({p})" for p in planilhas]
+        # mapa nome_exibicao → caminho_interno
+        mapa_opcoes = {opcoes[i+1]: planilhas[i] for i in range(len(planilhas))}
+
+        container.caption(f"📦 `{zip_obj.name}` — {len(planilhas)} planilha(s) encontrada(s)")
+
+        for base_k, base_label in BASES_LABELS.items():
+            sel_key = f"{prefix}_sel_{base_k}"
+            escolha = container.selectbox(
+                f"Arquivo para **{base_label}**",
+                options=opcoes,
+                index=0,
+                key=sel_key,
+            )
+            if escolha != "— não usar —" and escolha in mapa_opcoes:
+                caminho = mapa_opcoes[escolha]
+                data = zf.read(caminho)
+                buf = io.BytesIO(data)
+                buf.name = caminho.split('/')[-1]
+                buf.size = len(data)
+                parcial[base_k] = buf
+
+        return parcial
+
+    # ── ZIP 1 (Matrix / CBR / CCEAR) ──────────────────────────────────────
+    st.sidebar.markdown(f"{status_icon('db_matrix')} **ZIP 1 — Matrix / CBR / CCEAR**")
+    zip1 = st.sidebar.file_uploader(
+        "Subir ZIP (Matrix/CBR/CCEAR)", type=['zip', 'xlsx', 'xlsm', 'csv'],
+        key="up_zip1_cliq"
+    )
+
+    if zip1 is not None:
+        if zip1.name.lower().endswith('.zip'):
+            with st.sidebar.expander("⚙️ Atribuir arquivos — ZIP 1", expanded=True):
+                parcial1 = _processar_zip(zip1, "zip1", st.sidebar)
+            for k, v in parcial1.items():
+                if v is not None:
+                    resultado[k] = v
+        else:
+            # Arquivo direto (não-ZIP): pede para qual base serve
+            base_direta = st.sidebar.selectbox(
+                f"'{zip1.name}' é qual base?",
+                options=list(BASES_LABELS.values()),
+                key="up_zip1_base_direta"
+            )
+            chave_direta = [k for k, v in BASES_LABELS.items() if v == base_direta][0]
+            resultado[chave_direta] = zip1
+
+    # ── ZIP 2 (Bismut ou qualquer outra) ──────────────────────────────────
+    st.sidebar.markdown(f"{status_icon('db_bismut')} **ZIP 2 — Bismut (ou outro)**")
+    zip2 = st.sidebar.file_uploader(
+        "Subir ZIP (Bismut)", type=['zip', 'xlsx', 'xlsm', 'csv'],
+        key="up_zip2_cliq"
+    )
+
+    if zip2 is not None:
+        if zip2.name.lower().endswith('.zip'):
+            with st.sidebar.expander("⚙️ Atribuir arquivos — ZIP 2", expanded=True):
+                parcial2 = _processar_zip(zip2, "zip2", st.sidebar)
+            for k, v in parcial2.items():
+                if v is not None:
+                    resultado[k] = v
+        else:
+            base_direta2 = st.sidebar.selectbox(
+                f"'{zip2.name}' é qual base?",
+                options=list(BASES_LABELS.values()),
+                key="up_zip2_base_direta"
+            )
+            chave_direta2 = [k for k, v in BASES_LABELS.items() if v == base_direta2][0]
+            resultado[chave_direta2] = zip2
+
+    return resultado
 
 
 # 3. REGRAS DE BUSCA CLIQ
@@ -336,13 +444,13 @@ if 'dados_carregados_do_disco' not in st.session_state:
     st.session_state['ajustes_manuais'] = carregar_disco('ajustes_manuais', default={})
     st.session_state['dados_carregados_do_disco'] = True
 
-for chave in ['fid_subido', 'fid_anterior', 'fid_pessoas', 'chave_matrix',
-              'fid_cceal2', 'fid_mapa', 'fid_pendencias']:
+for chave in ['fid_subido', 'fid_anterior', 'fid_pessoas', 'fid_cceal2',
+              'fid_mapa', 'fid_pendencias', 'fid_cliq_multi']:
     if chave not in st.session_state:
         st.session_state[chave] = None
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5. SIDEBAR
+# 5. SIDEBAR — arquivos gerais
 # ─────────────────────────────────────────────────────────────────────────────
 meses_nomes = ["Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho",
                "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
@@ -367,8 +475,6 @@ def status_icon(chave):
     if val is None: return "⬜"
     if isinstance(val, dict) and len(val) == 0: return "⬜"
     return "✅"
-
-# ── Uploaders com suporte nativo a ZIP ───────────────────────────────────────
 
 st.sidebar.markdown(f"{status_icon('df_bruto')} **1. Contratos Aprovados**")
 arquivo_subido = uploader_com_zip(
@@ -400,31 +506,8 @@ arquivo_pendencias = uploader_com_zip(
     key="up_pendencias", state_prefix="zip_pendencias", container=st.sidebar
 )
 
-st.sidebar.subheader("Bases Cliq CCEE")
-
-st.sidebar.markdown(f"{status_icon('db_ccear')} **Cliq CCEAR_Q**")
-arq_ccear = uploader_com_zip(
-    "Substituir arquivo", ['xlsx', 'csv'],
-    key="up_ccear", state_prefix="zip_ccear", container=st.sidebar
-)
-
-st.sidebar.markdown(f"{status_icon('db_cbr')} **Cliq CBR Mercado**")
-arq_cbr = uploader_com_zip(
-    "Substituir arquivo", ['xlsx', 'csv'],
-    key="up_cbr", state_prefix="zip_cbr", container=st.sidebar
-)
-
-st.sidebar.markdown(f"{status_icon('db_matrix')} **Cliq Matrix**")
-arq_cceal1 = uploader_com_zip(
-    "Substituir arquivo", ['xlsx', 'csv'],
-    key="up_matrix", state_prefix="zip_matrix", container=st.sidebar
-)
-
-st.sidebar.markdown(f"{status_icon('db_bismut')} **Cliq Bismut**")
-arq_cceal2 = uploader_com_zip(
-    "Substituir arquivo", ['xlsx', 'csv'],
-    key="up_bismut", state_prefix="zip_bismut", container=st.sidebar
-)
+# ── NOVO: uploader unificado para bases Cliq ─────────────────────────────────
+arquivos_cliq = zip_multi_base_sidebar()   # {'db_ccear': ..., 'db_cbr': ..., 'db_matrix': ..., 'db_bismut': ...}
 
 if st.sidebar.button("🗑️ Limpar todos os arquivos salvos"):
     import shutil
@@ -493,27 +576,16 @@ if get_file_id(arquivo_mapa) != st.session_state.get('fid_mapa'):
         st.session_state['dict_mapa'] = val
         salvar_disco('dict_mapa', val)
 
-if (get_file_id(arq_ccear), get_file_id(arq_cbr), get_file_id(arq_cceal1)) != st.session_state.get('chave_matrix'):
-    st.session_state['chave_matrix'] = (get_file_id(arq_ccear), get_file_id(arq_cbr), get_file_id(arq_cceal1))
-    if arq_ccear:
-        val = carregar_csv_cliq(arq_ccear)
-        st.session_state['db_ccear'] = val
-        salvar_disco('db_ccear', val)
-    if arq_cbr:
-        val = carregar_csv_cliq(arq_cbr)
-        st.session_state['db_cbr'] = val
-        salvar_disco('db_cbr', val)
-    if arq_cceal1:
-        val = carregar_csv_cliq(arq_cceal1)
-        st.session_state['db_matrix'] = val
-        salvar_disco('db_matrix', val)
-
-if get_file_id(arq_cceal2) != st.session_state.get('fid_cceal2'):
-    st.session_state['fid_cceal2'] = get_file_id(arq_cceal2)
-    if arq_cceal2:
-        val = carregar_csv_cliq(arq_cceal2)
-        st.session_state['db_bismut'] = val
-        salvar_disco('db_bismut', val)
+# ── Carregamento das bases Cliq a partir do uploader unificado ───────────────
+fid_cliq_atual = tuple(get_file_id(arquivos_cliq[k]) for k in ['db_ccear', 'db_cbr', 'db_matrix', 'db_bismut'])
+if fid_cliq_atual != st.session_state.get('fid_cliq_multi'):
+    st.session_state['fid_cliq_multi'] = fid_cliq_atual
+    for db_key in ['db_ccear', 'db_cbr', 'db_matrix', 'db_bismut']:
+        arq = arquivos_cliq[db_key]
+        if arq is not None:
+            val = carregar_csv_cliq(arq)
+            st.session_state[db_key] = val
+            salvar_disco(db_key, val)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS COMPARTILHADOS PARA AS TABELAS CCEE/WBC
@@ -567,11 +639,16 @@ def build_ccee_tabela(perfis, db_keys, filtro_sub):
         rows.append({'PERFIL': perfil, 'Comprador': comp, 'Vendedor': vend, 'NET': round(comp - vend, 6)})
     return adicionar_total(pd.DataFrame(rows))
 
+# ★ CORRIGIDO: build_wbc_tabela agora soma TODOS os registros onde o perfil
+#   aparece na coluna Comprador (independente do Vendedor) e vice-versa.
+#   Antes a máscara de Comprador e Vendedor podia ser aplicada ao mesmo campo,
+#   resultando em subcontagem quando os nomes não baterem exatamente.
 def build_wbc_tabela(perfis, df_wbc_base):
     rows = []
     for perfil in perfis:
-        mask_c = df_wbc_base['Comprador'].astype(str).str.strip().str.upper() == perfil.upper()
-        mask_v = df_wbc_base['Vendedor'].astype(str).str.strip().str.upper()  == perfil.upper()
+        perfil_upper = perfil.strip().upper()
+        mask_c = df_wbc_base['Comprador'].astype(str).str.strip().str.upper() == perfil_upper
+        mask_v = df_wbc_base['Vendedor'].astype(str).str.strip().str.upper()  == perfil_upper
         soma_c = round(pd.to_numeric(df_wbc_base.loc[mask_c, 'Volume MWm'], errors='coerce').fillna(0.0).sum(), 6)
         soma_v = round(pd.to_numeric(df_wbc_base.loc[mask_v, 'Volume MWm'], errors='coerce').fillna(0.0).sum(), 6)
         rows.append({'PERFIL': perfil, 'Comprador': soma_c, 'Vendedor': soma_v, 'NET': round(soma_c - soma_v, 6)})
@@ -665,6 +742,38 @@ def tratar_modulacao_pct(valor_raw):
     return round(v, 6)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ★ MAPA DE TIPO ENERGIA: inclui UFV / usinas fotovoltaicas → Incentivada-I5
+# Adicione aqui qualquer outro nome de parte que precise de mapeamento fixo.
+# ─────────────────────────────────────────────────────────────────────────────
+MAPA_TIPO_ENERGIA_PARTE = {
+    # padrão: qualquer parte cujo nome contenha "UFV" → Incentivada-I5
+    # Tratado dinamicamente em resolver_tipo_energia()
+}
+
+def resolver_tipo_energia(tipo_raw, parte_raw):
+    """
+    Retorna o Tipo Energia correto aplicando:
+    1. Mapeamento de abreviações WBC
+    2. Regra especial: partes com 'UFV' no nome → Incentivada-I5
+    """
+    mapa_energia = {
+        'Incentivada-50%':   'Incentivada-I5',
+        'Incentivada-100%':  'Incentivada-I1',
+        'Incentivada-0%':    'Incentivada-I0',
+        'Incentivada-CQ50%': 'Incentivada-CQ5',
+    }
+    tipo = str(tipo_raw).strip()
+    tipo = mapa_energia.get(tipo, tipo)
+
+    # Regra UFV: se o nome da parte contiver "UFV" (ex.: "UFV JACARANDA 1"),
+    # o tipo de energia é sempre Incentivada-I5
+    parte = str(parte_raw).strip().upper()
+    if 'UFV' in parte:
+        return 'Incentivada-I5'
+
+    return tipo
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 7. PROCESSAMENTO DA TABELA
 # ─────────────────────────────────────────────────────────────────────────────
 if st.session_state['df_bruto'] is not None:
@@ -751,16 +860,12 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Parte']        = df_conferencia[col_boleta].map(df_lookup[df_base.columns[62]]).astype(str).str.strip()
             df_conferencia['Razao Social'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[2]]).astype(str).str.strip()
 
-            mapa_energia = {
-                'Incentivada-50%':   'Incentivada-I5',
-                'Incentivada-100%':  'Incentivada-I1',
-                'Incentivada-0%':    'Incentivada-I0',
-                'Incentivada-CQ50%': 'Incentivada-CQ5'
-            }
-            df_conferencia['Tipo Energia'] = (
-                df_conferencia[col_boleta].map(df_lookup[df_base.columns[5]])
-                .astype(str).str.strip().replace(mapa_energia)
-            )
+            # ★ CORRIGIDO: Tipo Energia usa resolver_tipo_energia() que trata UFV → I5
+            tipo_raw_series  = df_conferencia[col_boleta].map(df_lookup[df_base.columns[5]]).astype(str).str.strip()
+            df_conferencia['Tipo Energia'] = [
+                resolver_tipo_energia(tipo_raw_series.iloc[i], df_conferencia['Parte'].iloc[i])
+                for i in range(len(df_conferencia))
+            ]
 
             df_conferencia['Contraparte']      = df_conferencia[col_boleta].map(df_lookup[df_base.columns[6]])
             df_conferencia['CP/LP']            = df_conferencia[col_boleta].map(df_lookup[df_base.columns[12]])
