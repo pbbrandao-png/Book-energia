@@ -199,9 +199,7 @@ def uploader_com_zip(label, types, key, state_prefix, container):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ★ NOVO: ZIP MULTI-BASE — um ZIP, quatro seletores de arquivo
-# Permite que o usuário suba um ZIP (ou dois) e atribua cada arquivo interno
-# a uma das quatro bases Cliq (CCEAR, CBR, Matrix, Bismut).
+# ★ ZIP MULTI-BASE — um ZIP, quatro seletores de arquivo
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _listar_planilhas_zip(zf):
@@ -213,11 +211,6 @@ def _listar_planilhas_zip(zf):
 
 
 def zip_multi_base_sidebar():
-    """
-    Renderiza na sidebar os uploaders dos dois ZIPs (Matrix/CBR/CCEAR e Bismut)
-    mais os quatro selectboxes de atribuição.
-    Retorna dict {'db_ccear': BytesIO|None, 'db_cbr': ..., 'db_matrix': ..., 'db_bismut': ...}
-    """
     st.sidebar.markdown("---")
     st.sidebar.subheader("📦 Bases Cliq CCEE")
     st.sidebar.caption("Suba até dois ZIPs e atribua cada planilha à sua base.")
@@ -232,7 +225,6 @@ def zip_multi_base_sidebar():
     }
 
     def _processar_zip(zip_obj, prefix, container):
-        """Lê um ZIP e retorna dict {base_key: BytesIO} conforme seleção do usuário."""
         parcial = {}
         zip_id = (zip_obj.name, zip_obj.size)
         key_id    = f"{prefix}_id"
@@ -241,7 +233,6 @@ def zip_multi_base_sidebar():
         if st.session_state.get(key_id) != zip_id:
             st.session_state[key_id]    = zip_id
             st.session_state[key_bytes] = zip_obj.read()
-            # Limpa seleções anteriores para este ZIP
             for base_k in BASES_LABELS:
                 st.session_state.pop(f"{prefix}_sel_{base_k}", None)
 
@@ -254,7 +245,6 @@ def zip_multi_base_sidebar():
             return parcial
 
         opcoes = ["— não usar —"] + [p.split('/')[-1] + f"  ({p})" for p in planilhas]
-        # mapa nome_exibicao → caminho_interno
         mapa_opcoes = {opcoes[i+1]: planilhas[i] for i in range(len(planilhas))}
 
         container.caption(f"📦 `{zip_obj.name}` — {len(planilhas)} planilha(s) encontrada(s)")
@@ -292,7 +282,6 @@ def zip_multi_base_sidebar():
                 if v is not None:
                     resultado[k] = v
         else:
-            # Arquivo direto (não-ZIP): pede para qual base serve
             base_direta = st.sidebar.selectbox(
                 f"'{zip1.name}' é qual base?",
                 options=list(BASES_LABELS.values()),
@@ -506,8 +495,8 @@ arquivo_pendencias = uploader_com_zip(
     key="up_pendencias", state_prefix="zip_pendencias", container=st.sidebar
 )
 
-# ── NOVO: uploader unificado para bases Cliq ─────────────────────────────────
-arquivos_cliq = zip_multi_base_sidebar()   # {'db_ccear': ..., 'db_cbr': ..., 'db_matrix': ..., 'db_bismut': ...}
+# ── Uploader unificado para bases Cliq ───────────────────────────────────────
+arquivos_cliq = zip_multi_base_sidebar()
 
 if st.sidebar.button("🗑️ Limpar todos os arquivos salvos"):
     import shutil
@@ -576,7 +565,7 @@ if get_file_id(arquivo_mapa) != st.session_state.get('fid_mapa'):
         st.session_state['dict_mapa'] = val
         salvar_disco('dict_mapa', val)
 
-# ── Carregamento das bases Cliq a partir do uploader unificado ───────────────
+# ── Carregamento das bases Cliq ───────────────────────────────────────────────
 fid_cliq_atual = tuple(get_file_id(arquivos_cliq[k]) for k in ['db_ccear', 'db_cbr', 'db_matrix', 'db_bismut'])
 if fid_cliq_atual != st.session_state.get('fid_cliq_multi'):
     st.session_state['fid_cliq_multi'] = fid_cliq_atual
@@ -639,10 +628,9 @@ def build_ccee_tabela(perfis, db_keys, filtro_sub):
         rows.append({'PERFIL': perfil, 'Comprador': comp, 'Vendedor': vend, 'NET': round(comp - vend, 6)})
     return adicionar_total(pd.DataFrame(rows))
 
-# ★ CORRIGIDO: build_wbc_tabela agora soma TODOS os registros onde o perfil
-#   aparece na coluna Comprador (independente do Vendedor) e vice-versa.
-#   Antes a máscara de Comprador e Vendedor podia ser aplicada ao mesmo campo,
-#   resultando em subcontagem quando os nomes não baterem exatamente.
+# ─────────────────────────────────────────────────────────────────────────────
+# build_wbc_tabela: soma Volume MWm de TODAS as boletas (sem filtro por Parte)
+# ─────────────────────────────────────────────────────────────────────────────
 def build_wbc_tabela(perfis, df_wbc_base):
     rows = []
     for perfil in perfis:
@@ -742,20 +730,9 @@ def tratar_modulacao_pct(valor_raw):
     return round(v, 6)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ★ MAPA DE TIPO ENERGIA: inclui UFV / usinas fotovoltaicas → Incentivada-I5
-# Adicione aqui qualquer outro nome de parte que precise de mapeamento fixo.
+# MAPA DE TIPO ENERGIA
 # ─────────────────────────────────────────────────────────────────────────────
-MAPA_TIPO_ENERGIA_PARTE = {
-    # padrão: qualquer parte cujo nome contenha "UFV" → Incentivada-I5
-    # Tratado dinamicamente em resolver_tipo_energia()
-}
-
 def resolver_tipo_energia(tipo_raw, parte_raw):
-    """
-    Retorna o Tipo Energia correto aplicando:
-    1. Mapeamento de abreviações WBC
-    2. Regra especial: partes com 'UFV' no nome → Incentivada-I5
-    """
     mapa_energia = {
         'Incentivada-50%':   'Incentivada-I5',
         'Incentivada-100%':  'Incentivada-I1',
@@ -765,8 +742,6 @@ def resolver_tipo_energia(tipo_raw, parte_raw):
     tipo = str(tipo_raw).strip()
     tipo = mapa_energia.get(tipo, tipo)
 
-    # Regra UFV: se o nome da parte contiver "UFV" (ex.: "UFV JACARANDA 1"),
-    # o tipo de energia é sempre Incentivada-I5
     parte = str(parte_raw).strip().upper()
     if 'UFV' in parte:
         return 'Incentivada-I5'
@@ -860,7 +835,6 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Parte']        = df_conferencia[col_boleta].map(df_lookup[df_base.columns[62]]).astype(str).str.strip()
             df_conferencia['Razao Social'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[2]]).astype(str).str.strip()
 
-            # ★ CORRIGIDO: Tipo Energia usa resolver_tipo_energia() que trata UFV → I5
             tipo_raw_series  = df_conferencia[col_boleta].map(df_lookup[df_base.columns[5]]).astype(str).str.strip()
             df_conferencia['Tipo Energia'] = [
                 resolver_tipo_energia(tipo_raw_series.iloc[i], df_conferencia['Parte'].iloc[i])
@@ -1138,13 +1112,12 @@ if st.session_state['df_bruto'] is not None:
                 column_config=col_config_main,
             )
 
-            # ═════════════════════════════════════════════════════════════════
-            # HELPER: filtra df_conferencia por Parte e aplica flags de zeragem
-            # ═════════════════════════════════════════════════════════════════
-            def df_wbc_para_parte(nome_parte_upper):
-                df_w = df_conferencia[
-                    df_conferencia['Parte'].astype(str).str.strip().str.upper() == nome_parte_upper
-                ].copy()
+            # ─────────────────────────────────────────────────────────────────
+            # HELPER: aplica flags de zeragem sobre df_conferencia completo
+            # (sem filtro por Parte — usado pelas tabelas WBC)
+            # ─────────────────────────────────────────────────────────────────
+            def df_wbc_completo():
+                df_w = df_conferencia.copy()
                 if zerar_intra:
                     mask_zi = df_w['Vendedor'].str.lower().str.strip() == df_w['Comprador'].str.lower().str.strip()
                     df_w.loc[mask_zi, 'Volume MWm'] = 0.0
@@ -1154,6 +1127,9 @@ if st.session_state['df_bruto'] is not None:
                                ~df_w['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False))
                     df_w.loc[mask_zp & mask_zc, 'Volume MWm'] = 0.0
                 return df_w
+
+            # Gera o df base uma única vez para todas as tabelas WBC
+            df_wbc_base = df_wbc_completo()
 
             # ─────────────────────────────────────────────────────────────────
             # BLOCO BISMUT
@@ -1184,13 +1160,12 @@ if st.session_state['df_bruto'] is not None:
                 "BISMUT COM I1",
                 "BISMUT COM",
             ]
-            PARTE_BISMUT_WBC = "BISMUT COMERCIALIZADORA DE ENERGIA S/A"
 
             df_bismut_ccee_tab = build_ccee_tabela(PERFIS_BISMUT, ['db_bismut'], filtro_sub_bismut)
-            df_bismut_wbc_tab  = build_wbc_tabela(PERFIS_BISMUT, df_wbc_para_parte(PARTE_BISMUT_WBC.upper()))
+            df_bismut_wbc_tab  = build_wbc_tabela(PERFIS_BISMUT, df_wbc_base)
 
             render_tabela_par(
-                "BISMUT CCEE", f"BISMUT WBC — {PARTE_BISMUT_WBC}",
+                "BISMUT CCEE", "BISMUT WBC",
                 df_bismut_ccee_tab, df_bismut_wbc_tab,
                 aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
             )
@@ -1228,14 +1203,13 @@ if st.session_state['df_bruto'] is not None:
                 "MATRIX COM I0",
                 "MATRIX COM CQ5",
             ]
-            PARTE_MATRIX_WBC = "MATRIX COMERCIALIZADORA DE ENERGIA ELETRICA S/A"
 
             df_matrix_ccee_tab = build_ccee_tabela(PERFIS_MATRIX, DBS_MATRIX, filtro_sub_matrix)
-            df_matrix_wbc_tab  = build_wbc_tabela(PERFIS_MATRIX, df_wbc_para_parte(PARTE_MATRIX_WBC.upper()))
+            df_matrix_wbc_tab  = build_wbc_tabela(PERFIS_MATRIX, df_wbc_base)
 
             bases_matrix_ok = any(st.session_state.get(k) is not None for k in DBS_MATRIX)
             render_tabela_par(
-                "MATRIX CCEE", f"MATRIX WBC — {PARTE_MATRIX_WBC}",
+                "MATRIX CCEE", "MATRIX WBC",
                 df_matrix_ccee_tab, df_matrix_wbc_tab,
                 aviso_sem_base="Nenhuma base Cliq Matrix/CCEAR/CBR carregada." if not bases_matrix_ok else None
             )
@@ -1259,13 +1233,12 @@ if st.session_state['df_bruto'] is not None:
                 "GET ENERGY TRADING I1",
                 "GET ENERGY TRADING CQ5",
             ]
-            PARTE_GET_WBC = "GET ENERGY TRADING"
 
             df_get_ccee_tab = build_ccee_tabela(PERFIS_GET, ['db_bismut'], filtro_sub_get)
-            df_get_wbc_tab  = build_wbc_tabela(PERFIS_GET, df_wbc_para_parte(PARTE_GET_WBC.upper()))
+            df_get_wbc_tab  = build_wbc_tabela(PERFIS_GET, df_wbc_base)
 
             render_tabela_par(
-                "GET ENERGY TRADING CCEE", f"GET ENERGY TRADING WBC — {PARTE_GET_WBC}",
+                "GET ENERGY TRADING CCEE", "GET ENERGY TRADING WBC",
                 df_get_ccee_tab, df_get_wbc_tab,
                 aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
             )
@@ -1293,13 +1266,12 @@ if st.session_state['df_bruto'] is not None:
                 "CINERGY COM I0 2",
                 "CINERGY COM I8 2",
             ]
-            PARTE_CINERGY_WBC = "CINERGY COM"
 
             df_cinergy_ccee_tab = build_ccee_tabela(PERFIS_CINERGY, ['db_bismut'], filtro_sub_cinergy)
-            df_cinergy_wbc_tab  = build_wbc_tabela(PERFIS_CINERGY, df_wbc_para_parte(PARTE_CINERGY_WBC.upper()))
+            df_cinergy_wbc_tab  = build_wbc_tabela(PERFIS_CINERGY, df_wbc_base)
 
             render_tabela_par(
-                "CINERGY CCEE", f"CINERGY WBC — {PARTE_CINERGY_WBC}",
+                "CINERGY CCEE", "CINERGY WBC",
                 df_cinergy_ccee_tab, df_cinergy_wbc_tab,
                 aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
             )
@@ -1319,13 +1291,12 @@ if st.session_state['df_bruto'] is not None:
             PERFIS_MTX = [
                 "MTX CAMANDUCAIA",
             ]
-            PARTE_MTX_WBC = "MTX CAMANDUCAIA"
 
             df_mtx_ccee_tab = build_ccee_tabela(PERFIS_MTX, ['db_bismut'], filtro_sub_mtx)
-            df_mtx_wbc_tab  = build_wbc_tabela(PERFIS_MTX, df_wbc_para_parte(PARTE_MTX_WBC.upper()))
+            df_mtx_wbc_tab  = build_wbc_tabela(PERFIS_MTX, df_wbc_base)
 
             render_tabela_par(
-                "MTX CAMANDUCAIA CCEE", f"MTX CAMANDUCAIA WBC — {PARTE_MTX_WBC}",
+                "MTX CAMANDUCAIA CCEE", "MTX CAMANDUCAIA WBC",
                 df_mtx_ccee_tab, df_mtx_wbc_tab,
                 aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
             )
@@ -1349,13 +1320,12 @@ if st.session_state['df_bruto'] is not None:
                 "ARGENTUM COM I0",
                 "ARGENTUM COM I8",
             ]
-            PARTE_ARGENTUM_WBC = "ARGENTUM COM"
 
             df_argentum_ccee_tab = build_ccee_tabela(PERFIS_ARGENTUM, ['db_bismut'], filtro_sub_argentum)
-            df_argentum_wbc_tab  = build_wbc_tabela(PERFIS_ARGENTUM, df_wbc_para_parte(PARTE_ARGENTUM_WBC.upper()))
+            df_argentum_wbc_tab  = build_wbc_tabela(PERFIS_ARGENTUM, df_wbc_base)
 
             render_tabela_par(
-                "ARGENTUM CCEE", f"ARGENTUM WBC — {PARTE_ARGENTUM_WBC}",
+                "ARGENTUM CCEE", "ARGENTUM WBC",
                 df_argentum_ccee_tab, df_argentum_wbc_tab,
                 aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
             )
