@@ -508,6 +508,18 @@ def render_reconciliacao(titulo, df_ccee, df_wbc):
             st.success("Todos os perfis estão reconciliados (NET CCEE = NET WBC).")
 
 # ─────────────────────────────────────────────────────────────────────────────
+# FUNÇÃO AUXILIAR: classifica Varejista com base no Comprador
+# ─────────────────────────────────────────────────────────────────────────────
+def classificar_varejista(comprador):
+    """Retorna 'Sim' se o comprador começar com MATRIX VAR ou BISMUT VAR, caso contrário 'Não'."""
+    if pd.isna(comprador) or str(comprador).strip() in ['-', '']:
+        return "Não"
+    comp_upper = str(comprador).strip().upper()
+    if comp_upper.startswith("MATRIX VAR") or comp_upper.startswith("BISMUT VAR"):
+        return "Sim"
+    return "Não"
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 7. PROCESSAMENTO DA TABELA
 # ─────────────────────────────────────────────────────────────────────────────
 if st.session_state['df_bruto'] is not None:
@@ -735,6 +747,10 @@ if st.session_state['df_bruto'] is not None:
                 .map(st.session_state['dict_pendencias']).fillna(0.0)
             )
 
+            # ── COLUNA VAREJISTA ─────────────────────────────────────────────
+            # "Sim" se o Comprador começar com "MATRIX VAR" ou "BISMUT VAR"
+            df_conferencia['Varejista'] = df_conferencia['Comprador'].apply(classificar_varejista)
+
             # --- FILTROS ---
             st.write("### Filtros")
             f1, f2, f3, f4, f5 = st.columns([1.5, 1.5, 1.5, 1.5, 1.5])
@@ -750,14 +766,23 @@ if st.session_state['df_bruto'] is not None:
             ))
             check_mod_f = f5.selectbox("Check Modulação / Limites", ["Todos"] + todas_opts_mod)
 
+            # Linha de filtros adicionais: Contraparte + Varejista
+            fa1, fa2 = st.columns([3, 1])
+
             opcoes_contraparte = sorted(
                 [str(x) for x in df_conferencia['Contraparte'].dropna().unique() if str(x).strip() != ""]
             )
-            contraparte_f = st.multiselect(
+            contraparte_f = fa1.multiselect(
                 "Contraparte (selecione uma ou mais — vazio = todas)",
                 options=opcoes_contraparte,
                 default=[],
                 placeholder="Todas as contrapartes"
+            )
+
+            varejista_f = fa2.selectbox(
+                "Varejista",
+                options=["Todos", "Sim", "Não"],
+                key="filtro_varejista"
             )
 
             f6, f7, f8 = st.columns([1.5, 1.5, 1.5])
@@ -779,6 +804,8 @@ if st.session_state['df_bruto'] is not None:
                 df_final = df_final[mask_mod]
             if contraparte_f:
                 df_final = df_final[df_final['Contraparte'].astype(str).isin(contraparte_f)]
+            if varejista_f != "Todos":
+                df_final = df_final[df_final['Varejista'] == varejista_f]
 
             if zerar_intra:
                 mask_i = df_final['Vendedor'].str.lower().str.strip() == df_final['Comprador'].str.lower().str.strip()
@@ -828,7 +855,8 @@ if st.session_state['df_bruto'] is not None:
                 'Modulacao WBC', 'Modulação CCEE', 'Check Modulação',
                 '% Modulacao Min', 'Lim Min CCEE', 'Check Lim Min',
                 '% Modulacao Max', 'Lim Max CCEE', 'Check Lim Max',
-                'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 'Contrato CliqCCEE',
+                'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 'Varejista',
+                'Contrato CliqCCEE',
                 'Status do Contrato', 'SITUAÇÃO PGTO', 'Volume BOOK', 'Volume CliqCCEE',
                 'Validação Volume', 'Situacao ERP', 'Razao Social', 'Pendência Financeira', 'Editado'
             ]
@@ -849,6 +877,7 @@ if st.session_state['df_bruto'] is not None:
                     "Lim Min CCEE":         st.column_config.NumberColumn(format="%.6f"),
                     "Lim Max CCEE":         st.column_config.NumberColumn(format="%.6f"),
                     "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f"),
+                    "Varejista":            st.column_config.TextColumn("Varejista"),
                 }
             )
 
