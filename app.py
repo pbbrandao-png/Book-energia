@@ -3,6 +3,8 @@ import pandas as pd
 import re
 import os
 import pickle
+import zipfile
+import io
 from datetime import datetime
 
 # 1. CONFIGURAÇÃO DA PÁGINA
@@ -97,6 +99,125 @@ def carregar_csv_cliq(arquivo):
         return None
     except Exception:
         return None
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ZIP BROWSER INLINE
+# Renderiza navegador de ZIP diretamente num container (sidebar ou main).
+# Retorna um BytesIO com .name e .size quando o usuário selecionar um arquivo,
+# ou None enquanto nenhum arquivo estiver selecionado.
+# ─────────────────────────────────────────────────────────────────────────────
+EXTS_PLANILHA = ('.xlsx', '.xlsm', '.csv')
+
+def _listar_zip(zf, pasta_atual):
+    subpastas = set()
+    arquivos  = []
+    for nome in zf.namelist():
+        if not nome.startswith(pasta_atual):
+            continue
+        resto = nome[len(pasta_atual):]
+        if not resto:
+            continue
+        partes = resto.split('/')
+        if len(partes) == 1:
+            if partes[0].lower().endswith(EXTS_PLANILHA):
+                arquivos.append(nome)
+        else:
+            subpastas.add(pasta_atual + partes[0] + '/')
+    return sorted(subpastas), sorted(arquivos)
+
+
+def zip_browser_inline(zip_file_obj, state_prefix, container):
+    """
+    Renderiza o navegador de ZIP dentro de `container` (st.sidebar ou st).
+    - zip_file_obj : objeto retornado pelo file_uploader (já lido)
+    - state_prefix : prefixo único no session_state para este uploader
+    - container    : onde renderizar (st.sidebar ou st)
+
+    Retorna BytesIO do arquivo selecionado, ou None.
+    """
+    zip_id = (zip_file_obj.name, zip_file_obj.size)
+    key_id    = f"{state_prefix}_zip_id"
+    key_pasta = f"{state_prefix}_zip_pasta"
+    key_sel   = f"{state_prefix}_zip_selected"
+    key_bytes = f"{state_prefix}_zip_bytes"
+
+    # Reinicia navegação se o zip mudou
+    if st.session_state.get(key_id) != zip_id:
+        st.session_state[key_id]    = zip_id
+        st.session_state[key_pasta] = ''
+        st.session_state[key_sel]   = None
+        st.session_state[key_bytes] = zip_file_obj.read()
+
+    zf = zipfile.ZipFile(io.BytesIO(st.session_state[key_bytes]))
+    pasta_atual = st.session_state.get(key_pasta, '')
+    subpastas, arquivos = _listar_zip(zf, pasta_atual)
+
+    # Cabeçalho de navegação
+    if pasta_atual:
+        partes = pasta_atual.rstrip('/').split('/')
+        pasta_pai = '/'.join(partes[:-1])
+        if pasta_pai:
+            pasta_pai += '/'
+        container.caption(f"📂 `/{pasta_atual}`")
+        if container.button("⬆️ Voltar", key=f"{state_prefix}_voltar"):
+            st.session_state[key_pasta] = pasta_pai
+            st.session_state[key_sel]   = None
+            st.rerun()
+    else:
+        container.caption(f"📂 raiz de `{zip_file_obj.name}`")
+
+    # Pastas
+    for pasta in subpastas:
+        nome_exib = pasta[len(pasta_atual):].strip('/')
+        if container.button(f"📁 {nome_exib}", key=f"{state_prefix}_pasta_{pasta}"):
+            st.session_state[key_pasta] = pasta
+            st.session_state[key_sel]   = None
+            st.rerun()
+
+    # Arquivos de planilha
+    if arquivos:
+        for arq_path in arquivos:
+            nome_exib  = arq_path[len(pasta_atual):]
+            selecionado = st.session_state.get(key_sel) == arq_path
+            label = f"{'✅' if selecionado else '📄'} {nome_exib}"
+            if container.button(label, key=f"{state_prefix}_arq_{arq_path}"):
+                st.session_state[key_sel] = arq_path
+                st.rerun()
+    elif not subpastas:
+        container.info("Nenhuma planilha encontrada nesta pasta.")
+
+    # Retorna BytesIO se houver seleção
+    sel = st.session_state.get(key_sel)
+    if sel:
+        nome_curto = sel.split('/')[-1]
+        container.success(f"✅ Selecionado: **{nome_curto}**")
+        data = zf.read(sel)
+        buf  = io.BytesIO(data)
+        buf.name = nome_curto
+        buf.size = len(data)
+        return buf
+
+    return None
+
+
+def uploader_com_zip(label, types, key, state_prefix, container):
+    """
+    Substitui file_uploader: aceita xlsx/xlsm/csv/zip.
+    Se o arquivo for ZIP, exibe navegador inline e retorna o arquivo interno
+    selecionado (BytesIO). Caso contrário retorna o arquivo diretamente.
+    """
+    tipos_aceitos = list(set(types + ['zip']))
+    arq = container.file_uploader(label, type=tipos_aceitos, key=key)
+
+    if arq is None:
+        return None
+
+    if arq.name.lower().endswith('.zip'):
+        with container.expander("📦 Navegar dentro do ZIP", expanded=True):
+            return zip_browser_inline(arq, state_prefix, st.sidebar if container is st.sidebar else st)
+    else:
+        return arq
+
 
 # 3. REGRAS DE BUSCA CLIQ
 COLUNAS_CLIQ = {
@@ -229,7 +350,6 @@ anos = [str(a) for a in range(2024, 2031)]
 
 st.sidebar.title("Configurações")
 
-# ── FIX: inicializa índices apenas na primeira execução ──────────────────────
 if '_idx_mes' not in st.session_state:
     st.session_state['_idx_mes'] = datetime.now().month - 1
 if '_idx_ano' not in st.session_state:
@@ -237,7 +357,6 @@ if '_idx_ano' not in st.session_state:
 
 mes_sel = st.sidebar.selectbox("Mês", meses_nomes, index=st.session_state['_idx_mes'], key="sel_mes")
 ano_sel = st.sidebar.selectbox("Ano", anos,         index=st.session_state['_idx_ano'], key="sel_ano")
-# Persiste a seleção do usuário para próximos reruns
 st.session_state['_idx_mes'] = meses_nomes.index(mes_sel)
 st.session_state['_idx_ano'] = anos.index(ano_sel)
 
@@ -249,33 +368,63 @@ def status_icon(chave):
     if isinstance(val, dict) and len(val) == 0: return "⬜"
     return "✅"
 
+# ── Uploaders com suporte nativo a ZIP ───────────────────────────────────────
+
 st.sidebar.markdown(f"{status_icon('df_bruto')} **1. Contratos Aprovados**")
-arquivo_subido = st.sidebar.file_uploader("Substituir arquivo", type=['xlsx', 'xlsm'], key="up_contratos")
+arquivo_subido = uploader_com_zip(
+    "Substituir arquivo", ['xlsx', 'xlsm'],
+    key="up_contratos", state_prefix="zip_contratos", container=st.sidebar
+)
 
 st.sidebar.markdown(f"{status_icon('dict_mes_anterior')} **2. Base Mês Anterior**")
-arquivo_anterior = st.sidebar.file_uploader("Substituir arquivo", type=['xlsx'], key="up_anterior")
+arquivo_anterior = uploader_com_zip(
+    "Substituir arquivo", ['xlsx'],
+    key="up_anterior", state_prefix="zip_anterior", container=st.sidebar
+)
 
 st.sidebar.markdown(f"{status_icon('dict_comprador')} **3. Exportador (4)**")
-arquivo_pessoas = st.sidebar.file_uploader("Substituir arquivo", type=['xlsx'], key="up_pessoas")
+arquivo_pessoas = uploader_com_zip(
+    "Substituir arquivo", ['xlsx'],
+    key="up_pessoas", state_prefix="zip_pessoas", container=st.sidebar
+)
 
 st.sidebar.markdown(f"{status_icon('dict_mapa')} **4. Mapa Financeiro**")
-arquivo_mapa = st.sidebar.file_uploader("Substituir arquivo", type=['xlsx'], key="up_mapa")
+arquivo_mapa = uploader_com_zip(
+    "Substituir arquivo", ['xlsx'],
+    key="up_mapa", state_prefix="zip_mapa", container=st.sidebar
+)
 
 st.sidebar.markdown(f"{status_icon('dict_pendencias')} **5. Pendências Financeiras**")
-arquivo_pendencias = st.sidebar.file_uploader("Substituir arquivo", type=['xlsx'], key="up_pendencias")
+arquivo_pendencias = uploader_com_zip(
+    "Substituir arquivo", ['xlsx'],
+    key="up_pendencias", state_prefix="zip_pendencias", container=st.sidebar
+)
 
 st.sidebar.subheader("Bases Cliq CCEE")
+
 st.sidebar.markdown(f"{status_icon('db_ccear')} **Cliq CCEAR_Q**")
-arq_ccear = st.sidebar.file_uploader("Substituir arquivo", type=['xlsx', 'csv'], key="up_ccear")
+arq_ccear = uploader_com_zip(
+    "Substituir arquivo", ['xlsx', 'csv'],
+    key="up_ccear", state_prefix="zip_ccear", container=st.sidebar
+)
 
 st.sidebar.markdown(f"{status_icon('db_cbr')} **Cliq CBR Mercado**")
-arq_cbr = st.sidebar.file_uploader("Substituir arquivo", type=['xlsx', 'csv'], key="up_cbr")
+arq_cbr = uploader_com_zip(
+    "Substituir arquivo", ['xlsx', 'csv'],
+    key="up_cbr", state_prefix="zip_cbr", container=st.sidebar
+)
 
 st.sidebar.markdown(f"{status_icon('db_matrix')} **Cliq Matrix**")
-arq_cceal1 = st.sidebar.file_uploader("Substituir arquivo", type=['xlsx', 'csv'], key="up_matrix")
+arq_cceal1 = uploader_com_zip(
+    "Substituir arquivo", ['xlsx', 'csv'],
+    key="up_matrix", state_prefix="zip_matrix", container=st.sidebar
+)
 
 st.sidebar.markdown(f"{status_icon('db_bismut')} **Cliq Bismut**")
-arq_cceal2 = st.sidebar.file_uploader("Substituir arquivo", type=['xlsx', 'csv'], key="up_bismut")
+arq_cceal2 = uploader_com_zip(
+    "Substituir arquivo", ['xlsx', 'csv'],
+    key="up_bismut", state_prefix="zip_bismut", container=st.sidebar
+)
 
 if st.sidebar.button("🗑️ Limpar todos os arquivos salvos"):
     import shutil
@@ -287,7 +436,6 @@ if st.sidebar.button("🗑️ Limpar todos os arquivos salvos"):
     st.session_state['ajustes_manuais'] = {}
     st.rerun()
 
-# ── Título usa sempre o valor do selectbox (já resolvido acima) ───────────────
 st.title(f"Livro de Energia - {mes_sel}/{ano_sel}")
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -393,7 +541,6 @@ COL_CONFIG_PERFIL = {
 }
 
 def calcular_mwmedio_em_bases(perfil, coluna_perfil, filtro_sub, db_keys):
-    """Soma MWmedio das bases indicadas filtrando por perfil e (opcionalmente) submercado."""
     total = 0.0
     for db_key in db_keys:
         df_cliq = st.session_state.get(db_key)
@@ -431,7 +578,6 @@ def build_wbc_tabela(perfis, df_wbc_base):
     return adicionar_total(pd.DataFrame(rows))
 
 def render_tabela_par(titulo_ccee, titulo_wbc, df_ccee, df_wbc, aviso_sem_base=None):
-    """Renderiza lado a lado: CCEE (esq) | WBC (dir)."""
     col_l, col_r = st.columns(2)
     with col_l:
         st.markdown(f"**{titulo_ccee}**")
@@ -452,11 +598,6 @@ def render_tabela_par(titulo_ccee, titulo_wbc, df_ccee, df_wbc, aviso_sem_base=N
         )
 
 def render_reconciliacao(titulo, df_ccee, df_wbc):
-    """
-    Exibe tabela de reconciliação NET CCEE vs NET WBC.
-    Aponta perfis onde o NET diverge e possíveis causas.
-    """
-    # Remove linha TOTAL para comparação
     df_c = df_ccee[df_ccee['PERFIL'] != 'TOTAL'].copy()
     df_w = df_wbc[df_wbc['PERFIL'] != 'TOTAL'].copy()
 
@@ -470,7 +611,6 @@ def render_reconciliacao(titulo, df_ccee, df_wbc):
         lambda d: "✅ OK" if abs(d) < 1e-5 else "⚠️ Verificar"
     )
 
-    # Possíveis causas para diferenças
     causas = []
     for _, row in df_rec[df_rec['STATUS'] != "✅ OK"].iterrows():
         perfil = row['PERFIL']
@@ -511,13 +651,18 @@ def render_reconciliacao(titulo, df_ccee, df_wbc):
 # FUNÇÃO AUXILIAR: classifica Varejista com base no Comprador
 # ─────────────────────────────────────────────────────────────────────────────
 def classificar_varejista(comprador):
-    """Retorna 'Sim' se o comprador começar com MATRIX VAR ou BISMUT VAR, caso contrário 'Não'."""
     if pd.isna(comprador) or str(comprador).strip() in ['-', '']:
         return "Não"
     comp_upper = str(comprador).strip().upper()
     if comp_upper.startswith("MATRIX VAR") or comp_upper.startswith("BISMUT VAR"):
         return "Sim"
     return "Não"
+
+def tratar_modulacao_pct(valor_raw):
+    v = pd.to_numeric(valor_raw, errors='coerce')
+    if pd.isna(v) or v == 0:
+        return "-"
+    return round(v, 6)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 7. PROCESSAMENTO DA TABELA
@@ -636,8 +781,14 @@ if st.session_state['df_bruto'] is not None:
             df_conferencia['Situacao ERP']       = df_conferencia['Boleta_Key'].map(st.session_state['dict_mapa']).fillna("-")
             df_conferencia['CliqCCEE Paradigma'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[60]]).apply(tratar_chave)
             df_conferencia['Modulacao WBC']      = df_conferencia[col_boleta].map(df_lookup[df_base.columns[63]]).apply(limpar_modulacao)
-            df_conferencia['% Modulacao Min']    = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[28]]), errors='coerce').fillna("-")
-            df_conferencia['% Modulacao Max']    = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[29]]), errors='coerce').fillna("-")
+
+            df_conferencia['% Modulacao Min'] = df_conferencia[col_boleta].map(
+                df_lookup[df_base.columns[28]]
+            ).apply(tratar_modulacao_pct)
+            df_conferencia['% Modulacao Max'] = df_conferencia[col_boleta].map(
+                df_lookup[df_base.columns[29]]
+            ).apply(tratar_modulacao_pct)
+
             df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mes_anterior']).fillna("-")
             df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
             df_conferencia['Vendedor']  = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
@@ -747,8 +898,6 @@ if st.session_state['df_bruto'] is not None:
                 .map(st.session_state['dict_pendencias']).fillna(0.0)
             )
 
-            # ── COLUNA VAREJISTA ─────────────────────────────────────────────
-            # "Sim" se o Comprador começar com "MATRIX VAR" ou "BISMUT VAR"
             df_conferencia['Varejista'] = df_conferencia['Comprador'].apply(classificar_varejista)
 
             # --- FILTROS ---
@@ -766,7 +915,6 @@ if st.session_state['df_bruto'] is not None:
             ))
             check_mod_f = f5.selectbox("Check Modulação / Limites", ["Todos"] + todas_opts_mod)
 
-            # Linha de filtros adicionais: Contraparte + Varejista
             fa1, fa2 = st.columns([3, 1])
 
             opcoes_contraparte = sorted(
@@ -864,21 +1012,25 @@ if st.session_state['df_bruto'] is not None:
             def highlight_rows(row):
                 return ['background-color: #fff4cc'] * len(row) if row['Editado'] else [''] * len(row)
 
+            col_config_main = {
+                "Editado":              None,
+                "Montante MWh":         st.column_config.NumberColumn(format="%.3f"),
+                "Volume MWm":           st.column_config.NumberColumn(format="%.6f"),
+                "Volume BOOK":          st.column_config.NumberColumn(format="%.6f"),
+                "Volume CliqCCEE":      st.column_config.NumberColumn(format="%.6f"),
+                "Lim Min CCEE":         st.column_config.NumberColumn(format="%.6f"),
+                "Lim Max CCEE":         st.column_config.NumberColumn(format="%.6f"),
+                "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f"),
+                "Varejista":            st.column_config.TextColumn("Varejista"),
+                "% Modulacao Min":      st.column_config.TextColumn("% Mod Min"),
+                "% Modulacao Max":      st.column_config.TextColumn("% Mod Max"),
+            }
+
             st.dataframe(
                 df_final[ordem].sort_values(by=col_boleta).style.apply(highlight_rows, axis=1),
                 use_container_width=True,
                 hide_index=True,
-                column_config={
-                    "Editado":              None,
-                    "Montante MWh":         st.column_config.NumberColumn(format="%.3f"),
-                    "Volume MWm":           st.column_config.NumberColumn(format="%.6f"),
-                    "Volume BOOK":          st.column_config.NumberColumn(format="%.6f"),
-                    "Volume CliqCCEE":      st.column_config.NumberColumn(format="%.6f"),
-                    "Lim Min CCEE":         st.column_config.NumberColumn(format="%.6f"),
-                    "Lim Max CCEE":         st.column_config.NumberColumn(format="%.6f"),
-                    "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f"),
-                    "Varejista":            st.column_config.TextColumn("Varejista"),
-                }
+                column_config=col_config_main,
             )
 
             # ═════════════════════════════════════════════════════════════════
@@ -985,7 +1137,7 @@ if st.session_state['df_bruto'] is not None:
             render_reconciliacao("MATRIX", df_matrix_ccee_tab, df_matrix_wbc_tab)
 
             # ─────────────────────────────────────────────────────────────────
-            # BLOCO GET ENERGY TRADING  (base: Bismut)
+            # BLOCO GET ENERGY TRADING
             # ─────────────────────────────────────────────────────────────────
             st.write("### 📊 Tabela — GET ENERGY TRADING CCEE  |  GET ENERGY TRADING WBC")
 
@@ -1002,7 +1154,7 @@ if st.session_state['df_bruto'] is not None:
                 "GET ENERGY TRADING I1",
                 "GET ENERGY TRADING CQ5",
             ]
-            PARTE_GET_WBC = "GET ENERGY TRADING"   # ajuste se o nome exato da Parte for diferente
+            PARTE_GET_WBC = "GET ENERGY TRADING"
 
             df_get_ccee_tab = build_ccee_tabela(PERFIS_GET, ['db_bismut'], filtro_sub_get)
             df_get_wbc_tab  = build_wbc_tabela(PERFIS_GET, df_wbc_para_parte(PARTE_GET_WBC.upper()))
@@ -1015,7 +1167,7 @@ if st.session_state['df_bruto'] is not None:
             render_reconciliacao("GET ENERGY TRADING", df_get_ccee_tab, df_get_wbc_tab)
 
             # ─────────────────────────────────────────────────────────────────
-            # BLOCO CINERGY  (base: Bismut)
+            # BLOCO CINERGY
             # ─────────────────────────────────────────────────────────────────
             st.write("### 📊 Tabela — CINERGY CCEE  |  CINERGY WBC")
 
@@ -1036,7 +1188,7 @@ if st.session_state['df_bruto'] is not None:
                 "CINERGY COM I0 2",
                 "CINERGY COM I8 2",
             ]
-            PARTE_CINERGY_WBC = "CINERGY COM"   # ajuste conforme nome exato na planilha
+            PARTE_CINERGY_WBC = "CINERGY COM"
 
             df_cinergy_ccee_tab = build_ccee_tabela(PERFIS_CINERGY, ['db_bismut'], filtro_sub_cinergy)
             df_cinergy_wbc_tab  = build_wbc_tabela(PERFIS_CINERGY, df_wbc_para_parte(PARTE_CINERGY_WBC.upper()))
@@ -1049,7 +1201,7 @@ if st.session_state['df_bruto'] is not None:
             render_reconciliacao("CINERGY", df_cinergy_ccee_tab, df_cinergy_wbc_tab)
 
             # ─────────────────────────────────────────────────────────────────
-            # BLOCO MTX CAMANDUCAIA  (base: Bismut)
+            # BLOCO MTX CAMANDUCAIA
             # ─────────────────────────────────────────────────────────────────
             st.write("### 📊 Tabela — MTX CAMANDUCAIA CCEE  |  MTX CAMANDUCAIA WBC")
 
@@ -1062,7 +1214,7 @@ if st.session_state['df_bruto'] is not None:
             PERFIS_MTX = [
                 "MTX CAMANDUCAIA",
             ]
-            PARTE_MTX_WBC = "MTX CAMANDUCAIA"   # ajuste conforme nome exato na planilha
+            PARTE_MTX_WBC = "MTX CAMANDUCAIA"
 
             df_mtx_ccee_tab = build_ccee_tabela(PERFIS_MTX, ['db_bismut'], filtro_sub_mtx)
             df_mtx_wbc_tab  = build_wbc_tabela(PERFIS_MTX, df_wbc_para_parte(PARTE_MTX_WBC.upper()))
@@ -1075,7 +1227,7 @@ if st.session_state['df_bruto'] is not None:
             render_reconciliacao("MTX CAMANDUCAIA", df_mtx_ccee_tab, df_mtx_wbc_tab)
 
             # ─────────────────────────────────────────────────────────────────
-            # BLOCO ARGENTUM  (base: Bismut)
+            # BLOCO ARGENTUM
             # ─────────────────────────────────────────────────────────────────
             st.write("### 📊 Tabela — ARGENTUM CCEE  |  ARGENTUM WBC")
 
@@ -1092,7 +1244,7 @@ if st.session_state['df_bruto'] is not None:
                 "ARGENTUM COM I0",
                 "ARGENTUM COM I8",
             ]
-            PARTE_ARGENTUM_WBC = "ARGENTUM COM"   # ajuste conforme nome exato na planilha
+            PARTE_ARGENTUM_WBC = "ARGENTUM COM"
 
             df_argentum_ccee_tab = build_ccee_tabela(PERFIS_ARGENTUM, ['db_bismut'], filtro_sub_argentum)
             df_argentum_wbc_tab  = build_wbc_tabela(PERFIS_ARGENTUM, df_wbc_para_parte(PARTE_ARGENTUM_WBC.upper()))
