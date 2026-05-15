@@ -15,7 +15,7 @@ def limpar_coluna(texto):
 
 
 # FUNÇÃO PARA TRATAR TIPO ENERGIA
-def tratar_tipo_energia(valor):
+def Fonte_Contrato(valor):
 
     mapa = {
         'Incentivada 50%': 'Incentivada-I5',
