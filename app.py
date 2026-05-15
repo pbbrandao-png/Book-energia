@@ -72,15 +72,35 @@ def calcular_cp_lp(dias):
 
 
 # ─────────────────────────────────────────────────────────
-# FORMATA NÚMEROS
+# FORMATA 3 CASAS
 # ─────────────────────────────────────────────────────────
 
-def formatar_numero(valor):
+def formatar_3_casas(valor):
 
     try:
 
         return (
             f"{valor:,.3f}"
+            .replace(',', 'X')
+            .replace('.', ',')
+            .replace('X', '.')
+        )
+
+    except:
+
+        return valor
+
+
+# ─────────────────────────────────────────────────────────
+# FORMATA 6 CASAS
+# ─────────────────────────────────────────────────────────
+
+def formatar_6_casas(valor):
+
+    try:
+
+        return (
+            f"{valor:,.6f}"
             .replace(',', 'X')
             .replace('.', ',')
             .replace('X', '.')
@@ -231,7 +251,7 @@ if arquivo is not None:
         )
 
     # =====================================================
-    # CALCULA HORAS DO MÊS
+    # HORAS DO MÊS
     # =====================================================
 
     if 'MES' in df.columns:
@@ -246,10 +266,12 @@ if arquivo is not None:
         )
 
     # =====================================================
-    # FORMATA MONTANTE MWH
+    # TRATAMENTO MONTANTE
     # =====================================================
 
     if 'MONTANTE_MWH' in df.columns:
+
+        # GARANTE NÚMERO
 
         df['MONTANTE_MWH'] = pd.to_numeric(
             df['MONTANTE_MWH'],
@@ -265,15 +287,17 @@ if arquivo is not None:
                 / df['HORAS_MES']
             )
 
+            # FORMATA MWm (6 CASAS)
+
             df['MONTANTE_MWM'] = df[
                 'MONTANTE_MWM'
-            ].apply(formatar_numero)
+            ].apply(formatar_6_casas)
 
-        # FORMATA MWh
+        # FORMATA MWh (3 CASAS)
 
         df['MONTANTE_MWH'] = df[
             'MONTANTE_MWH'
-        ].apply(formatar_numero)
+        ].apply(formatar_3_casas)
 
     # =====================================================
     # RENOMEAÇÃO VISUAL
