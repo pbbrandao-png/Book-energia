@@ -14,6 +14,16 @@ def limpar_coluna(texto):
     return texto
 
 
+# FUNÇÃO PARA TRATAR TIPO ENERGIA
+def tratar_tipo_energia(valor):
+
+    mapa = {
+        'Incentivada-50%': 'Incentivada-I5'
+    }
+
+    return mapa.get(valor, valor)
+
+
 # TÍTULO
 st.title("Book de Energia")
 
@@ -34,10 +44,13 @@ if arquivo is not None:
         sheet_name='Contratos_Selecionados'
     )
 
-    # PADRONIZA NOMES DAS COLUNAS
+    # PADRONIZA COLUNAS
     df.columns = [limpar_coluna(col) for col in df.columns]
 
-    # MOSTRA COLUNAS
+    # TRATA TIPO ENERGIA
+    df['TIPO_ENERGIA'] = df['TIPO_ENERGIA'].apply(tratar_tipo_energia)
+
+    # MOSTRA TABELA
     st.dataframe(
         df[['CODIGO_WBC', 'OPERACAO', 'TIPO_ENERGIA']],
         hide_index=True
