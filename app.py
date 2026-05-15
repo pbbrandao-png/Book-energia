@@ -34,11 +34,11 @@ if arquivo is not None:
         sheet_name='Contratos_Selecionados'
     )
 
-    # PADRONIZA COLUNAS
+    # PADRONIZA NOMES DAS COLUNAS
     df.columns = [limpar_coluna(col) for col in df.columns]
 
-    # MOSTRA SOMENTE AS COLUNAS
+    # MOSTRA COLUNAS
     st.dataframe(
-        df[['CODIGO_WBC', 'OPERACAO', 'Tipo_Energia']],
+        df[['CODIGO_WBC', 'OPERACAO', 'TIPO_ENERGIA']],
         hide_index=True
     )
