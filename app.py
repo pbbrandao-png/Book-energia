@@ -38,6 +38,15 @@ def tratar_submercado(valor):
 
     return mapa.get(valor, valor)
 
+# FORMATA MWH
+if 'MONTANTE MWh' in df.columns:
+
+    df['MONTANTE MWh'] = df['MONTANTE MWh'].apply(
+        lambda x: f"{x:,.3f}"
+        .replace(',', 'X')
+        .replace('.', ',')
+        .replace('X', '.')
+    )
 
 # TÍTULO
 st.title("Livro de Energia - Abril/2026")
