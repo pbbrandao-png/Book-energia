@@ -21,9 +21,6 @@ if arquivo is not None:
         sheet_name='Contratos_Selecionados'
     )
 
-    # MOSTRA COLUNAS
-    st.write("Colunas encontradas:")
-    st.write(df.columns)
 
     # MOSTRA A COLUNA Codigo_WBC
     st.write("Codigo_WBC:")
