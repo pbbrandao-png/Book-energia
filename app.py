@@ -60,7 +60,7 @@ if arquivo is not None:
     )
 
     # TRATA TIPO ENERGIA
-    df['TIPO_ENERGIA'] = df['TIPO_ENERGIA'].apply(tratar_tipo_energia)
+    df['Fonte_Contrato'] = df['Fonte_Contrato'].apply(Fonte_Contrato)
 
     # MOSTRA TABELA
     st.dataframe(
