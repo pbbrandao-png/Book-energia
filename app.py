@@ -18,10 +18,10 @@ def limpar_coluna(texto):
 def tratar_tipo_energia(valor):
 
     mapa = {
-        'Incentivada-50%': 'Incentivada-I5',
-        'Incentivada-CQ50%': 'Incentivada-CQ5',
-        'Incentivada-100%': 'Incentivada-I1',
-        'Incentivada-0%': 'Incentivada-I0',
+        'Incentivada 50%': 'Incentivada-I5',
+        'Cogeração Qualificada 50%': 'Incentivada-CQ5',
+        'Incentivada 100%': 'Incentivada-I1',
+        'Incentivada 0%': 'Incentivada-I0',
         
     }
 
@@ -42,11 +42,8 @@ if arquivo is not None:
 
     st.success("Arquivo carregado com sucesso!")
 
-    # LÊ A ABA
-    df = pd.read_excel(
-        arquivo,
-        sheet_name='Contratos_Selecionados'
-    )
+# Inicio do Cabeçalho  
+skiprows=9
 
     # PADRONIZA COLUNAS
     df.columns = [limpar_coluna(col) for col in df.columns]
@@ -54,7 +51,10 @@ if arquivo is not None:
      # RENOMEIA COLUNA
     df = df.rename(
         columns={
-            'PARTE_NOME_FANTASIA': 'PARTE'
+            'PARTE_NOME_FANTASIA': 'PARTE',
+            'Movimentacao': 'Operação',
+            'Fonte_Contrato': 'Fonte',
+            
         }
     )
 
@@ -63,6 +63,6 @@ if arquivo is not None:
 
     # MOSTRA TABELA
     st.dataframe(
-        df[['CODIGO_WBC', 'OPERACAO', 'TIPO_ENERGIA','PARTE']],
+        df[['CODIGO_WBC', 'OPERACAO', 'FONTE','PARTE']],
         hide_index=True
     )
