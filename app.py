@@ -39,6 +39,6 @@ if arquivo is not None:
 
     # MOSTRA SOMENTE AS COLUNAS
     st.dataframe(
-        df[['CODIGO_WBC', 'OPERACAO', Tipo_Energia]],
+        df[['CODIGO_WBC', 'OPERACAO', 'Tipo_Energia']],
         hide_index=True
     )
