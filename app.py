@@ -134,6 +134,22 @@ def horas_mes(mes):
 
     return mapa.get(mes)
 
+# ─────────────────────────────────────────────────────────
+# MODULACAO
+# ─────────────────────────────────────────────────────────
+
+def tratar_modulacao(valor):
+
+    mapa = {
+        'C - Carga': 'CARGA',
+        'F - Flat': 'FLAT',
+        'DECLARADO': 'DECLARADA',
+            }
+
+    return mapa.get(valor, valor)
+
+
+
 
 # =========================================================
 # TÍTULO
@@ -300,6 +316,15 @@ if arquivo is not None:
         df['MONTANTE_MWH'] = df[
             'MONTANTE_MWH'
         ].apply(formatar_3_casas)
+    # =====================================================
+    # TRATAMENTO MODULACAO
+    # =====================================================
+
+    if 'MODULACAO WBC' in df.columns:
+
+        df['MODULACAO WBC'] = df['MODULACAO WBC'].apply(
+            tratar_modulacao
+        )
 
     # =====================================================
     # RENOMEAÇÃO VISUAL
