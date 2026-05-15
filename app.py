@@ -2,19 +2,33 @@ import streamlit as st
 import pandas as pd
 import unicodedata
 
-# FUNÇÃO PARA PADRONIZAR COLUNAS
+
+# =========================================================
+# FUNÇÕES DE PADRONIZAÇÃO
+# =========================================================
+
 def limpar_coluna(texto):
 
     texto = str(texto).strip().upper()
 
-    texto = unicodedata.normalize('NFKD', texto)\
-        .encode('ASCII', 'ignore')\
+    texto = (
+        unicodedata
+        .normalize('NFKD', texto)
+        .encode('ASCII', 'ignore')
         .decode('utf-8')
+    )
 
     return texto
 
 
-# FUNÇÃO PARA TRATAR FONTE
+# =========================================================
+# FUNÇÕES DE TRATAMENTO
+# =========================================================
+
+# ─────────────────────────────────────────────────────────
+# FONTE
+# ─────────────────────────────────────────────────────────
+
 def tratar_fonte(valor):
 
     mapa = {
@@ -25,57 +39,109 @@ def tratar_fonte(valor):
     }
 
     return mapa.get(valor, valor)
-    
-# FUNÇÃO PARA TRATAR SUBMERCADO
+
+
+# ─────────────────────────────────────────────────────────
+# SUBMERCADO
+# ─────────────────────────────────────────────────────────
+
 def tratar_submercado(valor):
+
+    valor = str(valor).strip().upper()
 
     mapa = {
         'N': 'NORTE',
-        'Sul': 'SUL',
+        'S': 'SUL',
         'NE': 'NORDESTE',
         'SE/CO': 'SUDESTE',
     }
 
     return mapa.get(valor, valor)
 
-# FORMATA MWH
-if 'MONTANTE MWh' in df.columns:
 
-    df['MONTANTE MWh'] = df['MONTANTE MWh'].apply(
-        lambda x: f"{x:,.3f}"
-        .replace(',', 'X')
-        .replace('.', ',')
-        .replace('X', '.')
-    )
+# ─────────────────────────────────────────────────────────
+# CP / LP
+# ─────────────────────────────────────────────────────────
 
+def calcular_cp_lp(dias):
+
+    if dias > 31:
+        return 'LP'
+
+    return 'CP'
+
+
+# ─────────────────────────────────────────────────────────
+# FORMATA MONTANTE
+# ─────────────────────────────────────────────────────────
+
+def formatar_mwh(valor):
+
+    try:
+
+        return (
+            f"{valor:,.3f}"
+            .replace(',', 'X')
+            .replace('.', ',')
+            .replace('X', '.')
+        )
+
+    except:
+
+        return valor
+
+
+# =========================================================
 # TÍTULO
+# =========================================================
+
 st.title("Livro de Energia - Abril/2026")
 
+
+# =========================================================
 # UPLOAD
+# =========================================================
+
 arquivo = st.file_uploader(
     "Contratos aprovados",
     type=['xlsx', 'csv', 'xlsm']
 )
 
-# SE SUBIU ARQUIVO
+
+# =========================================================
+# PROCESSAMENTO
+# =========================================================
+
 if arquivo is not None:
 
     st.success("Arquivo carregado com sucesso!")
 
-    # LÊ O EXCEL
+    # =====================================================
+    # LEITURA
+    # =====================================================
+
     df = pd.read_excel(
         arquivo,
         skiprows=8
     )
 
-    # PADRONIZA COLUNAS
+    # =====================================================
+    # PADRONIZAÇÃO DE COLUNAS
+    # =====================================================
+
     df.columns = [limpar_coluna(col) for col in df.columns]
 
-    # MOSTRA COLUNAS EXISTENTES
-    st.write("Colunas encontradas no arquivo:")
+    # =====================================================
+    # DEBUG
+    # =====================================================
+
+    st.write("Colunas encontradas:")
     st.write(df.columns.tolist())
 
-    # RENOMEIA COLUNAS
+    # =====================================================
+    # RENOMEAÇÃO DE COLUNAS
+    # =====================================================
+
     df = df.rename(
         columns={
             'PARTE_NOME_FANTASIA': 'PARTE',
@@ -83,43 +149,87 @@ if arquivo is not None:
             'FONTE_CONTRATO': 'FONTE',
             'CODIGO_WBC': 'BOLETA',
             'CONTRAPARTE_NOME_FANTASIA': 'CONTRAPARTE',
-            'QUANTATUALIZADA': 'MONTANTE MWh'
+            'QUANTATUALIZADA': 'MONTANTE_MWH'
         }
     )
 
-    # TRATA FONTE
+    # =====================================================
+    # TRATAMENTO FONTE
+    # =====================================================
+
     if 'FONTE' in df.columns:
 
-        df['FONTE'] = df['FONTE'].apply(tratar_fonte)
+        df['FONTE'] = df['FONTE'].apply(
+            tratar_fonte
+        )
 
-    # TRATA SUBMERCADO
+    # =====================================================
+    # TRATAMENTO SUBMERCADO
+    # =====================================================
+
     if 'SUBMERCADO' in df.columns:
 
-        df['SUBMERCADO'] = df['SUBMERCADO'].apply(tratar_submercado)
-    
-    # CONVERTE DATAS
-    df['SUPRIMENTO_INICIO'] = pd.to_datetime(
-        df['SUPRIMENTO_INICIO'],
-        errors='coerce'
+        df['SUBMERCADO'] = df['SUBMERCADO'].apply(
+            tratar_submercado
+        )
+
+    # =====================================================
+    # TRATAMENTO DATAS
+    # =====================================================
+
+    if (
+        'SUPRIMENTO_INICIO' in df.columns
+        and
+        'SUPRIMENTO_TERMINO' in df.columns
+    ):
+
+        df['SUPRIMENTO_INICIO'] = pd.to_datetime(
+            df['SUPRIMENTO_INICIO'],
+            errors='coerce'
+        )
+
+        df['SUPRIMENTO_TERMINO'] = pd.to_datetime(
+            df['SUPRIMENTO_TERMINO'],
+            errors='coerce'
+        )
+
+        # CALCULA DIAS
+
+        df['DIAS'] = (
+            df['SUPRIMENTO_TERMINO']
+            - df['SUPRIMENTO_INICIO']
+        ).dt.days
+
+        # CALCULA CP / LP
+
+        df['CP/LP'] = df['DIAS'].apply(
+            calcular_cp_lp
+        )
+
+    # =====================================================
+    # FORMATAÇÃO MONTANTE
+    # =====================================================
+
+    if 'MONTANTE_MWH' in df.columns:
+
+        df['MONTANTE_MWH'] = df['MONTANTE_MWH'].apply(
+            formatar_mwh
+        )
+
+    # =====================================================
+    # RENOMEAÇÃO VISUAL
+    # =====================================================
+
+    df = df.rename(
+        columns={
+            'MONTANTE_MWH': 'MONTANTE MWh'
+        }
     )
 
-    df['SUPRIMENTO_TERMINO'] = pd.to_datetime(
-        df['SUPRIMENTO_TERMINO'],
-        errors='coerce'
-    )
+    # =====================================================
+    # COLUNAS EXIBIDAS
+    # =====================================================
 
-    # CALCULA DIFERENÇA EM DIAS
-    df['DIAS'] = (
-        df['SUPRIMENTO_TERMINO']
-        - df['SUPRIMENTO_INICIO']
-    ).dt.days
-
-    # CRIA COLUNA CP/LP
-    df['CP/LP'] = df['DIAS'].apply(
-        lambda x: 'LP' if x > 31 else 'CP'
-    )
-
-    # COLUNAS
     colunas_desejadas = [
         'BOLETA',
         'OPERACAO',
@@ -131,13 +241,20 @@ if arquivo is not None:
         'MONTANTE MWh'
     ]
 
-    # VERIFICA QUAIS EXISTEM
+    # =====================================================
+    # VALIDAÇÃO DE COLUNAS
+    # =====================================================
+
     colunas_existentes = [
-        col for col in colunas_desejadas
+        col
+        for col in colunas_desejadas
         if col in df.columns
     ]
 
-    # MOSTRA TABELA
+    # =====================================================
+    # EXIBIÇÃO
+    # =====================================================
+
     st.dataframe(
         df[colunas_existentes],
         hide_index=True
