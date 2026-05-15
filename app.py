@@ -22,7 +22,6 @@ def tratar_tipo_energia(valor):
         'Cogeração Qualificada 50%': 'Incentivada-CQ5',
         'Incentivada 100%': 'Incentivada-I1',
         'Incentivada 0%': 'Incentivada-I0',
-        
     }
 
     return mapa.get(valor, valor)
@@ -42,19 +41,22 @@ if arquivo is not None:
 
     st.success("Arquivo carregado com sucesso!")
 
-# Inicio do Cabeçalho  
-skiprows=9
+    # LÊ O EXCEL
+    df = pd.read_excel(
+        arquivo,
+        sheet_name='Contratos_Selecionados',
+        skiprows=9
+    )
 
     # PADRONIZA COLUNAS
     df.columns = [limpar_coluna(col) for col in df.columns]
 
-     # RENOMEIA COLUNA
+    # RENOMEIA COLUNAS
     df = df.rename(
         columns={
             'PARTE_NOME_FANTASIA': 'PARTE',
-            'Movimentacao': 'Operação',
-            'Fonte_Contrato': 'Fonte',
-            
+            'MOVIMENTACAO': 'OPERACAO',
+            'FONTE_CONTRATO': 'FONTE',
         }
     )
 
@@ -63,6 +65,6 @@ skiprows=9
 
     # MOSTRA TABELA
     st.dataframe(
-        df[['CODIGO_WBC', 'OPERACAO', 'FONTE','PARTE']],
+        df[['CODIGO_WBC', 'OPERACAO', 'FONTE', 'PARTE']],
         hide_index=True
     )
