@@ -199,7 +199,7 @@ def uploader_com_zip(label, types, key, state_prefix, container):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ★ ZIP MULTI-BASE — um ZIP, quatro seletores de arquivo
+# ★ ZIP MULTI-BASE — autodetecção por padrão de nome de arquivo
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _listar_planilhas_zip(zf):
@@ -210,10 +210,27 @@ def _listar_planilhas_zip(zf):
     )
 
 
+def detectar_base_por_nome(nome_arquivo):
+    """
+    Mapeia nome de arquivo para chave de base pelo padrão de nome.
+    Regras:
+      ccear_q_XXXXXX.*         → db_ccear
+      cbr_mercado_proprio_XXXX (sem 'parcela') → db_cbr
+      cceal_firme_XXXXXX.*     (sem 'parcela') → db_bismut
+    """
+    n = nome_arquivo.lower()
+    if n.startswith('ccear_q_'):
+        return 'db_ccear'
+    if n.startswith('cbr_mercado_proprio_') and 'parcela' not in n:
+        return 'db_cbr'
+    if n.startswith('cceal_firme_') and 'parcela' not in n:
+        return 'db_bismut'
+    return None
+
+
 def zip_multi_base_sidebar():
     st.sidebar.markdown("---")
     st.sidebar.subheader("📦 Bases Cliq CCEE")
-    st.sidebar.caption("Suba até dois ZIPs e atribua cada planilha à sua base.")
 
     resultado = {k: None for k in ['db_ccear', 'db_cbr', 'db_matrix', 'db_bismut']}
 
@@ -221,77 +238,115 @@ def zip_multi_base_sidebar():
         'db_ccear':  'CCEAR_Q',
         'db_cbr':    'CBR Mercado',
         'db_matrix': 'Matrix',
-        'db_bismut': 'Bismut',
+        'db_bismut': 'Bismut (cceal_firme)',
     }
 
-    def _processar_zip(zip_obj, prefix, container):
+    def _autodetectar_zip(zip_obj, prefix, bases_alvo, container):
+        """
+        Lê o ZIP, detecta automaticamente os arquivos pelas regras de nome
+        e retorna {db_key: buf}. Para arquivos não reconhecidos mostra
+        selectbox manual apenas para as bases que faltaram.
+        """
         parcial = {}
-        zip_id = (zip_obj.name, zip_obj.size)
+        zip_id    = (zip_obj.name, zip_obj.size)
         key_id    = f"{prefix}_id"
         key_bytes = f"{prefix}_bytes"
 
         if st.session_state.get(key_id) != zip_id:
             st.session_state[key_id]    = zip_id
             st.session_state[key_bytes] = zip_obj.read()
+            # Limpa seleções manuais anteriores ao trocar o ZIP
             for base_k in BASES_LABELS:
-                st.session_state.pop(f"{prefix}_sel_{base_k}", None)
+                st.session_state.pop(f"{prefix}_manual_{base_k}", None)
 
         raw_bytes = st.session_state[key_bytes]
         zf = zipfile.ZipFile(io.BytesIO(raw_bytes))
         planilhas = _listar_planilhas_zip(zf)
 
-        if not planilhas:
-            container.warning("Nenhuma planilha encontrada no ZIP.")
-            return parcial
+        # ── Autodetecção ──────────────────────────────────────────────────
+        detectados = {}
+        for caminho in planilhas:
+            nome_curto = caminho.split('/')[-1]
+            base_k = detectar_base_por_nome(nome_curto)
+            if base_k and base_k in bases_alvo and base_k not in detectados:
+                detectados[base_k] = caminho
 
-        opcoes = ["— não usar —"] + [p.split('/')[-1] + f"  ({p})" for p in planilhas]
-        mapa_opcoes = {opcoes[i+1]: planilhas[i] for i in range(len(planilhas))}
-
-        container.caption(f"📦 `{zip_obj.name}` — {len(planilhas)} planilha(s) encontrada(s)")
-
-        for base_k, base_label in BASES_LABELS.items():
-            sel_key = f"{prefix}_sel_{base_k}"
-            escolha = container.selectbox(
-                f"Arquivo para **{base_label}**",
-                options=opcoes,
-                index=0,
-                key=sel_key,
-            )
-            if escolha != "— não usar —" and escolha in mapa_opcoes:
-                caminho = mapa_opcoes[escolha]
+        if detectados:
+            container.caption(f"📦 `{zip_obj.name}` — detectado automaticamente:")
+            for base_k, caminho in detectados.items():
+                nome_curto = caminho.split('/')[-1]
+                container.success(f"✅ **{BASES_LABELS[base_k]}** → `{nome_curto}`")
                 data = zf.read(caminho)
-                buf = io.BytesIO(data)
-                buf.name = caminho.split('/')[-1]
+                buf  = io.BytesIO(data)
+                buf.name = nome_curto
                 buf.size = len(data)
                 parcial[base_k] = buf
+        else:
+            container.warning(f"Nenhum arquivo reconhecido automaticamente em `{zip_obj.name}`.")
+
+        # ── Selectbox manual apenas para bases que não foram detectadas ───
+        bases_faltando = [k for k in bases_alvo if k not in detectados]
+        if bases_faltando and planilhas:
+            opcoes_manual = ["— não usar —"] + [
+                p.split('/')[-1] + f"  ({p})" for p in planilhas
+            ]
+            mapa_opcoes = {opcoes_manual[i + 1]: planilhas[i] for i in range(len(planilhas))}
+            container.caption("Atribuição manual para arquivos não reconhecidos:")
+            for base_k in bases_faltando:
+                sel_key = f"{prefix}_manual_{base_k}"
+                escolha = container.selectbox(
+                    f"Arquivo para **{BASES_LABELS[base_k]}**",
+                    options=opcoes_manual,
+                    index=0,
+                    key=sel_key,
+                )
+                if escolha != "— não usar —" and escolha in mapa_opcoes:
+                    caminho = mapa_opcoes[escolha]
+                    data = zf.read(caminho)
+                    buf  = io.BytesIO(data)
+                    buf.name = caminho.split('/')[-1]
+                    buf.size = len(data)
+                    parcial[base_k] = buf
 
         return parcial
 
-    # ── ZIP 1 (Matrix / CBR / CCEAR) ──────────────────────────────────────
-    st.sidebar.markdown(f"{status_icon('db_matrix')} **ZIP 1 — Matrix / CBR / CCEAR**")
+    # ── ZIP 1: CBR / CCEAR (+ Matrix se houver) ───────────────────────────
+    st.sidebar.markdown(
+        f"{status_icon('db_ccear')} {status_icon('db_cbr')} {status_icon('db_matrix')} "
+        f"**ZIP 1 — CBR / CCEAR / Matrix**"
+    )
     zip1 = st.sidebar.file_uploader(
-        "Subir ZIP (Matrix/CBR/CCEAR)", type=['zip', 'xlsx', 'xlsm', 'csv'],
+        "Subir ZIP (CBR / CCEAR / Matrix)", type=['zip', 'xlsx', 'xlsm', 'csv'],
         key="up_zip1_cliq"
     )
 
     if zip1 is not None:
         if zip1.name.lower().endswith('.zip'):
-            with st.sidebar.expander("⚙️ Atribuir arquivos — ZIP 1", expanded=True):
-                parcial1 = _processar_zip(zip1, "zip1", st.sidebar)
+            with st.sidebar.expander("⚙️ ZIP 1 — detalhes", expanded=True):
+                parcial1 = _autodetectar_zip(
+                    zip1, "zip1", ['db_ccear', 'db_cbr', 'db_matrix'], st.sidebar
+                )
             for k, v in parcial1.items():
                 if v is not None:
                     resultado[k] = v
         else:
-            base_direta = st.sidebar.selectbox(
-                f"'{zip1.name}' é qual base?",
-                options=list(BASES_LABELS.values()),
-                key="up_zip1_base_direta"
-            )
-            chave_direta = [k for k, v in BASES_LABELS.items() if v == base_direta][0]
-            resultado[chave_direta] = zip1
+            # Arquivo avulso: tenta autodetectar pelo nome
+            base_auto = detectar_base_por_nome(zip1.name)
+            if base_auto:
+                st.sidebar.success(f"✅ Detectado como **{BASES_LABELS[base_auto]}**")
+                resultado[base_auto] = zip1
+            else:
+                labels_zip1 = {k: v for k, v in BASES_LABELS.items() if k != 'db_bismut'}
+                base_direta = st.sidebar.selectbox(
+                    f"'{zip1.name}' é qual base?",
+                    options=list(labels_zip1.values()),
+                    key="up_zip1_base_direta"
+                )
+                chave_direta = [k for k, v in labels_zip1.items() if v == base_direta][0]
+                resultado[chave_direta] = zip1
 
-    # ── ZIP 2 (Bismut ou qualquer outra) ──────────────────────────────────
-    st.sidebar.markdown(f"{status_icon('db_bismut')} **ZIP 2 — Bismut (ou outro)**")
+    # ── ZIP 2: Bismut ──────────────────────────────────────────────────────
+    st.sidebar.markdown(f"{status_icon('db_bismut')} **ZIP 2 — Bismut**")
     zip2 = st.sidebar.file_uploader(
         "Subir ZIP (Bismut)", type=['zip', 'xlsx', 'xlsm', 'csv'],
         key="up_zip2_cliq"
@@ -299,19 +354,18 @@ def zip_multi_base_sidebar():
 
     if zip2 is not None:
         if zip2.name.lower().endswith('.zip'):
-            with st.sidebar.expander("⚙️ Atribuir arquivos — ZIP 2", expanded=True):
-                parcial2 = _processar_zip(zip2, "zip2", st.sidebar)
+            with st.sidebar.expander("⚙️ ZIP 2 — detalhes", expanded=True):
+                parcial2 = _autodetectar_zip(zip2, "zip2", ['db_bismut'], st.sidebar)
             for k, v in parcial2.items():
                 if v is not None:
                     resultado[k] = v
         else:
-            base_direta2 = st.sidebar.selectbox(
-                f"'{zip2.name}' é qual base?",
-                options=list(BASES_LABELS.values()),
-                key="up_zip2_base_direta"
-            )
-            chave_direta2 = [k for k, v in BASES_LABELS.items() if v == base_direta2][0]
-            resultado[chave_direta2] = zip2
+            base_auto2 = detectar_base_por_nome(zip2.name)
+            if base_auto2 == 'db_bismut':
+                st.sidebar.success("✅ Detectado como **Bismut**")
+                resultado['db_bismut'] = zip2
+            else:
+                resultado['db_bismut'] = zip2
 
     return resultado
 
@@ -402,7 +456,7 @@ def gerar_relatorio_match(df_conferencia):
         vendedor   = str(row.get('Vendedor', '')).strip() if row.get('Vendedor', '-') != '-' else ''
         comprador  = str(row.get('Comprador', '')).strip() if row.get('Comprador', '-') != '-' else ''
         submercado = str(row.get('Submercado', '')).strip()
-        is_bismut  = 'BISMUT' in str(row.get('Parte', '')).upper()
+        is_bismut  = any(p in str(row.get('Parte', '')).upper() for p in ('BISMUT', 'GET', 'CINERGY', 'MTX CAMANDUCAIA', 'ARGENTUM'))
         boleta     = row.iloc[0] if len(row) > 0 else ''
         match, bases = verificar_match_ccee_linha(vendedor, comprador, submercado, is_bismut)
         resultados.append({
@@ -628,9 +682,6 @@ def build_ccee_tabela(perfis, db_keys, filtro_sub):
         rows.append({'PERFIL': perfil, 'Comprador': comp, 'Vendedor': vend, 'NET': round(comp - vend, 6)})
     return adicionar_total(pd.DataFrame(rows))
 
-# ─────────────────────────────────────────────────────────────────────────────
-# build_wbc_tabela: soma Volume MWm de TODAS as boletas (sem filtro por Parte)
-# ─────────────────────────────────────────────────────────────────────────────
 def build_wbc_tabela(perfis, df_wbc_base):
     rows = []
     for perfil in perfis:
@@ -747,6 +798,11 @@ def resolver_tipo_energia(tipo_raw, parte_raw):
         return 'Incentivada-I5'
 
     return tipo
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PARTES QUE USAM BASE BISMUT
+# ─────────────────────────────────────────────────────────────────────────────
+PARTES_BISMUT = ('BISMUT', 'GET', 'CINERGY', 'MTX CAMANDUCAIA', 'ARGENTUM')
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 7. PROCESSAMENTO DA TABELA
@@ -882,16 +938,27 @@ if st.session_state['df_bruto'] is not None:
                     if info['Comprador']:          df_conferencia.loc[mask, 'Comprador'] = info['Comprador']
                     if info['CliqCCEE Paradigma']: df_conferencia.loc[mask, 'CliqCCEE Paradigma'] = info['CliqCCEE Paradigma']
 
+            # ── resolver_cliq CORRIGIDO ────────────────────────────────────
             def resolver_cliq(row):
                 vend = row['Vendedor']  if row['Vendedor']  != "-" else ""
                 comp = row['Comprador'] if row['Comprador'] != "-" else ""
-                if 'BISMUT' in str(row['Parte']).upper():
-                    return buscar_cliq_ccee(row['CliqCCEE Paradigma'], row['Contrato CliqCCEE mes anterior'],
-                                            st.session_state['db_bismut'], 'bismut', vend, comp)
-                for t, k in [('ccear', 'db_ccear'), ('cbr', 'db_cbr'), ('matrix', 'db_matrix')]:
-                    res = buscar_cliq_ccee(row['CliqCCEE Paradigma'], row['Contrato CliqCCEE mes anterior'],
-                                           st.session_state[k], t, vend, comp)
-                    if res != "Verificar": return res
+                parte_upper = str(row['Parte']).upper()
+
+                # Partes que usam EXCLUSIVAMENTE a base Bismut
+                if any(p in parte_upper for p in PARTES_BISMUT):
+                    return buscar_cliq_ccee(
+                        row['CliqCCEE Paradigma'], row['Contrato CliqCCEE mes anterior'],
+                        st.session_state.get('db_bismut'), 'bismut', vend, comp
+                    )
+
+                # Demais partes (Matrix e similares): busca em CCEAR → CBR → MATRIX
+                for tipo, db_key in [('ccear', 'db_ccear'), ('cbr', 'db_cbr'), ('matrix', 'db_matrix')]:
+                    res = buscar_cliq_ccee(
+                        row['CliqCCEE Paradigma'], row['Contrato CliqCCEE mes anterior'],
+                        st.session_state.get(db_key), tipo, vend, comp
+                    )
+                    if res != "Verificar":
+                        return res
                 return "Verificar"
 
             df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
@@ -1114,7 +1181,6 @@ if st.session_state['df_bruto'] is not None:
 
             # ─────────────────────────────────────────────────────────────────
             # HELPER: aplica flags de zeragem sobre df_conferencia completo
-            # (sem filtro por Parte — usado pelas tabelas WBC)
             # ─────────────────────────────────────────────────────────────────
             def df_wbc_completo():
                 df_w = df_conferencia.copy()
@@ -1128,7 +1194,6 @@ if st.session_state['df_bruto'] is not None:
                     df_w.loc[mask_zp & mask_zc, 'Volume MWm'] = 0.0
                 return df_w
 
-            # Gera o df base uma única vez para todas as tabelas WBC
             df_wbc_base = df_wbc_completo()
 
             # ─────────────────────────────────────────────────────────────────
