@@ -1,28 +1,44 @@
 import streamlit as st
 import pandas as pd
+import unicodedata
 
-# Título
+# FUNÇÃO PARA PADRONIZAR COLUNAS
+def limpar_coluna(texto):
+
+    texto = str(texto).strip().upper()
+
+    texto = unicodedata.normalize('NFKD', texto)\
+        .encode('ASCII', 'ignore')\
+        .decode('utf-8')
+
+    return texto
+
+
+# TÍTULO
 st.title("Book de Energia")
 
-# Upload
+# UPLOAD
 arquivo = st.file_uploader(
     "Contratos aprovados",
     type=['xlsx', 'csv', 'xlsm']
 )
 
-# Se subiu arquivo
+# SE SUBIU ARQUIVO
 if arquivo is not None:
 
     st.success("Arquivo carregado com sucesso!")
 
-    # Lê a aba correta
+    # LÊ A ABA
     df = pd.read_excel(
         arquivo,
         sheet_name='Contratos_Selecionados'
     )
 
-    # Mostra apenas a coluna Codigo_WBC
+    # PADRONIZA COLUNAS
+    df.columns = [limpar_coluna(col) for col in df.columns]
+
+    # MOSTRA SOMENTE AS COLUNAS
     st.dataframe(
-        df[['Codigo_WBC']],
+        df[['CODIGO_WBC', 'OPERACAO']],
         hide_index=True
     )
