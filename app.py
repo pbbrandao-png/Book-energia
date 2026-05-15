@@ -19,6 +19,10 @@ def tratar_tipo_energia(valor):
 
     mapa = {
         'Incentivada-50%': 'Incentivada-I5'
+        'Incentivada-CQ50%': 'Incentivada-CQ5'
+        'Incentivada-100%': 'Incentivada-I1'
+       'Incentivada-100%': 'Incentivada-I0)'
+        
     }
 
     return mapa.get(valor, valor)
