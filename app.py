@@ -60,7 +60,8 @@ if arquivo is not None:
             'PARTE_NOME_FANTASIA': 'PARTE',
             'MOVIMENTACAO': 'OPERACAO',
             'FONTE_CONTRATO': 'FONTE',
-            'CODIGO_WBC': 'BOLETA'
+            'CODIGO_WBC': 'BOLETA',
+            'CONTRAPARTE_NOME_FANTASIA': 'CONTRAPARTE'
         }
     )
 
@@ -97,6 +98,7 @@ if arquivo is not None:
         'OPERACAO',
         'FONTE',
         'PARTE',
+        'CONTRAPARTE',
         'CP/LP'
     ]
 
