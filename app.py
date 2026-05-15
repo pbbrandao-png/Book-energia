@@ -83,7 +83,7 @@ if arquivo is not None:
         df['FONTE'] = df['FONTE'].apply(tratar_fonte)
 
     # TRATA SUBMERCADO
-if 'SUBMERCADO' in df.columns:
+    if 'SUBMERCADO' in df.columns:
 
         df['SUBMERCADO'] = df['SUBMERCADO'].apply(tratar_submercado)
     
