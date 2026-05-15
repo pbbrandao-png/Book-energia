@@ -51,11 +51,18 @@ if arquivo is not None:
     # PADRONIZA COLUNAS
     df.columns = [limpar_coluna(col) for col in df.columns]
 
+     # RENOMEIA COLUNA
+    df = df.rename(
+        columns={
+            'PARTE_NOME_FANTASIA': 'PARTE'
+        }
+    )
+
     # TRATA TIPO ENERGIA
     df['TIPO_ENERGIA'] = df['TIPO_ENERGIA'].apply(tratar_tipo_energia)
 
     # MOSTRA TABELA
     st.dataframe(
-        df[['CODIGO_WBC', 'OPERACAO', 'TIPO_ENERGIA']],
+        df[['CODIGO_WBC', 'OPERACAO', 'TIPO_ENERGIA','PARTE']],
         hide_index=True
     )
