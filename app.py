@@ -6,7 +6,7 @@ st.title("Book de Energia")
 # Caixa de upload
 arquivo = st.file_uploader(
     "Contratos aprovados",
-    type=['xlsx', 'csv']
+    type=['xlsx', 'csv','xlsm']
 )
 
 # Verifica se usuário subiu algo
