@@ -1287,7 +1287,7 @@ if st.session_state['df_bruto'] is not None:
 
             filtro_sub_get = st.selectbox(
                 "Filtro Submercado (Tabela GET CCEE)",
-                options=submercados_bismut,
+                options=submercados_matrix,
                 key="filtro_submercado_get_ccee"
             )
 
@@ -1299,13 +1299,13 @@ if st.session_state['df_bruto'] is not None:
                 "GET ENERGY TRADING CQ5",
             ]
 
-            df_get_ccee_tab = build_ccee_tabela(PERFIS_GET, ['db_bismut'], filtro_sub_get)
+            df_get_ccee_tab = build_ccee_tabela(PERFIS_GET, ['db_matrix'], filtro_sub_get)
             df_get_wbc_tab  = build_wbc_tabela(PERFIS_GET, df_wbc_base)
 
             render_tabela_par(
                 "GET ENERGY TRADING CCEE", "GET ENERGY TRADING WBC",
                 df_get_ccee_tab, df_get_wbc_tab,
-                aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
+                aviso_sem_base="Base Cliq matrix não carregada." if db_matrix_ccee is None else None
             )
             render_reconciliacao("GET ENERGY TRADING", df_get_ccee_tab, df_get_wbc_tab)
 
@@ -1316,7 +1316,7 @@ if st.session_state['df_bruto'] is not None:
 
             filtro_sub_cinergy = st.selectbox(
                 "Filtro Submercado (Tabela CINERGY CCEE)",
-                options=submercados_bismut,
+                options=submercados_matrix,
                 key="filtro_submercado_cinergy_ccee"
             )
 
@@ -1332,13 +1332,13 @@ if st.session_state['df_bruto'] is not None:
                 "CINERGY COM I8 2",
             ]
 
-            df_cinergy_ccee_tab = build_ccee_tabela(PERFIS_CINERGY, ['db_bismut'], filtro_sub_cinergy)
+            df_cinergy_ccee_tab = build_ccee_tabela(PERFIS_CINERGY, ['db_matrix'], filtro_sub_cinergy)
             df_cinergy_wbc_tab  = build_wbc_tabela(PERFIS_CINERGY, df_wbc_base)
 
             render_tabela_par(
                 "CINERGY CCEE", "CINERGY WBC",
                 df_cinergy_ccee_tab, df_cinergy_wbc_tab,
-                aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
+                aviso_sem_base="Base Cliq matrix não carregada." if db_matrix_ccee is None else None
             )
             render_reconciliacao("CINERGY", df_cinergy_ccee_tab, df_cinergy_wbc_tab)
 
@@ -1349,7 +1349,7 @@ if st.session_state['df_bruto'] is not None:
 
             filtro_sub_mtx = st.selectbox(
                 "Filtro Submercado (Tabela MTX CAMANDUCAIA CCEE)",
-                options=submercados_bismut,
+                options=submercados_matrix,
                 key="filtro_submercado_mtx_ccee"
             )
 
@@ -1357,13 +1357,13 @@ if st.session_state['df_bruto'] is not None:
                 "MTX CAMANDUCAIA",
             ]
 
-            df_mtx_ccee_tab = build_ccee_tabela(PERFIS_MTX, ['db_bismut'], filtro_sub_mtx)
+            df_mtx_ccee_tab = build_ccee_tabela(PERFIS_MTX, ['db_matrix'], filtro_sub_mtx)
             df_mtx_wbc_tab  = build_wbc_tabela(PERFIS_MTX, df_wbc_base)
 
             render_tabela_par(
                 "MTX CAMANDUCAIA CCEE", "MTX CAMANDUCAIA WBC",
                 df_mtx_ccee_tab, df_mtx_wbc_tab,
-                aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
+                aviso_sem_base="Base Cliq matrix não carregada." if db_matrix_ccee is None else None
             )
             render_reconciliacao("MTX CAMANDUCAIA", df_mtx_ccee_tab, df_mtx_wbc_tab)
 
@@ -1386,13 +1386,13 @@ if st.session_state['df_bruto'] is not None:
                 "ARGENTUM COM I8",
             ]
 
-            df_argentum_ccee_tab = build_ccee_tabela(PERFIS_ARGENTUM, ['db_bismut'], filtro_sub_argentum)
+            df_argentum_ccee_tab = build_ccee_tabela(PERFIS_ARGENTUM, ['db_matrix'], filtro_sub_argentum)
             df_argentum_wbc_tab  = build_wbc_tabela(PERFIS_ARGENTUM, df_wbc_base)
 
             render_tabela_par(
                 "ARGENTUM CCEE", "ARGENTUM WBC",
                 df_argentum_ccee_tab, df_argentum_wbc_tab,
-                aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
+                aviso_sem_base="Base Cliq matrix não carregada." if db_matrix_ccee is None else None
             )
             render_reconciliacao("ARGENTUM", df_argentum_ccee_tab, df_argentum_wbc_tab)
 
