@@ -14,7 +14,7 @@ def limpar_coluna(texto):
     return texto
 
 
-# FUNÇÃO PARA TRATAR TIPO ENERGIA
+# FUNÇÃO PARA TRATAR FONTE
 def tratar_fonte(valor):
 
     mapa = {
@@ -44,7 +44,7 @@ if arquivo is not None:
     # LÊ O EXCEL
     df = pd.read_excel(
         arquivo,
-               skiprows=9
+        skiprows=9
     )
 
     # PADRONIZA COLUNAS
@@ -59,7 +59,7 @@ if arquivo is not None:
         }
     )
 
-    # TRATA TIPO ENERGIA
+    # TRATA FONTE
     df['FONTE'] = df['FONTE'].apply(tratar_fonte)
 
     # MOSTRA TABELA
