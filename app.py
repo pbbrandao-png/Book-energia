@@ -21,7 +21,7 @@ def tratar_tipo_energia(valor):
         'Incentivada-50%': 'Incentivada-I5'
         'Incentivada-CQ50%': 'Incentivada-CQ5'
         'Incentivada-100%': 'Incentivada-I1'
-       'Incentivada-100%': 'Incentivada-I0'
+        'Incentivada-0%': 'Incentivada-I0'
         
     }
 
