@@ -60,6 +60,7 @@ if arquivo is not None:
             'PARTE_NOME_FANTASIA': 'PARTE',
             'MOVIMENTACAO': 'OPERACAO',
             'FONTE_CONTRATO': 'FONTE',
+            'CODIGO_WBC': 'BOLETA'
         }
     )
 
@@ -92,7 +93,7 @@ if arquivo is not None:
 
     # COLUNAS QUE VOCÊ QUER MOSTRAR
     colunas_desejadas = [
-        'CODIGO_WBC',
+        'BOLETA',
         'OPERACAO',
         'FONTE',
         'PARTE',
