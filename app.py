@@ -210,12 +210,6 @@ def _listar_planilhas_zip(zf):
 
 
 def detectar_base_por_nome(nome_arquivo):
-    """
-    Mapeia nome de arquivo para chave de base pelo padrão de nome.
-      ccear_q_XXXXXX.*            → db_ccear
-      cbr_mercado_proprio_XXXX    → db_cbr
-      cceal_firme_XXXXXX.*        → db_bismut  ← CCEAL Bismut vai junto com db_bismut
-    """
     n = nome_arquivo.lower()
     if n.startswith('ccear_q_'):
         return 'db_ccear'
@@ -789,28 +783,12 @@ def resolver_tipo_energia(tipo_raw, parte_raw):
     return tipo
 
 # ─────────────────────────────────────────────────────────────────────────────
-# APENAS BISMUT USA BASE BISMUT
-# GET / CINERGY / ARGENTUM / MTX CAMANDUCAIA
-# usam as bases normais da Matrix
+# PARTES QUE USAM BASE BISMUT
 # ─────────────────────────────────────────────────────────────────────────────
-PARTES_BISMUT = ('BISMUT',)
-
-
-def obter_bases_por_parte(parte):
-    parte_upper = str(parte).upper().strip()
-
-    # Apenas BISMUT usa db_bismut
-    if any(p in parte_upper for p in PARTES_BISMUT):
-        return ['db_bismut']
-
-    # Todas as demais usam bases Matrix
-    return ['db_ccear', 'db_cbr', 'db_matrix']
+PARTES_BISMUT = ('BISMUT', 'GET', 'CINERGY', 'MTX CAMANDUCAIA', 'ARGENTUM')
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FUNÇÃO: Monta tabela unificada de todas as bases Cliq
-# Colunas visíveis: CODIGO_CONTRATO, SITUACAO_CONTRATO, SUBMERCADO_ENTREGA,
-#                   SIGLA_PERFIL_VENDEDOR, SIGLA_PERFIL_COMPRADOR, MWmedio,
-#                   STATUS_MONTANTE  + coluna extra ORIGEM (nome da base)
 # ─────────────────────────────────────────────────────────────────────────────
 COLUNAS_CLIQ_TABELA = [
     'CODIGO_CONTRATO',
@@ -830,19 +808,16 @@ LABEL_BASE = {
 }
 
 def construir_tabela_cliq_unificada():
-    """Junta todas as bases disponíveis nas colunas de interesse + coluna ORIGEM."""
     frames = []
     for db_key, label in LABEL_BASE.items():
         df_cliq = st.session_state.get(db_key)
         if df_cliq is None:
             continue
         df_temp = df_cliq.reset_index()
-        # Garante que CODIGO_CONTRATO existe (vem do index)
         if 'CODIGO_CONTRATO' not in df_temp.columns and df_temp.index.name == 'CODIGO_CONTRATO':
             df_temp = df_temp.rename_axis('CODIGO_CONTRATO').reset_index()
         colunas_presentes = [c for c in COLUNAS_CLIQ_TABELA if c in df_temp.columns]
         df_sub = df_temp[colunas_presentes].copy()
-        # Preenche colunas faltantes com vazio
         for c in COLUNAS_CLIQ_TABELA:
             if c not in df_sub.columns:
                 df_sub[c] = ""
@@ -853,7 +828,6 @@ def construir_tabela_cliq_unificada():
         return pd.DataFrame(columns=COLUNAS_CLIQ_TABELA + ['ORIGEM'])
 
     df_unif = pd.concat(frames, ignore_index=True)
-    # Limpar MWmedio: remover espaços e trocar vírgula por ponto
     df_unif['MWmedio'] = pd.to_numeric(
         df_unif['MWmedio'].astype(str).str.strip().str.replace(',', '.').str.replace('"', ''),
         errors='coerce'
@@ -867,7 +841,7 @@ def construir_tabela_cliq_unificada():
 tab_book, tab_cliq = st.tabs(["📋 Book de Energia", "🗄️ Bases Cliq CCEE"])
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ABA 1 — BOOK DE ENERGIA (lógica original)
+# ABA 1 — BOOK DE ENERGIA
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_book:
     if st.session_state['df_bruto'] is not None:
@@ -1007,39 +981,29 @@ with tab_book:
                     comp = row['Comprador'] if row['Comprador'] != "-" else ""
                     parte_upper = str(row['Parte']).upper()
 
-                  bases = obter_bases_por_parte(row['Parte'])
+                    if any(p in parte_upper for p in PARTES_BISMUT):
+                        return buscar_cliq_ccee(
+                            row['CliqCCEE Paradigma'], row['Contrato CliqCCEE mes anterior'],
+                            st.session_state.get('db_bismut'), 'bismut', vend, comp
+                        )
 
-if bases == ['db_bismut']:
-    return buscar_cliq_ccee(
-        row['CliqCCEE Paradigma'],
-        row['Contrato CliqCCEE mes anterior'],
-        st.session_state.get('db_bismut'),
-        'bismut',
-        vend,
-        comp
-    )
+                    for tipo, db_key in [('ccear', 'db_ccear'), ('cbr', 'db_cbr'), ('matrix', 'db_matrix')]:
+                        res = buscar_cliq_ccee(
+                            row['CliqCCEE Paradigma'], row['Contrato CliqCCEE mes anterior'],
+                            st.session_state.get(db_key), tipo, vend, comp
+                        )
+                        if res != "Verificar":
+                            return res
+                    return "Verificar"
 
-for tipo, db_key in [
-    ('ccear', 'db_ccear'),
-    ('cbr', 'db_cbr'),
-    ('matrix', 'db_matrix')
-]:
-    if db_key not in bases:
-        continue
+                df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
+                df_conferencia['Modulação CCEE']    = df_conferencia.apply(buscar_modulacao_cliq, axis=1)
 
-    res = buscar_cliq_ccee(
-        row['CliqCCEE Paradigma'],
-        row['Contrato CliqCCEE mes anterior'],
-        st.session_state.get(db_key),
-        tipo,
-        vend,
-        comp
-    )
-
-    if res != "Verificar":
-        return res
-
-return "Verificar"
+                def check_modulacao(row):
+                    wbc  = str(row['Modulacao WBC']).strip().lower()
+                    ccee = str(row['Modulação CCEE']).strip().lower()
+                    if wbc in ['-', '', 'nan'] or ccee in ['-', '', 'nan', 'verificar']: return "-"
+                    return "OK" if wbc == ccee else "Verificar"
 
                 df_conferencia['Check Modulação'] = df_conferencia.apply(check_modulacao, axis=1)
 
@@ -1268,8 +1232,25 @@ return "Verificar"
                 df_wbc_base = df_wbc_completo()
 
                 # ─────────────────────────────────────────────────────────────
-                # BLOCO BISMUT
-                # CCEE → db_bismut | WBC → perfis Bismut no book
+                # BASE Matrix: db_ccear + db_cbr + db_matrix (sem db_bismut)
+                # ─────────────────────────────────────────────────────────────
+                DBS_MATRIX = ['db_ccear', 'db_cbr', 'db_matrix']
+                bases_matrix_ok = any(st.session_state.get(k) is not None for k in DBS_MATRIX)
+
+                submercados_matrix = ["Todos"]
+                for db_key in DBS_MATRIX:
+                    df_m = st.session_state.get(db_key)
+                    if df_m is not None:
+                        df_mt = df_m.reset_index()
+                        if 'SUBMERCADO_ENTREGA' in df_mt.columns:
+                            for s in sorted(df_mt['SUBMERCADO_ENTREGA'].dropna().astype(str).str.strip()
+                                            .replace('', pd.NA).dropna().unique().tolist()):
+                                if s not in submercados_matrix:
+                                    submercados_matrix.append(s)
+                submercados_matrix = ["Todos"] + sorted(submercados_matrix[1:])
+
+                # ─────────────────────────────────────────────────────────────
+                # BLOCO BISMUT — ÚNICA empresa que usa db_bismut na CCEE
                 # ─────────────────────────────────────────────────────────────
                 st.write("### 📊 Tabela — BISMUT CCEE  |  BISMUT WBC")
 
@@ -1298,7 +1279,6 @@ return "Verificar"
                     "BISMUT COM",
                 ]
 
-                # CCEE lê APENAS db_bismut
                 df_bismut_ccee_tab = build_ccee_tabela(PERFIS_BISMUT, ['db_bismut'], filtro_sub_bismut)
                 df_bismut_wbc_tab  = build_wbc_tabela(PERFIS_BISMUT, df_wbc_base)
 
@@ -1310,24 +1290,9 @@ return "Verificar"
                 render_reconciliacao("BISMUT", df_bismut_ccee_tab, df_bismut_wbc_tab)
 
                 # ─────────────────────────────────────────────────────────────
-                # BLOCO MATRIX
-                # CCEE → db_ccear + db_cbr + db_matrix (NÃO usa db_bismut)
+                # BLOCO MATRIX — db_ccear + db_cbr + db_matrix
                 # ─────────────────────────────────────────────────────────────
                 st.write("### 📊 Tabela — MATRIX CCEE  |  MATRIX WBC")
-
-                DBS_MATRIX = ['db_ccear', 'db_cbr', 'db_matrix']
-
-                submercados_matrix = ["Todos"]
-                for db_key in DBS_MATRIX:
-                    df_m = st.session_state.get(db_key)
-                    if df_m is not None:
-                        df_mt = df_m.reset_index()
-                        if 'SUBMERCADO_ENTREGA' in df_mt.columns:
-                            for s in sorted(df_mt['SUBMERCADO_ENTREGA'].dropna().astype(str).str.strip()
-                                            .replace('', pd.NA).dropna().unique().tolist()):
-                                if s not in submercados_matrix:
-                                    submercados_matrix.append(s)
-                submercados_matrix = ["Todos"] + sorted(submercados_matrix[1:])
 
                 filtro_sub_matrix = st.selectbox(
                     "Filtro Submercado (Tabela Matrix CCEE)",
@@ -1343,11 +1308,9 @@ return "Verificar"
                     "MATRIX COM CQ5",
                 ]
 
-                # CCEE lê APENAS db_ccear, db_cbr, db_matrix — sem db_bismut
                 df_matrix_ccee_tab = build_ccee_tabela(PERFIS_MATRIX, DBS_MATRIX, filtro_sub_matrix)
                 df_matrix_wbc_tab  = build_wbc_tabela(PERFIS_MATRIX, df_wbc_base)
 
-                bases_matrix_ok = any(st.session_state.get(k) is not None for k in DBS_MATRIX)
                 render_tabela_par(
                     "MATRIX CCEE", "MATRIX WBC",
                     df_matrix_ccee_tab, df_matrix_wbc_tab,
@@ -1356,14 +1319,13 @@ return "Verificar"
                 render_reconciliacao("MATRIX", df_matrix_ccee_tab, df_matrix_wbc_tab)
 
                 # ─────────────────────────────────────────────────────────────
-                # BLOCO GET ENERGY TRADING
-                # CCEE → db_bismut apenas
+                # BLOCO GET ENERGY TRADING — usa bases Matrix (db_ccear + db_cbr + db_matrix)
                 # ─────────────────────────────────────────────────────────────
                 st.write("### 📊 Tabela — GET ENERGY TRADING CCEE  |  GET ENERGY TRADING WBC")
 
                 filtro_sub_get = st.selectbox(
                     "Filtro Submercado (Tabela GET CCEE)",
-                    options=submercados_bismut,
+                    options=submercados_matrix,
                     key="filtro_submercado_get_ccee"
                 )
 
@@ -1375,24 +1337,24 @@ return "Verificar"
                     "GET ENERGY TRADING CQ5",
                 ]
 
-                df_get_ccee_tab = build_ccee_tabela(PERFIS_GET, ['db_bismut'], filtro_sub_get)
+                df_get_ccee_tab = build_ccee_tabela(PERFIS_GET, DBS_MATRIX, filtro_sub_get)
                 df_get_wbc_tab  = build_wbc_tabela(PERFIS_GET, df_wbc_base)
 
                 render_tabela_par(
                     "GET ENERGY TRADING CCEE", "GET ENERGY TRADING WBC",
                     df_get_ccee_tab, df_get_wbc_tab,
-                    aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
+                    aviso_sem_base="Nenhuma base Cliq Matrix/CCEAR/CBR carregada." if not bases_matrix_ok else None
                 )
                 render_reconciliacao("GET ENERGY TRADING", df_get_ccee_tab, df_get_wbc_tab)
 
                 # ─────────────────────────────────────────────────────────────
-                # BLOCO CINERGY
+                # BLOCO CINERGY — usa bases Matrix (db_ccear + db_cbr + db_matrix)
                 # ─────────────────────────────────────────────────────────────
                 st.write("### 📊 Tabela — CINERGY CCEE  |  CINERGY WBC")
 
                 filtro_sub_cinergy = st.selectbox(
                     "Filtro Submercado (Tabela CINERGY CCEE)",
-                    options=submercados_bismut,
+                    options=submercados_matrix,
                     key="filtro_submercado_cinergy_ccee"
                 )
 
@@ -1408,24 +1370,24 @@ return "Verificar"
                     "CINERGY COM I8 2",
                 ]
 
-                df_cinergy_ccee_tab = build_ccee_tabela(PERFIS_CINERGY, ['db_bismut'], filtro_sub_cinergy)
+                df_cinergy_ccee_tab = build_ccee_tabela(PERFIS_CINERGY, DBS_MATRIX, filtro_sub_cinergy)
                 df_cinergy_wbc_tab  = build_wbc_tabela(PERFIS_CINERGY, df_wbc_base)
 
                 render_tabela_par(
                     "CINERGY CCEE", "CINERGY WBC",
                     df_cinergy_ccee_tab, df_cinergy_wbc_tab,
-                    aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
+                    aviso_sem_base="Nenhuma base Cliq Matrix/CCEAR/CBR carregada." if not bases_matrix_ok else None
                 )
                 render_reconciliacao("CINERGY", df_cinergy_ccee_tab, df_cinergy_wbc_tab)
 
                 # ─────────────────────────────────────────────────────────────
-                # BLOCO MTX CAMANDUCAIA
+                # BLOCO MTX CAMANDUCAIA — usa bases Matrix (db_ccear + db_cbr + db_matrix)
                 # ─────────────────────────────────────────────────────────────
                 st.write("### 📊 Tabela — MTX CAMANDUCAIA CCEE  |  MTX CAMANDUCAIA WBC")
 
                 filtro_sub_mtx = st.selectbox(
                     "Filtro Submercado (Tabela MTX CAMANDUCAIA CCEE)",
-                    options=submercados_bismut,
+                    options=submercados_matrix,
                     key="filtro_submercado_mtx_ccee"
                 )
 
@@ -1433,24 +1395,24 @@ return "Verificar"
                     "MTX CAMANDUCAIA",
                 ]
 
-                df_mtx_ccee_tab = build_ccee_tabela(PERFIS_MTX, ['db_bismut'], filtro_sub_mtx)
+                df_mtx_ccee_tab = build_ccee_tabela(PERFIS_MTX, DBS_MATRIX, filtro_sub_mtx)
                 df_mtx_wbc_tab  = build_wbc_tabela(PERFIS_MTX, df_wbc_base)
 
                 render_tabela_par(
                     "MTX CAMANDUCAIA CCEE", "MTX CAMANDUCAIA WBC",
                     df_mtx_ccee_tab, df_mtx_wbc_tab,
-                    aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
+                    aviso_sem_base="Nenhuma base Cliq Matrix/CCEAR/CBR carregada." if not bases_matrix_ok else None
                 )
                 render_reconciliacao("MTX CAMANDUCAIA", df_mtx_ccee_tab, df_mtx_wbc_tab)
 
                 # ─────────────────────────────────────────────────────────────
-                # BLOCO ARGENTUM
+                # BLOCO ARGENTUM — usa bases Matrix (db_ccear + db_cbr + db_matrix)
                 # ─────────────────────────────────────────────────────────────
                 st.write("### 📊 Tabela — ARGENTUM CCEE  |  ARGENTUM WBC")
 
                 filtro_sub_argentum = st.selectbox(
                     "Filtro Submercado (Tabela ARGENTUM CCEE)",
-                    options=submercados_bismut,
+                    options=submercados_matrix,
                     key="filtro_submercado_argentum_ccee"
                 )
 
@@ -1462,13 +1424,13 @@ return "Verificar"
                     "ARGENTUM COM I8",
                 ]
 
-                df_argentum_ccee_tab = build_ccee_tabela(PERFIS_ARGENTUM, ['db_bismut'], filtro_sub_argentum)
+                df_argentum_ccee_tab = build_ccee_tabela(PERFIS_ARGENTUM, DBS_MATRIX, filtro_sub_argentum)
                 df_argentum_wbc_tab  = build_wbc_tabela(PERFIS_ARGENTUM, df_wbc_base)
 
                 render_tabela_par(
                     "ARGENTUM CCEE", "ARGENTUM WBC",
                     df_argentum_ccee_tab, df_argentum_wbc_tab,
-                    aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
+                    aviso_sem_base="Nenhuma base Cliq Matrix/CCEAR/CBR carregada." if not bases_matrix_ok else None
                 )
                 render_reconciliacao("ARGENTUM", df_argentum_ccee_tab, df_argentum_wbc_tab)
 
@@ -1497,7 +1459,6 @@ with tab_cliq:
     if df_cliq_unif.empty:
         st.warning("Nenhuma base Cliq CCEE carregada. Suba os arquivos na barra lateral.")
     else:
-        # ── Métricas rápidas ───────────────────────────────────────────────
         bases_disponiveis = df_cliq_unif['ORIGEM'].unique().tolist()
         m_cols = st.columns(len(bases_disponiveis) + 1)
         m_cols[0].metric("Total de contratos", len(df_cliq_unif))
@@ -1507,7 +1468,6 @@ with tab_cliq:
 
         st.markdown("---")
 
-        # ── Área de busca / filtros ────────────────────────────────────────
         st.write("#### 🔍 Filtros")
 
         sb1, sb2, sb3 = st.columns([2, 2, 2])
@@ -1548,7 +1508,6 @@ with tab_cliq:
             key="cliq_busca_status_mont"
         )
 
-        # Filtro de origem (bases)
         origens_disponiveis = sorted(df_cliq_unif['ORIGEM'].unique().tolist())
         origem_selecionada = st.multiselect(
             "Bases / Origem (vazio = todas)",
@@ -1558,7 +1517,6 @@ with tab_cliq:
             key="cliq_busca_origem"
         )
 
-        # ── Aplicar filtros ────────────────────────────────────────────────
         df_view = df_cliq_unif.copy()
 
         if busca_codigo.strip():
@@ -1584,7 +1542,6 @@ with tab_cliq:
 
         st.markdown(f"**{len(df_view):,} contrato(s) encontrado(s)**")
 
-        # ── Tabela de resultados ───────────────────────────────────────────
         st.dataframe(
             df_view.reset_index(drop=True),
             use_container_width=True,
@@ -1601,7 +1558,6 @@ with tab_cliq:
             }
         )
 
-        # ── Resumo MWmedio por origem ──────────────────────────────────────
         with st.expander("📊 Resumo MW Médio por Base e Submercado", expanded=False):
             df_resumo = (
                 df_view
@@ -1617,8 +1573,8 @@ with tab_cliq:
                 use_container_width=True,
                 hide_index=True,
                 column_config={
-                    "ORIGEM":          st.column_config.TextColumn("Base"),
+                    "ORIGEM":             st.column_config.TextColumn("Base"),
                     "SUBMERCADO_ENTREGA": st.column_config.TextColumn("Submercado"),
-                    "MW Médio Total":  st.column_config.NumberColumn("MW Médio Total", format="%.6f"),
+                    "MW Médio Total":     st.column_config.NumberColumn("MW Médio Total", format="%.6f"),
                 }
             )
