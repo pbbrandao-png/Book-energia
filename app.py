@@ -15,7 +15,7 @@ def limpar_coluna(texto):
 
 
 # FUNÇÃO PARA TRATAR TIPO ENERGIA
-def Fonte_Contrato(valor):
+def tratar_fonte(valor):
 
     mapa = {
         'Incentivada 50%': 'Incentivada-I5',
@@ -60,7 +60,7 @@ if arquivo is not None:
     )
 
     # TRATA TIPO ENERGIA
-    df['FONTE'] = df['FONTE'].apply(FONTE)
+    df['FONTE'] = df['FONTE'].apply(tratar_fonte)
 
     # MOSTRA TABELA
     st.dataframe(
