@@ -25,6 +25,18 @@ def tratar_fonte(valor):
     }
 
     return mapa.get(valor, valor)
+    
+# FUNÇÃO PARA TRATAR SUBMERCADO
+def tratar_submercado(valor):
+
+    mapa = {
+        'N': 'NORTE',
+        'Sul': 'SUL',
+        'NE': 'NORDESTE',
+        'SE/CO': 'SUDESTE',
+    }
+
+    return mapa.get(valor, valor)
 
 
 # TÍTULO
@@ -70,6 +82,11 @@ if arquivo is not None:
 
         df['FONTE'] = df['FONTE'].apply(tratar_fonte)
 
+    # TRATA SUBMERCADO
+if 'SUBMERCADO' in df.columns:
+
+        df['SUBMERCADO'] = df['SUBMERCADO'].apply(tratar_submercado)
+    
     # CONVERTE DATAS
     df['SUPRIMENTO_INICIO'] = pd.to_datetime(
         df['SUPRIMENTO_INICIO'],
@@ -92,14 +109,15 @@ if arquivo is not None:
         lambda x: 'LP' if x > 31 else 'CP'
     )
 
-    # COLUNAS QUE VOCÊ QUER MOSTRAR
+    # COLUNAS
     colunas_desejadas = [
         'BOLETA',
         'OPERACAO',
         'FONTE',
         'PARTE',
         'CONTRAPARTE',
-        'CP/LP'
+        'CP/LP',
+        'SUBMERCADO'
     ]
 
     # VERIFICA QUAIS EXISTEM
