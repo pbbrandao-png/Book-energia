@@ -203,7 +203,6 @@ def uploader_com_zip(label, types, key, state_prefix, container):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _listar_planilhas_zip(zf):
-    """Retorna lista de todos os caminhos de planilha dentro do ZIP."""
     return sorted(
         nome for nome in zf.namelist()
         if nome.lower().endswith(EXTS_PLANILHA) and not nome.startswith('__MACOSX')
@@ -213,10 +212,9 @@ def _listar_planilhas_zip(zf):
 def detectar_base_por_nome(nome_arquivo):
     """
     Mapeia nome de arquivo para chave de base pelo padrão de nome.
-    Regras:
-      ccear_q_XXXXXX.*         → db_ccear
-      cbr_mercado_proprio_XXXX (sem 'parcela') → db_cbr
-      cceal_firme_XXXXXX.*     (sem 'parcela') → db_bismut
+      ccear_q_XXXXXX.*            → db_ccear
+      cbr_mercado_proprio_XXXX    → db_cbr
+      cceal_firme_XXXXXX.*        → db_bismut  ← CCEAL Bismut vai junto com db_bismut
     """
     n = nome_arquivo.lower()
     if n.startswith('ccear_q_'):
@@ -242,11 +240,6 @@ def zip_multi_base_sidebar():
     }
 
     def _autodetectar_zip(zip_obj, prefix, bases_alvo, container):
-        """
-        Lê o ZIP, detecta automaticamente os arquivos pelas regras de nome
-        e retorna {db_key: buf}. Para arquivos não reconhecidos mostra
-        selectbox manual apenas para as bases que faltaram.
-        """
         parcial = {}
         zip_id    = (zip_obj.name, zip_obj.size)
         key_id    = f"{prefix}_id"
@@ -255,7 +248,6 @@ def zip_multi_base_sidebar():
         if st.session_state.get(key_id) != zip_id:
             st.session_state[key_id]    = zip_id
             st.session_state[key_bytes] = zip_obj.read()
-            # Limpa seleções manuais anteriores ao trocar o ZIP
             for base_k in BASES_LABELS:
                 st.session_state.pop(f"{prefix}_manual_{base_k}", None)
 
@@ -263,7 +255,6 @@ def zip_multi_base_sidebar():
         zf = zipfile.ZipFile(io.BytesIO(raw_bytes))
         planilhas = _listar_planilhas_zip(zf)
 
-        # ── Autodetecção ──────────────────────────────────────────────────
         detectados = {}
         for caminho in planilhas:
             nome_curto = caminho.split('/')[-1]
@@ -284,7 +275,6 @@ def zip_multi_base_sidebar():
         else:
             container.warning(f"Nenhum arquivo reconhecido automaticamente em `{zip_obj.name}`.")
 
-        # ── Selectbox manual apenas para bases que não foram detectadas ───
         bases_faltando = [k for k in bases_alvo if k not in detectados]
         if bases_faltando and planilhas:
             opcoes_manual = ["— não usar —"] + [
@@ -330,7 +320,6 @@ def zip_multi_base_sidebar():
                 if v is not None:
                     resultado[k] = v
         else:
-            # Arquivo avulso: tenta autodetectar pelo nome
             base_auto = detectar_base_por_nome(zip1.name)
             if base_auto:
                 st.sidebar.success(f"✅ Detectado como **{BASES_LABELS[base_auto]}**")
@@ -345,10 +334,10 @@ def zip_multi_base_sidebar():
                 chave_direta = [k for k, v in labels_zip1.items() if v == base_direta][0]
                 resultado[chave_direta] = zip1
 
-    # ── ZIP 2: Bismut ──────────────────────────────────────────────────────
-    st.sidebar.markdown(f"{status_icon('db_bismut')} **ZIP 2 — Bismut**")
+    # ── ZIP 2: Bismut (cceal_firme) ──────────────────────────────────────
+    st.sidebar.markdown(f"{status_icon('db_bismut')} **ZIP 2 — Bismut (cceal_firme)**")
     zip2 = st.sidebar.file_uploader(
-        "Subir ZIP (Bismut)", type=['zip', 'xlsx', 'xlsm', 'csv'],
+        "Subir ZIP (Bismut / cceal_firme)", type=['zip', 'xlsx', 'xlsm', 'csv'],
         key="up_zip2_cliq"
     )
 
@@ -805,599 +794,811 @@ def resolver_tipo_energia(tipo_raw, parte_raw):
 PARTES_BISMUT = ('BISMUT', 'GET', 'CINERGY', 'MTX CAMANDUCAIA', 'ARGENTUM')
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 7. PROCESSAMENTO DA TABELA
+# FUNÇÃO: Monta tabela unificada de todas as bases Cliq
+# Colunas visíveis: CODIGO_CONTRATO, SITUACAO_CONTRATO, SUBMERCADO_ENTREGA,
+#                   SIGLA_PERFIL_VENDEDOR, SIGLA_PERFIL_COMPRADOR, MWmedio,
+#                   STATUS_MONTANTE  + coluna extra ORIGEM (nome da base)
 # ─────────────────────────────────────────────────────────────────────────────
-if st.session_state['df_bruto'] is not None:
-    try:
-        # --- AJUSTES MANUAIS ---
-        st.write("### 🛠️ Ajustes de Boleta")
-        with st.expander("Expandir painel de ajustes (Individual ou Lote)"):
-            tab_manual, tab_lote = st.tabs(["Edição Individual", "Upload em Lote"])
+COLUNAS_CLIQ_TABELA = [
+    'CODIGO_CONTRATO',
+    'SITUACAO_CONTRATO',
+    'SUBMERCADO_ENTREGA',
+    'SIGLA_PERFIL_VENDEDOR',
+    'SIGLA_PERFIL_COMPRADOR',
+    'MWmedio',
+    'STATUS_MONTANTE',
+]
 
-            with tab_manual:
-                c1, c2, c3, c4 = st.columns([1, 2, 2, 2])
-                edit_bol  = c1.text_input("ID Boleta",           key="input_bol")
-                edit_vend = c2.text_input("Novo Vendedor",       key="input_vend")
-                edit_comp = c3.text_input("Novo Comprador",      key="input_comp")
-                edit_cliq = c4.text_input("Novo Cliq Paradigma", key="input_cliq")
-                if st.button("Gravar Alteração"):
-                    if edit_bol:
-                        st.session_state['ajustes_manuais'][tratar_chave(edit_bol)] = {
-                            'Vendedor': edit_vend if edit_vend else None,
-                            'Comprador': edit_comp if edit_comp else None,
-                            'CliqCCEE Paradigma': edit_cliq if edit_cliq else None
-                        }
-                        salvar_disco('ajustes_manuais', st.session_state['ajustes_manuais'])
-                        st.success(f"Boleta {edit_bol} atualizada!")
-                        st.rerun()
+LABEL_BASE = {
+    'db_ccear':  'CCEAR_Q',
+    'db_cbr':    'CBR Mercado',
+    'db_matrix': 'Matrix',
+    'db_bismut': 'Bismut / CCEAL',
+}
 
-            with tab_lote:
-                st.write("Suba uma planilha com as colunas: **BOLETA**, **Vendedor**, **Comprador**, **CliqCCEE Paradigma**")
-                arquivo_lote = st.file_uploader("Planilha de Ajustes", type=['xlsx'], key="upload_lote")
-                if arquivo_lote:
-                    try:
-                        df_lote = pd.read_excel(arquivo_lote)
-                        df_lote.columns = [c.strip() for c in df_lote.columns]
-                        if 'BOLETA' in df_lote.columns:
-                            for _, r in df_lote.iterrows():
-                                b_id = tratar_chave(r['BOLETA'])
-                                if b_id:
-                                    st.session_state['ajustes_manuais'][b_id] = {
-                                        'Vendedor': str(r['Vendedor']).strip() if 'Vendedor' in r and not pd.isna(r['Vendedor']) else None,
-                                        'Comprador': str(r['Comprador']).strip() if 'Comprador' in r and not pd.isna(r['Comprador']) else None,
-                                        'CliqCCEE Paradigma': tratar_chave(r['CliqCCEE Paradigma']) if 'CliqCCEE Paradigma' in r and not pd.isna(r['CliqCCEE Paradigma']) else None
-                                    }
+def construir_tabela_cliq_unificada():
+    """Junta todas as bases disponíveis nas colunas de interesse + coluna ORIGEM."""
+    frames = []
+    for db_key, label in LABEL_BASE.items():
+        df_cliq = st.session_state.get(db_key)
+        if df_cliq is None:
+            continue
+        df_temp = df_cliq.reset_index()
+        # Garante que CODIGO_CONTRATO existe (vem do index)
+        if 'CODIGO_CONTRATO' not in df_temp.columns and df_temp.index.name == 'CODIGO_CONTRATO':
+            df_temp = df_temp.rename_axis('CODIGO_CONTRATO').reset_index()
+        colunas_presentes = [c for c in COLUNAS_CLIQ_TABELA if c in df_temp.columns]
+        df_sub = df_temp[colunas_presentes].copy()
+        # Preenche colunas faltantes com vazio
+        for c in COLUNAS_CLIQ_TABELA:
+            if c not in df_sub.columns:
+                df_sub[c] = ""
+        df_sub['ORIGEM'] = label
+        frames.append(df_sub[COLUNAS_CLIQ_TABELA + ['ORIGEM']])
+
+    if not frames:
+        return pd.DataFrame(columns=COLUNAS_CLIQ_TABELA + ['ORIGEM'])
+
+    df_unif = pd.concat(frames, ignore_index=True)
+    # Limpar MWmedio: remover espaços e trocar vírgula por ponto
+    df_unif['MWmedio'] = pd.to_numeric(
+        df_unif['MWmedio'].astype(str).str.strip().str.replace(',', '.').str.replace('"', ''),
+        errors='coerce'
+    ).round(6)
+    return df_unif
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ABAS PRINCIPAIS
+# ─────────────────────────────────────────────────────────────────────────────
+tab_book, tab_cliq = st.tabs(["📋 Book de Energia", "🗄️ Bases Cliq CCEE"])
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ABA 1 — BOOK DE ENERGIA (lógica original)
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab_book:
+    if st.session_state['df_bruto'] is not None:
+        try:
+            # --- AJUSTES MANUAIS ---
+            st.write("### 🛠️ Ajustes de Boleta")
+            with st.expander("Expandir painel de ajustes (Individual ou Lote)"):
+                tab_manual, tab_lote = st.tabs(["Edição Individual", "Upload em Lote"])
+
+                with tab_manual:
+                    c1, c2, c3, c4 = st.columns([1, 2, 2, 2])
+                    edit_bol  = c1.text_input("ID Boleta",           key="input_bol")
+                    edit_vend = c2.text_input("Novo Vendedor",       key="input_vend")
+                    edit_comp = c3.text_input("Novo Comprador",      key="input_comp")
+                    edit_cliq = c4.text_input("Novo Cliq Paradigma", key="input_cliq")
+                    if st.button("Gravar Alteração"):
+                        if edit_bol:
+                            st.session_state['ajustes_manuais'][tratar_chave(edit_bol)] = {
+                                'Vendedor': edit_vend if edit_vend else None,
+                                'Comprador': edit_comp if edit_comp else None,
+                                'CliqCCEE Paradigma': edit_cliq if edit_cliq else None
+                            }
                             salvar_disco('ajustes_manuais', st.session_state['ajustes_manuais'])
-                            st.success("Ajustes em lote carregados!")
+                            st.success(f"Boleta {edit_bol} atualizada!")
                             st.rerun()
-                        else:
-                            st.error("Coluna 'BOLETA' não encontrada.")
-                    except Exception as e_lote:
-                        st.error(f"Erro ao processar lote: {e_lote}")
 
-            if st.session_state['ajustes_manuais']:
-                st.markdown("---")
-                st.write("**Ajustes Ativos:**")
-                for bol_id, dados in list(st.session_state['ajustes_manuais'].items()):
-                    col_info, col_del = st.columns([6, 1])
-                    info_parts = [f"ID: {bol_id}"]
-                    if dados['Vendedor']:           info_parts.append(f"Vend: {dados['Vendedor']}")
-                    if dados['Comprador']:          info_parts.append(f"Comp: {dados['Comprador']}")
-                    if dados['CliqCCEE Paradigma']: info_parts.append(f"Cliq: {dados['CliqCCEE Paradigma']}")
-                    col_info.info(" | ".join(info_parts))
-                    if col_del.button("Remover", key=f"del_{bol_id}"):
-                        del st.session_state['ajustes_manuais'][bol_id]
-                        salvar_disco('ajustes_manuais', st.session_state['ajustes_manuais'])
+                with tab_lote:
+                    st.write("Suba uma planilha com as colunas: **BOLETA**, **Vendedor**, **Comprador**, **CliqCCEE Paradigma**")
+                    arquivo_lote = st.file_uploader("Planilha de Ajustes", type=['xlsx'], key="upload_lote")
+                    if arquivo_lote:
+                        try:
+                            df_lote = pd.read_excel(arquivo_lote)
+                            df_lote.columns = [c.strip() for c in df_lote.columns]
+                            if 'BOLETA' in df_lote.columns:
+                                for _, r in df_lote.iterrows():
+                                    b_id = tratar_chave(r['BOLETA'])
+                                    if b_id:
+                                        st.session_state['ajustes_manuais'][b_id] = {
+                                            'Vendedor': str(r['Vendedor']).strip() if 'Vendedor' in r and not pd.isna(r['Vendedor']) else None,
+                                            'Comprador': str(r['Comprador']).strip() if 'Comprador' in r and not pd.isna(r['Comprador']) else None,
+                                            'CliqCCEE Paradigma': tratar_chave(r['CliqCCEE Paradigma']) if 'CliqCCEE Paradigma' in r and not pd.isna(r['CliqCCEE Paradigma']) else None
+                                        }
+                                salvar_disco('ajustes_manuais', st.session_state['ajustes_manuais'])
+                                st.success("Ajustes em lote carregados!")
+                                st.rerun()
+                            else:
+                                st.error("Coluna 'BOLETA' não encontrada.")
+                        except Exception as e_lote:
+                            st.error(f"Erro ao processar lote: {e_lote}")
+
+                if st.session_state['ajustes_manuais']:
+                    st.markdown("---")
+                    st.write("**Ajustes Ativos:**")
+                    for bol_id, dados in list(st.session_state['ajustes_manuais'].items()):
+                        col_info, col_del = st.columns([6, 1])
+                        info_parts = [f"ID: {bol_id}"]
+                        if dados['Vendedor']:           info_parts.append(f"Vend: {dados['Vendedor']}")
+                        if dados['Comprador']:          info_parts.append(f"Comp: {dados['Comprador']}")
+                        if dados['CliqCCEE Paradigma']: info_parts.append(f"Cliq: {dados['CliqCCEE Paradigma']}")
+                        col_info.info(" | ".join(info_parts))
+                        if col_del.button("Remover", key=f"del_{bol_id}"):
+                            del st.session_state['ajustes_manuais'][bol_id]
+                            salvar_disco('ajustes_manuais', st.session_state['ajustes_manuais'])
+                            st.rerun()
+                    if st.button("Limpar todos os ajustes"):
+                        st.session_state['ajustes_manuais'] = {}
+                        salvar_disco('ajustes_manuais', {})
                         st.rerun()
-                if st.button("Limpar todos os ajustes"):
-                    st.session_state['ajustes_manuais'] = {}
-                    salvar_disco('ajustes_manuais', {})
-                    st.rerun()
 
-        # --- FILTRAGEM POR MÊS ---
-        df_base = st.session_state['df_bruto'].copy()
-        col_mes = df_base.columns[14]
-        df_base[col_mes] = pd.to_numeric(df_base[col_mes], errors='coerce')
-        mes_num_sel = meses_nomes.index(mes_sel) + 1
-        df_filtrada = df_base[df_base[col_mes] == mes_num_sel].copy()
+            # --- FILTRAGEM POR MÊS ---
+            df_base = st.session_state['df_bruto'].copy()
+            col_mes = df_base.columns[14]
+            df_base[col_mes] = pd.to_numeric(df_base[col_mes], errors='coerce')
+            mes_num_sel = meses_nomes.index(mes_sel) + 1
+            df_filtrada = df_base[df_base[col_mes] == mes_num_sel].copy()
 
-        if not df_filtrada.empty:
-            col_boleta     = df_base.columns[0]
-            df_conferencia = df_filtrada[[col_boleta]].drop_duplicates()
-            df_conferencia['Boleta_Key'] = df_conferencia[col_boleta].apply(tratar_chave)
-            df_lookup = df_filtrada.drop_duplicates(subset=[col_boleta]).set_index(col_boleta)
+            if not df_filtrada.empty:
+                col_boleta     = df_base.columns[0]
+                df_conferencia = df_filtrada[[col_boleta]].drop_duplicates()
+                df_conferencia['Boleta_Key'] = df_conferencia[col_boleta].apply(tratar_chave)
+                df_lookup = df_filtrada.drop_duplicates(subset=[col_boleta]).set_index(col_boleta)
 
-            df_conferencia['Operacao']     = df_conferencia[col_boleta].map(df_lookup[df_base.columns[1]]).astype(str)
-            df_conferencia['Parte']        = df_conferencia[col_boleta].map(df_lookup[df_base.columns[62]]).astype(str).str.strip()
-            df_conferencia['Razao Social'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[2]]).astype(str).str.strip()
+                df_conferencia['Operacao']     = df_conferencia[col_boleta].map(df_lookup[df_base.columns[1]]).astype(str)
+                df_conferencia['Parte']        = df_conferencia[col_boleta].map(df_lookup[df_base.columns[62]]).astype(str).str.strip()
+                df_conferencia['Razao Social'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[2]]).astype(str).str.strip()
 
-            tipo_raw_series  = df_conferencia[col_boleta].map(df_lookup[df_base.columns[5]]).astype(str).str.strip()
-            df_conferencia['Tipo Energia'] = [
-                resolver_tipo_energia(tipo_raw_series.iloc[i], df_conferencia['Parte'].iloc[i])
-                for i in range(len(df_conferencia))
-            ]
+                tipo_raw_series  = df_conferencia[col_boleta].map(df_lookup[df_base.columns[5]]).astype(str).str.strip()
+                df_conferencia['Tipo Energia'] = [
+                    resolver_tipo_energia(tipo_raw_series.iloc[i], df_conferencia['Parte'].iloc[i])
+                    for i in range(len(df_conferencia))
+                ]
 
-            df_conferencia['Contraparte']      = df_conferencia[col_boleta].map(df_lookup[df_base.columns[6]])
-            df_conferencia['CP/LP']            = df_conferencia[col_boleta].map(df_lookup[df_base.columns[12]])
-            df_conferencia['CNPJ Contraparte'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[4]]).apply(formatar_cnpj)
-            df_conferencia['Submercado']       = (
-                df_conferencia[col_boleta].map(df_lookup[df_base.columns[8]])
-                .replace({'SE/CO': 'Sudeste', 'N': 'Norte', 'NE': 'Nordeste', 'S': 'Sul'})
-            )
-
-            df_conferencia['Montante MWh'] = (
-                pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[20]]), errors='coerce')
-                .fillna(0).round(3)
-            )
-            v_mwh = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[20]]), errors='coerce')
-            h_mes = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[15]]), errors='coerce')
-            df_conferencia['Volume MWm'] = (v_mwh / h_mes).fillna(0).round(6)
-
-            df_conferencia['Situacao ERP']       = df_conferencia['Boleta_Key'].map(st.session_state['dict_mapa']).fillna("-")
-            df_conferencia['CliqCCEE Paradigma'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[60]]).apply(tratar_chave)
-            df_conferencia['Modulacao WBC']      = df_conferencia[col_boleta].map(df_lookup[df_base.columns[63]]).apply(limpar_modulacao)
-
-            df_conferencia['% Modulacao Min'] = df_conferencia[col_boleta].map(
-                df_lookup[df_base.columns[28]]
-            ).apply(tratar_modulacao_pct)
-            df_conferencia['% Modulacao Max'] = df_conferencia[col_boleta].map(
-                df_lookup[df_base.columns[29]]
-            ).apply(tratar_modulacao_pct)
-
-            df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mes_anterior']).fillna("-")
-            df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
-            df_conferencia['Vendedor']  = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
-
-            # Ajustes manuais
-            df_conferencia['Editado'] = False
-            for bol, info in st.session_state['ajustes_manuais'].items():
-                mask = df_conferencia['Boleta_Key'] == bol
-                if mask.any():
-                    df_conferencia.loc[mask, 'Editado'] = True
-                    if info['Vendedor']:           df_conferencia.loc[mask, 'Vendedor'] = info['Vendedor']
-                    if info['Comprador']:          df_conferencia.loc[mask, 'Comprador'] = info['Comprador']
-                    if info['CliqCCEE Paradigma']: df_conferencia.loc[mask, 'CliqCCEE Paradigma'] = info['CliqCCEE Paradigma']
-
-            # ── resolver_cliq CORRIGIDO ────────────────────────────────────
-            def resolver_cliq(row):
-                vend = row['Vendedor']  if row['Vendedor']  != "-" else ""
-                comp = row['Comprador'] if row['Comprador'] != "-" else ""
-                parte_upper = str(row['Parte']).upper()
-
-                # Partes que usam EXCLUSIVAMENTE a base Bismut
-                if any(p in parte_upper for p in PARTES_BISMUT):
-                    return buscar_cliq_ccee(
-                        row['CliqCCEE Paradigma'], row['Contrato CliqCCEE mes anterior'],
-                        st.session_state.get('db_bismut'), 'bismut', vend, comp
-                    )
-
-                # Demais partes (Matrix e similares): busca em CCEAR → CBR → MATRIX
-                for tipo, db_key in [('ccear', 'db_ccear'), ('cbr', 'db_cbr'), ('matrix', 'db_matrix')]:
-                    res = buscar_cliq_ccee(
-                        row['CliqCCEE Paradigma'], row['Contrato CliqCCEE mes anterior'],
-                        st.session_state.get(db_key), tipo, vend, comp
-                    )
-                    if res != "Verificar":
-                        return res
-                return "Verificar"
-
-            df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
-            df_conferencia['Modulação CCEE']    = df_conferencia.apply(buscar_modulacao_cliq, axis=1)
-
-            def check_modulacao(row):
-                wbc  = str(row['Modulacao WBC']).strip().lower()
-                ccee = str(row['Modulação CCEE']).strip().lower()
-                if wbc in ['-', '', 'nan'] or ccee in ['-', '', 'nan', 'verificar']: return "-"
-                return "OK" if wbc == ccee else "Verificar"
-
-            df_conferencia['Check Modulação'] = df_conferencia.apply(check_modulacao, axis=1)
-
-            df_conferencia['Lim Min CCEE'] = df_conferencia['Contrato CliqCCEE'].apply(
-                lambda cod: buscar_limite_cliq(cod, 'LIMITE_MINIMO_MODULACAO_MW'))
-            df_conferencia['Lim Max CCEE'] = df_conferencia['Contrato CliqCCEE'].apply(
-                lambda cod: buscar_limite_cliq(cod, 'LIMITE_MAXIMO_MODULACAO_MW'))
-
-            def validar_lim_min(row):
-                wbc, ccee = row['% Modulacao Min'], row['Lim Min CCEE']
-                if str(wbc) in ['-', '', 'nan'] or str(ccee) in ['-', '', 'nan']: return "-"
-                try: return "OK" if round(float(wbc), 4) == round(float(ccee), 4) else "Verificar"
-                except: return "-"
-
-            def validar_lim_max(row):
-                wbc, ccee = row['% Modulacao Max'], row['Lim Max CCEE']
-                if str(wbc) in ['-', '', 'nan'] or str(ccee) in ['-', '', 'nan']: return "-"
-                try: return "OK" if round(float(wbc), 4) == round(float(ccee), 4) else "Verificar"
-                except: return "-"
-
-            df_conferencia['Check Lim Min'] = df_conferencia.apply(validar_lim_min, axis=1)
-            df_conferencia['Check Lim Max'] = df_conferencia.apply(validar_lim_max, axis=1)
-
-            def buscar_status_cliq(row):
-                cod = row['Contrato CliqCCEE']
-                if cod in ['Verificar', '-', '']: return "-"
-                for db_key in ['db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
-                    df_cliq = st.session_state.get(db_key)
-                    if df_cliq is not None and cod in df_cliq.index:
-                        status = df_cliq.loc[cod, 'SITUACAO_CONTRATO']
-                        return str(status.iloc[0] if isinstance(status, pd.Series) else status).strip()
-                return "-"
-
-            df_conferencia['Status do Contrato'] = df_conferencia.apply(buscar_status_cliq, axis=1)
-
-            df_soma_cliq   = df_conferencia[~df_conferencia['Contrato CliqCCEE'].isin(['Verificar', '-', ''])].copy()
-            dict_soma_book = df_soma_cliq.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
-            df_conferencia['Volume BOOK'] = df_conferencia['Contrato CliqCCEE'].map(dict_soma_book).fillna(0.0).round(6)
-
-            def buscar_volume_cliq(row):
-                cod = row['Contrato CliqCCEE']
-                if cod in ['Verificar', '-', '']: return 0.0
-                h_mes_valor = h_mes.iloc[0] if not pd.isna(h_mes.iloc[0]) else 744
-                for db_key in ['db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
-                    df_cliq = st.session_state.get(db_key)
-                    if df_cliq is not None and cod in df_cliq.index:
-                        val = df_cliq.loc[cod, ('MONTANTE_MENSAL_MWh' if cod in CONTRATOS_ESPECIAIS_CCEAR else 'MWmedio')]
-                        val = val.iloc[0] if isinstance(val, pd.Series) else val
-                        if not pd.isna(val) and val != "":
-                            v = float(str(val).replace(',', '.'))
-                            return v / h_mes_valor if cod in CONTRATOS_ESPECIAIS_CCEAR else v
-                return 0.0
-
-            df_conferencia['Volume CliqCCEE'] = df_conferencia.apply(buscar_volume_cliq, axis=1).fillna(0.0).round(6)
-
-            def validar_volume_logic(row):
-                if row['Contrato CliqCCEE'] in ['Verificar', '-', '']: return "-"
-                return "OK" if round(row['Volume BOOK'], 6) == round(row['Volume CliqCCEE'], 6) else "VERIFICAR"
-
-            df_conferencia['Validação Volume'] = df_conferencia.apply(validar_volume_logic, axis=1)
-
-            df_pagos = df_conferencia[df_conferencia['Situacao ERP'].astype(str).str.upper() == 'PAGO'].copy()
-            dict_soma_pagos = df_pagos.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
-
-            def validar_pagamento(row):
-                if row['Contrato CliqCCEE'] in ['Verificar', '-', '']: return "-"
-                total_pago = dict_soma_pagos.get(row['Contrato CliqCCEE'], 0.0)
-                return "Pago" if round(total_pago, 6) >= round(row['Volume BOOK'], 6) and row['Volume BOOK'] > 0 else "-"
-
-            df_conferencia['SITUAÇÃO PGTO']        = df_conferencia.apply(validar_pagamento, axis=1)
-            df_conferencia['Pendência Financeira'] = (
-                df_conferencia['Razao Social'].str.strip().str.upper()
-                .map(st.session_state['dict_pendencias']).fillna(0.0)
-            )
-
-            df_conferencia['Varejista'] = df_conferencia['Comprador'].apply(classificar_varejista)
-
-            # --- FILTROS ---
-            st.write("### Filtros")
-            f1, f2, f3, f4, f5 = st.columns([1.5, 1.5, 1.5, 1.5, 1.5])
-            op_f        = f1.selectbox("Operação",          ["Todos"] + sorted(df_conferencia['Operacao'].unique()))
-            parte_f     = f2.selectbox("Parte",             ["Todos"] + sorted(df_conferencia['Parte'].unique()))
-            cliq_f      = f3.selectbox("Contrato CliqCCEE", ["Todos"] + sorted(df_conferencia['Contrato CliqCCEE'].unique()))
-            valid_vol_f = f4.selectbox("Validação Volume",  ["Todos"] + sorted(df_conferencia['Validação Volume'].unique()))
-
-            todas_opts_mod = sorted(set(
-                list(df_conferencia['Check Modulação'].unique()) +
-                list(df_conferencia['Check Lim Min'].unique()) +
-                list(df_conferencia['Check Lim Max'].unique())
-            ))
-            check_mod_f = f5.selectbox("Check Modulação / Limites", ["Todos"] + todas_opts_mod)
-
-            fa1, fa2 = st.columns([3, 1])
-
-            opcoes_contraparte = sorted(
-                [str(x) for x in df_conferencia['Contraparte'].dropna().unique() if str(x).strip() != ""]
-            )
-            contraparte_f = fa1.multiselect(
-                "Contraparte (selecione uma ou mais — vazio = todas)",
-                options=opcoes_contraparte,
-                default=[],
-                placeholder="Todas as contrapartes"
-            )
-
-            varejista_f = fa2.selectbox(
-                "Varejista",
-                options=["Todos", "Sim", "Não"],
-                key="filtro_varejista"
-            )
-
-            f6, f7, f8 = st.columns([1.5, 1.5, 1.5])
-            zerar_intra   = f6.toggle("Zerar Intraportfólio")
-            zerar_entre   = f7.toggle("Zerar Entre Empresas")
-            ocultar_vazio = f8.toggle("Ocultar Volumes Zerados")
-
-            df_final = df_conferencia.copy()
-            if op_f        != "Todos": df_final = df_final[df_final['Operacao'] == op_f]
-            if parte_f     != "Todos": df_final = df_final[df_final['Parte'] == parte_f]
-            if cliq_f      != "Todos": df_final = df_final[df_final['Contrato CliqCCEE'] == cliq_f]
-            if valid_vol_f != "Todos": df_final = df_final[df_final['Validação Volume'] == valid_vol_f]
-            if check_mod_f != "Todos":
-                mask_mod = (
-                    (df_final['Check Modulação'] == check_mod_f) |
-                    (df_final['Check Lim Min']   == check_mod_f) |
-                    (df_final['Check Lim Max']   == check_mod_f)
+                df_conferencia['Contraparte']      = df_conferencia[col_boleta].map(df_lookup[df_base.columns[6]])
+                df_conferencia['CP/LP']            = df_conferencia[col_boleta].map(df_lookup[df_base.columns[12]])
+                df_conferencia['CNPJ Contraparte'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[4]]).apply(formatar_cnpj)
+                df_conferencia['Submercado']       = (
+                    df_conferencia[col_boleta].map(df_lookup[df_base.columns[8]])
+                    .replace({'SE/CO': 'Sudeste', 'N': 'Norte', 'NE': 'Nordeste', 'S': 'Sul'})
                 )
-                df_final = df_final[mask_mod]
-            if contraparte_f:
-                df_final = df_final[df_final['Contraparte'].astype(str).isin(contraparte_f)]
-            if varejista_f != "Todos":
-                df_final = df_final[df_final['Varejista'] == varejista_f]
 
-            if zerar_intra:
-                mask_i = df_final['Vendedor'].str.lower().str.strip() == df_final['Comprador'].str.lower().str.strip()
-                df_final.loc[mask_i, ['Montante MWh', 'Volume MWm']] = 0.0
-            if zerar_entre:
-                mask_p = df_final['Parte'].str.contains("BISMUT|GET", na=False, case=False)
-                mask_c = (df_final['Contraparte'].str.upper().str.startswith("MATRIX", na=False) &
-                          ~df_final['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False))
-                df_final.loc[mask_p & mask_c, ['Montante MWh', 'Volume MWm']] = 0.0
-            if ocultar_vazio:
-                df_final = df_final[df_final['Volume MWm'] != 0]
+                df_conferencia['Montante MWh'] = (
+                    pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[20]]), errors='coerce')
+                    .fillna(0).round(3)
+                )
+                v_mwh = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[20]]), errors='coerce')
+                h_mes = pd.to_numeric(df_conferencia[col_boleta].map(df_lookup[df_base.columns[15]]), errors='coerce')
+                df_conferencia['Volume MWm'] = (v_mwh / h_mes).fillna(0).round(6)
 
-            # --- RESUMO DE OPERAÇÕES ---
-            st.write("### 📦 Resumo de Operações")
-            n_compras = int((df_final['Operacao'].astype(str).str.upper() == 'COMPRA').sum())
-            n_vendas  = int((df_final['Operacao'].astype(str).str.upper() == 'VENDA').sum())
-            n_total   = len(df_final)
-            n_outros  = n_total - n_compras - n_vendas
+                df_conferencia['Situacao ERP']       = df_conferencia['Boleta_Key'].map(st.session_state['dict_mapa']).fillna("-")
+                df_conferencia['CliqCCEE Paradigma'] = df_conferencia[col_boleta].map(df_lookup[df_base.columns[60]]).apply(tratar_chave)
+                df_conferencia['Modulacao WBC']      = df_conferencia[col_boleta].map(df_lookup[df_base.columns[63]]).apply(limpar_modulacao)
 
-            mc1, mc2, mc3, mc4 = st.columns(4)
-            mc1.metric("🛒 Compras", n_compras)
-            mc2.metric("📤 Vendas",  n_vendas)
-            mc3.metric("🔄 Outros",  n_outros)
-            mc4.metric("📋 Total",   n_total)
+                df_conferencia['% Modulacao Min'] = df_conferencia[col_boleta].map(
+                    df_lookup[df_base.columns[28]]
+                ).apply(tratar_modulacao_pct)
+                df_conferencia['% Modulacao Max'] = df_conferencia[col_boleta].map(
+                    df_lookup[df_base.columns[29]]
+                ).apply(tratar_modulacao_pct)
 
-            # --- VALIDAÇÃO DE MATCH CCEE ---
-            bases_carregadas = [
-                k.replace('db_', '').upper()
-                for k in ['db_ccear', 'db_cbr', 'db_matrix', 'db_bismut']
-                if st.session_state.get(k) is not None
-            ]
-            with st.expander("🔍 Validação de Match CCEE", expanded=False):
-                if not bases_carregadas:
-                    st.warning("Nenhuma base Cliq CCEE carregada.")
-                else:
-                    _, sem_match, _ = gerar_relatorio_match(df_final)
-                    if sem_match.empty:
-                        st.success("Nenhuma linha sem match!")
+                df_conferencia['Contrato CliqCCEE mes anterior'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_mes_anterior']).fillna("-")
+                df_conferencia['Comprador'] = df_conferencia['Boleta_Key'].map(st.session_state['dict_comprador']).fillna("-")
+                df_conferencia['Vendedor']  = df_conferencia['Boleta_Key'].map(st.session_state['dict_vendedor']).fillna("-")
+
+                # Ajustes manuais
+                df_conferencia['Editado'] = False
+                for bol, info in st.session_state['ajustes_manuais'].items():
+                    mask = df_conferencia['Boleta_Key'] == bol
+                    if mask.any():
+                        df_conferencia.loc[mask, 'Editado'] = True
+                        if info['Vendedor']:           df_conferencia.loc[mask, 'Vendedor'] = info['Vendedor']
+                        if info['Comprador']:          df_conferencia.loc[mask, 'Comprador'] = info['Comprador']
+                        if info['CliqCCEE Paradigma']: df_conferencia.loc[mask, 'CliqCCEE Paradigma'] = info['CliqCCEE Paradigma']
+
+                # ── resolver_cliq ────────────────────────────────────────────
+                def resolver_cliq(row):
+                    vend = row['Vendedor']  if row['Vendedor']  != "-" else ""
+                    comp = row['Comprador'] if row['Comprador'] != "-" else ""
+                    parte_upper = str(row['Parte']).upper()
+
+                    # Partes que usam EXCLUSIVAMENTE a base Bismut / CCEAL
+                    if any(p in parte_upper for p in PARTES_BISMUT):
+                        return buscar_cliq_ccee(
+                            row['CliqCCEE Paradigma'], row['Contrato CliqCCEE mes anterior'],
+                            st.session_state.get('db_bismut'), 'bismut', vend, comp
+                        )
+
+                    # Demais partes (Matrix): busca em CCEAR → CBR → MATRIX
+                    # NÃO usa db_bismut para partes Matrix
+                    for tipo, db_key in [('ccear', 'db_ccear'), ('cbr', 'db_cbr'), ('matrix', 'db_matrix')]:
+                        res = buscar_cliq_ccee(
+                            row['CliqCCEE Paradigma'], row['Contrato CliqCCEE mes anterior'],
+                            st.session_state.get(db_key), tipo, vend, comp
+                        )
+                        if res != "Verificar":
+                            return res
+                    return "Verificar"
+
+                df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
+                df_conferencia['Modulação CCEE']    = df_conferencia.apply(buscar_modulacao_cliq, axis=1)
+
+                def check_modulacao(row):
+                    wbc  = str(row['Modulacao WBC']).strip().lower()
+                    ccee = str(row['Modulação CCEE']).strip().lower()
+                    if wbc in ['-', '', 'nan'] or ccee in ['-', '', 'nan', 'verificar']: return "-"
+                    return "OK" if wbc == ccee else "Verificar"
+
+                df_conferencia['Check Modulação'] = df_conferencia.apply(check_modulacao, axis=1)
+
+                df_conferencia['Lim Min CCEE'] = df_conferencia['Contrato CliqCCEE'].apply(
+                    lambda cod: buscar_limite_cliq(cod, 'LIMITE_MINIMO_MODULACAO_MW'))
+                df_conferencia['Lim Max CCEE'] = df_conferencia['Contrato CliqCCEE'].apply(
+                    lambda cod: buscar_limite_cliq(cod, 'LIMITE_MAXIMO_MODULACAO_MW'))
+
+                def validar_lim_min(row):
+                    wbc, ccee = row['% Modulacao Min'], row['Lim Min CCEE']
+                    if str(wbc) in ['-', '', 'nan'] or str(ccee) in ['-', '', 'nan']: return "-"
+                    try: return "OK" if round(float(wbc), 4) == round(float(ccee), 4) else "Verificar"
+                    except: return "-"
+
+                def validar_lim_max(row):
+                    wbc, ccee = row['% Modulacao Max'], row['Lim Max CCEE']
+                    if str(wbc) in ['-', '', 'nan'] or str(ccee) in ['-', '', 'nan']: return "-"
+                    try: return "OK" if round(float(wbc), 4) == round(float(ccee), 4) else "Verificar"
+                    except: return "-"
+
+                df_conferencia['Check Lim Min'] = df_conferencia.apply(validar_lim_min, axis=1)
+                df_conferencia['Check Lim Max'] = df_conferencia.apply(validar_lim_max, axis=1)
+
+                def buscar_status_cliq(row):
+                    cod = row['Contrato CliqCCEE']
+                    if cod in ['Verificar', '-', '']: return "-"
+                    for db_key in ['db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
+                        df_cliq = st.session_state.get(db_key)
+                        if df_cliq is not None and cod in df_cliq.index:
+                            status = df_cliq.loc[cod, 'SITUACAO_CONTRATO']
+                            return str(status.iloc[0] if isinstance(status, pd.Series) else status).strip()
+                    return "-"
+
+                df_conferencia['Status do Contrato'] = df_conferencia.apply(buscar_status_cliq, axis=1)
+
+                df_soma_cliq   = df_conferencia[~df_conferencia['Contrato CliqCCEE'].isin(['Verificar', '-', ''])].copy()
+                dict_soma_book = df_soma_cliq.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
+                df_conferencia['Volume BOOK'] = df_conferencia['Contrato CliqCCEE'].map(dict_soma_book).fillna(0.0).round(6)
+
+                def buscar_volume_cliq(row):
+                    cod = row['Contrato CliqCCEE']
+                    if cod in ['Verificar', '-', '']: return 0.0
+                    h_mes_valor = h_mes.iloc[0] if not pd.isna(h_mes.iloc[0]) else 744
+                    for db_key in ['db_matrix', 'db_bismut', 'db_ccear', 'db_cbr']:
+                        df_cliq = st.session_state.get(db_key)
+                        if df_cliq is not None and cod in df_cliq.index:
+                            val = df_cliq.loc[cod, ('MONTANTE_MENSAL_MWh' if cod in CONTRATOS_ESPECIAIS_CCEAR else 'MWmedio')]
+                            val = val.iloc[0] if isinstance(val, pd.Series) else val
+                            if not pd.isna(val) and val != "":
+                                v = float(str(val).replace(',', '.'))
+                                return v / h_mes_valor if cod in CONTRATOS_ESPECIAIS_CCEAR else v
+                    return 0.0
+
+                df_conferencia['Volume CliqCCEE'] = df_conferencia.apply(buscar_volume_cliq, axis=1).fillna(0.0).round(6)
+
+                def validar_volume_logic(row):
+                    if row['Contrato CliqCCEE'] in ['Verificar', '-', '']: return "-"
+                    return "OK" if round(row['Volume BOOK'], 6) == round(row['Volume CliqCCEE'], 6) else "VERIFICAR"
+
+                df_conferencia['Validação Volume'] = df_conferencia.apply(validar_volume_logic, axis=1)
+
+                df_pagos = df_conferencia[df_conferencia['Situacao ERP'].astype(str).str.upper() == 'PAGO'].copy()
+                dict_soma_pagos = df_pagos.groupby('Contrato CliqCCEE')['Volume MWm'].sum().to_dict()
+
+                def validar_pagamento(row):
+                    if row['Contrato CliqCCEE'] in ['Verificar', '-', '']: return "-"
+                    total_pago = dict_soma_pagos.get(row['Contrato CliqCCEE'], 0.0)
+                    return "Pago" if round(total_pago, 6) >= round(row['Volume BOOK'], 6) and row['Volume BOOK'] > 0 else "-"
+
+                df_conferencia['SITUAÇÃO PGTO']        = df_conferencia.apply(validar_pagamento, axis=1)
+                df_conferencia['Pendência Financeira'] = (
+                    df_conferencia['Razao Social'].str.strip().str.upper()
+                    .map(st.session_state['dict_pendencias']).fillna(0.0)
+                )
+
+                df_conferencia['Varejista'] = df_conferencia['Comprador'].apply(classificar_varejista)
+
+                # --- FILTROS ---
+                st.write("### Filtros")
+                f1, f2, f3, f4, f5 = st.columns([1.5, 1.5, 1.5, 1.5, 1.5])
+                op_f        = f1.selectbox("Operação",          ["Todos"] + sorted(df_conferencia['Operacao'].unique()))
+                parte_f     = f2.selectbox("Parte",             ["Todos"] + sorted(df_conferencia['Parte'].unique()))
+                cliq_f      = f3.selectbox("Contrato CliqCCEE", ["Todos"] + sorted(df_conferencia['Contrato CliqCCEE'].unique()))
+                valid_vol_f = f4.selectbox("Validação Volume",  ["Todos"] + sorted(df_conferencia['Validação Volume'].unique()))
+
+                todas_opts_mod = sorted(set(
+                    list(df_conferencia['Check Modulação'].unique()) +
+                    list(df_conferencia['Check Lim Min'].unique()) +
+                    list(df_conferencia['Check Lim Max'].unique())
+                ))
+                check_mod_f = f5.selectbox("Check Modulação / Limites", ["Todos"] + todas_opts_mod)
+
+                fa1, fa2 = st.columns([3, 1])
+
+                opcoes_contraparte = sorted(
+                    [str(x) for x in df_conferencia['Contraparte'].dropna().unique() if str(x).strip() != ""]
+                )
+                contraparte_f = fa1.multiselect(
+                    "Contraparte (selecione uma ou mais — vazio = todas)",
+                    options=opcoes_contraparte,
+                    default=[],
+                    placeholder="Todas as contrapartes"
+                )
+
+                varejista_f = fa2.selectbox(
+                    "Varejista",
+                    options=["Todos", "Sim", "Não"],
+                    key="filtro_varejista"
+                )
+
+                f6, f7, f8 = st.columns([1.5, 1.5, 1.5])
+                zerar_intra   = f6.toggle("Zerar Intraportfólio")
+                zerar_entre   = f7.toggle("Zerar Entre Empresas")
+                ocultar_vazio = f8.toggle("Ocultar Volumes Zerados")
+
+                df_final = df_conferencia.copy()
+                if op_f        != "Todos": df_final = df_final[df_final['Operacao'] == op_f]
+                if parte_f     != "Todos": df_final = df_final[df_final['Parte'] == parte_f]
+                if cliq_f      != "Todos": df_final = df_final[df_final['Contrato CliqCCEE'] == cliq_f]
+                if valid_vol_f != "Todos": df_final = df_final[df_final['Validação Volume'] == valid_vol_f]
+                if check_mod_f != "Todos":
+                    mask_mod = (
+                        (df_final['Check Modulação'] == check_mod_f) |
+                        (df_final['Check Lim Min']   == check_mod_f) |
+                        (df_final['Check Lim Max']   == check_mod_f)
+                    )
+                    df_final = df_final[mask_mod]
+                if contraparte_f:
+                    df_final = df_final[df_final['Contraparte'].astype(str).isin(contraparte_f)]
+                if varejista_f != "Todos":
+                    df_final = df_final[df_final['Varejista'] == varejista_f]
+
+                if zerar_intra:
+                    mask_i = df_final['Vendedor'].str.lower().str.strip() == df_final['Comprador'].str.lower().str.strip()
+                    df_final.loc[mask_i, ['Montante MWh', 'Volume MWm']] = 0.0
+                if zerar_entre:
+                    mask_p = df_final['Parte'].str.contains("BISMUT|GET", na=False, case=False)
+                    mask_c = (df_final['Contraparte'].str.upper().str.startswith("MATRIX", na=False) &
+                              ~df_final['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False))
+                    df_final.loc[mask_p & mask_c, ['Montante MWh', 'Volume MWm']] = 0.0
+                if ocultar_vazio:
+                    df_final = df_final[df_final['Volume MWm'] != 0]
+
+                # --- RESUMO DE OPERAÇÕES ---
+                st.write("### 📦 Resumo de Operações")
+                n_compras = int((df_final['Operacao'].astype(str).str.upper() == 'COMPRA').sum())
+                n_vendas  = int((df_final['Operacao'].astype(str).str.upper() == 'VENDA').sum())
+                n_total   = len(df_final)
+                n_outros  = n_total - n_compras - n_vendas
+
+                mc1, mc2, mc3, mc4 = st.columns(4)
+                mc1.metric("🛒 Compras", n_compras)
+                mc2.metric("📤 Vendas",  n_vendas)
+                mc3.metric("🔄 Outros",  n_outros)
+                mc4.metric("📋 Total",   n_total)
+
+                # --- VALIDAÇÃO DE MATCH CCEE ---
+                bases_carregadas = [
+                    k.replace('db_', '').upper()
+                    for k in ['db_ccear', 'db_cbr', 'db_matrix', 'db_bismut']
+                    if st.session_state.get(k) is not None
+                ]
+                with st.expander("🔍 Validação de Match CCEE", expanded=False):
+                    if not bases_carregadas:
+                        st.warning("Nenhuma base Cliq CCEE carregada.")
                     else:
-                        st.warning(f"{len(sem_match)} linha(s) sem contrato correspondente.")
-                        st.dataframe(sem_match.reset_index(drop=True), use_container_width=True, hide_index=True)
+                        _, sem_match, _ = gerar_relatorio_match(df_final)
+                        if sem_match.empty:
+                            st.success("Nenhuma linha sem match!")
+                        else:
+                            st.warning(f"{len(sem_match)} linha(s) sem contrato correspondente.")
+                            st.dataframe(sem_match.reset_index(drop=True), use_container_width=True, hide_index=True)
 
-            ordem = [
-                col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP',
-                'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm',
-                'CliqCCEE Paradigma',
-                'Modulacao WBC', 'Modulação CCEE', 'Check Modulação',
-                '% Modulacao Min', 'Lim Min CCEE', 'Check Lim Min',
-                '% Modulacao Max', 'Lim Max CCEE', 'Check Lim Max',
-                'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 'Varejista',
-                'Contrato CliqCCEE',
-                'Status do Contrato', 'SITUAÇÃO PGTO', 'Volume BOOK', 'Volume CliqCCEE',
-                'Validação Volume', 'Situacao ERP', 'Razao Social', 'Pendência Financeira', 'Editado'
+                ordem = [
+                    col_boleta, 'Operacao', 'Tipo Energia', 'Parte', 'Contraparte', 'CP/LP',
+                    'CNPJ Contraparte', 'Submercado', 'Montante MWh', 'Volume MWm',
+                    'CliqCCEE Paradigma',
+                    'Modulacao WBC', 'Modulação CCEE', 'Check Modulação',
+                    '% Modulacao Min', 'Lim Min CCEE', 'Check Lim Min',
+                    '% Modulacao Max', 'Lim Max CCEE', 'Check Lim Max',
+                    'Contrato CliqCCEE mes anterior', 'Vendedor', 'Comprador', 'Varejista',
+                    'Contrato CliqCCEE',
+                    'Status do Contrato', 'SITUAÇÃO PGTO', 'Volume BOOK', 'Volume CliqCCEE',
+                    'Validação Volume', 'Situacao ERP', 'Razao Social', 'Pendência Financeira', 'Editado'
+                ]
+
+                def highlight_rows(row):
+                    return ['background-color: #fff4cc'] * len(row) if row['Editado'] else [''] * len(row)
+
+                col_config_main = {
+                    "Editado":              None,
+                    "Montante MWh":         st.column_config.NumberColumn(format="%.3f"),
+                    "Volume MWm":           st.column_config.NumberColumn(format="%.6f"),
+                    "Volume BOOK":          st.column_config.NumberColumn(format="%.6f"),
+                    "Volume CliqCCEE":      st.column_config.NumberColumn(format="%.6f"),
+                    "Lim Min CCEE":         st.column_config.NumberColumn(format="%.6f"),
+                    "Lim Max CCEE":         st.column_config.NumberColumn(format="%.6f"),
+                    "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f"),
+                    "Varejista":            st.column_config.TextColumn("Varejista"),
+                    "% Modulacao Min":      st.column_config.TextColumn("% Mod Min"),
+                    "% Modulacao Max":      st.column_config.TextColumn("% Mod Max"),
+                }
+
+                st.dataframe(
+                    df_final[ordem].sort_values(by=col_boleta).style.apply(highlight_rows, axis=1),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=col_config_main,
+                )
+
+                # ─────────────────────────────────────────────────────────────
+                # HELPER: aplica flags de zeragem sobre df_conferencia completo
+                # ─────────────────────────────────────────────────────────────
+                def df_wbc_completo():
+                    df_w = df_conferencia.copy()
+                    if zerar_intra:
+                        mask_zi = df_w['Vendedor'].str.lower().str.strip() == df_w['Comprador'].str.lower().str.strip()
+                        df_w.loc[mask_zi, 'Volume MWm'] = 0.0
+                    if zerar_entre:
+                        mask_zp = df_w['Parte'].str.contains("BISMUT|GET", na=False, case=False)
+                        mask_zc = (df_w['Contraparte'].str.upper().str.startswith("MATRIX", na=False) &
+                                   ~df_w['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False))
+                        df_w.loc[mask_zp & mask_zc, 'Volume MWm'] = 0.0
+                    return df_w
+
+                df_wbc_base = df_wbc_completo()
+
+                # ─────────────────────────────────────────────────────────────
+                # BLOCO BISMUT
+                # CCEE → db_bismut | WBC → perfis Bismut no book
+                # ─────────────────────────────────────────────────────────────
+                st.write("### 📊 Tabela — BISMUT CCEE  |  BISMUT WBC")
+
+                db_bismut_ccee = st.session_state.get('db_bismut')
+
+                submercados_bismut = ["Todos"]
+                if db_bismut_ccee is not None:
+                    df_bism_temp = db_bismut_ccee.reset_index()
+                    if 'SUBMERCADO_ENTREGA' in df_bism_temp.columns:
+                        subs_unicos = sorted(
+                            df_bism_temp['SUBMERCADO_ENTREGA'].dropna().astype(str).str.strip()
+                            .replace('', pd.NA).dropna().unique().tolist()
+                        )
+                        submercados_bismut += subs_unicos
+
+                filtro_sub_bismut = st.selectbox(
+                    "Filtro Submercado (Tabela CCEE Bismut)",
+                    options=submercados_bismut,
+                    key="filtro_submercado_bismut_ccee"
+                )
+
+                PERFIS_BISMUT = [
+                    "BISMUT COM I5",
+                    "BISMUT COM I0",
+                    "BISMUT COM I1",
+                    "BISMUT COM",
+                ]
+
+                # CCEE lê APENAS db_bismut
+                df_bismut_ccee_tab = build_ccee_tabela(PERFIS_BISMUT, ['db_bismut'], filtro_sub_bismut)
+                df_bismut_wbc_tab  = build_wbc_tabela(PERFIS_BISMUT, df_wbc_base)
+
+                render_tabela_par(
+                    "BISMUT CCEE", "BISMUT WBC",
+                    df_bismut_ccee_tab, df_bismut_wbc_tab,
+                    aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
+                )
+                render_reconciliacao("BISMUT", df_bismut_ccee_tab, df_bismut_wbc_tab)
+
+                # ─────────────────────────────────────────────────────────────
+                # BLOCO MATRIX
+                # CCEE → db_ccear + db_cbr + db_matrix (NÃO usa db_bismut)
+                # ─────────────────────────────────────────────────────────────
+                st.write("### 📊 Tabela — MATRIX CCEE  |  MATRIX WBC")
+
+                DBS_MATRIX = ['db_ccear', 'db_cbr', 'db_matrix']
+
+                submercados_matrix = ["Todos"]
+                for db_key in DBS_MATRIX:
+                    df_m = st.session_state.get(db_key)
+                    if df_m is not None:
+                        df_mt = df_m.reset_index()
+                        if 'SUBMERCADO_ENTREGA' in df_mt.columns:
+                            for s in sorted(df_mt['SUBMERCADO_ENTREGA'].dropna().astype(str).str.strip()
+                                            .replace('', pd.NA).dropna().unique().tolist()):
+                                if s not in submercados_matrix:
+                                    submercados_matrix.append(s)
+                submercados_matrix = ["Todos"] + sorted(submercados_matrix[1:])
+
+                filtro_sub_matrix = st.selectbox(
+                    "Filtro Submercado (Tabela Matrix CCEE)",
+                    options=submercados_matrix,
+                    key="filtro_submercado_matrix_ccee"
+                )
+
+                PERFIS_MATRIX = [
+                    "MATRIX COM I5",
+                    "MATRIX COM",
+                    "MATRIX COM I1",
+                    "MATRIX COM I0",
+                    "MATRIX COM CQ5",
+                ]
+
+                # CCEE lê APENAS db_ccear, db_cbr, db_matrix — sem db_bismut
+                df_matrix_ccee_tab = build_ccee_tabela(PERFIS_MATRIX, DBS_MATRIX, filtro_sub_matrix)
+                df_matrix_wbc_tab  = build_wbc_tabela(PERFIS_MATRIX, df_wbc_base)
+
+                bases_matrix_ok = any(st.session_state.get(k) is not None for k in DBS_MATRIX)
+                render_tabela_par(
+                    "MATRIX CCEE", "MATRIX WBC",
+                    df_matrix_ccee_tab, df_matrix_wbc_tab,
+                    aviso_sem_base="Nenhuma base Cliq Matrix/CCEAR/CBR carregada." if not bases_matrix_ok else None
+                )
+                render_reconciliacao("MATRIX", df_matrix_ccee_tab, df_matrix_wbc_tab)
+
+                # ─────────────────────────────────────────────────────────────
+                # BLOCO GET ENERGY TRADING
+                # CCEE → db_bismut apenas
+                # ─────────────────────────────────────────────────────────────
+                st.write("### 📊 Tabela — GET ENERGY TRADING CCEE  |  GET ENERGY TRADING WBC")
+
+                filtro_sub_get = st.selectbox(
+                    "Filtro Submercado (Tabela GET CCEE)",
+                    options=submercados_bismut,
+                    key="filtro_submercado_get_ccee"
+                )
+
+                PERFIS_GET = [
+                    "GET ENERGY TRADING",
+                    "GET ENERGY TRADING I5",
+                    "GET ENERGY TRADING I0",
+                    "GET ENERGY TRADING I1",
+                    "GET ENERGY TRADING CQ5",
+                ]
+
+                df_get_ccee_tab = build_ccee_tabela(PERFIS_GET, ['db_bismut'], filtro_sub_get)
+                df_get_wbc_tab  = build_wbc_tabela(PERFIS_GET, df_wbc_base)
+
+                render_tabela_par(
+                    "GET ENERGY TRADING CCEE", "GET ENERGY TRADING WBC",
+                    df_get_ccee_tab, df_get_wbc_tab,
+                    aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
+                )
+                render_reconciliacao("GET ENERGY TRADING", df_get_ccee_tab, df_get_wbc_tab)
+
+                # ─────────────────────────────────────────────────────────────
+                # BLOCO CINERGY
+                # ─────────────────────────────────────────────────────────────
+                st.write("### 📊 Tabela — CINERGY CCEE  |  CINERGY WBC")
+
+                filtro_sub_cinergy = st.selectbox(
+                    "Filtro Submercado (Tabela CINERGY CCEE)",
+                    options=submercados_bismut,
+                    key="filtro_submercado_cinergy_ccee"
+                )
+
+                PERFIS_CINERGY = [
+                    "CINERGY COM",
+                    "CINERGY COM I1",
+                    "CINERGY COM I5",
+                    "CINERGY COM I0",
+                    "CINERGY COM I8",
+                    "CINERGY COM I5 2",
+                    "CINERGY COM I1 2",
+                    "CINERGY COM I0 2",
+                    "CINERGY COM I8 2",
+                ]
+
+                df_cinergy_ccee_tab = build_ccee_tabela(PERFIS_CINERGY, ['db_bismut'], filtro_sub_cinergy)
+                df_cinergy_wbc_tab  = build_wbc_tabela(PERFIS_CINERGY, df_wbc_base)
+
+                render_tabela_par(
+                    "CINERGY CCEE", "CINERGY WBC",
+                    df_cinergy_ccee_tab, df_cinergy_wbc_tab,
+                    aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
+                )
+                render_reconciliacao("CINERGY", df_cinergy_ccee_tab, df_cinergy_wbc_tab)
+
+                # ─────────────────────────────────────────────────────────────
+                # BLOCO MTX CAMANDUCAIA
+                # ─────────────────────────────────────────────────────────────
+                st.write("### 📊 Tabela — MTX CAMANDUCAIA CCEE  |  MTX CAMANDUCAIA WBC")
+
+                filtro_sub_mtx = st.selectbox(
+                    "Filtro Submercado (Tabela MTX CAMANDUCAIA CCEE)",
+                    options=submercados_bismut,
+                    key="filtro_submercado_mtx_ccee"
+                )
+
+                PERFIS_MTX = [
+                    "MTX CAMANDUCAIA",
+                ]
+
+                df_mtx_ccee_tab = build_ccee_tabela(PERFIS_MTX, ['db_bismut'], filtro_sub_mtx)
+                df_mtx_wbc_tab  = build_wbc_tabela(PERFIS_MTX, df_wbc_base)
+
+                render_tabela_par(
+                    "MTX CAMANDUCAIA CCEE", "MTX CAMANDUCAIA WBC",
+                    df_mtx_ccee_tab, df_mtx_wbc_tab,
+                    aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
+                )
+                render_reconciliacao("MTX CAMANDUCAIA", df_mtx_ccee_tab, df_mtx_wbc_tab)
+
+                # ─────────────────────────────────────────────────────────────
+                # BLOCO ARGENTUM
+                # ─────────────────────────────────────────────────────────────
+                st.write("### 📊 Tabela — ARGENTUM CCEE  |  ARGENTUM WBC")
+
+                filtro_sub_argentum = st.selectbox(
+                    "Filtro Submercado (Tabela ARGENTUM CCEE)",
+                    options=submercados_bismut,
+                    key="filtro_submercado_argentum_ccee"
+                )
+
+                PERFIS_ARGENTUM = [
+                    "ARGENTUM COM",
+                    "ARGENTUM COM I1",
+                    "ARGENTUM COM I5",
+                    "ARGENTUM COM I0",
+                    "ARGENTUM COM I8",
+                ]
+
+                df_argentum_ccee_tab = build_ccee_tabela(PERFIS_ARGENTUM, ['db_bismut'], filtro_sub_argentum)
+                df_argentum_wbc_tab  = build_wbc_tabela(PERFIS_ARGENTUM, df_wbc_base)
+
+                render_tabela_par(
+                    "ARGENTUM CCEE", "ARGENTUM WBC",
+                    df_argentum_ccee_tab, df_argentum_wbc_tab,
+                    aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
+                )
+                render_reconciliacao("ARGENTUM", df_argentum_ccee_tab, df_argentum_wbc_tab)
+
+            else:
+                st.warning("Sem dados para este período.")
+
+        except Exception as e:
+            st.error(f"Erro no processamento: {e}")
+
+    else:
+        st.info("Suba o arquivo de **Contratos Aprovados** na barra lateral para começar.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ABA 2 — BASES CLIQ CCEE
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab_cliq:
+    st.write("### 🗄️ Bases Cliq CCEE — Visão Unificada")
+    st.caption(
+        "Tabela unificada de todas as bases carregadas: CCEAR_Q, CBR Mercado, Matrix e Bismut/CCEAL. "
+        "Use os campos de busca abaixo para filtrar."
+    )
+
+    df_cliq_unif = construir_tabela_cliq_unificada()
+
+    if df_cliq_unif.empty:
+        st.warning("Nenhuma base Cliq CCEE carregada. Suba os arquivos na barra lateral.")
+    else:
+        # ── Métricas rápidas ───────────────────────────────────────────────
+        bases_disponiveis = df_cliq_unif['ORIGEM'].unique().tolist()
+        m_cols = st.columns(len(bases_disponiveis) + 1)
+        m_cols[0].metric("Total de contratos", len(df_cliq_unif))
+        for i, base_label in enumerate(sorted(bases_disponiveis)):
+            qtd = len(df_cliq_unif[df_cliq_unif['ORIGEM'] == base_label])
+            m_cols[i + 1].metric(base_label, qtd)
+
+        st.markdown("---")
+
+        # ── Área de busca / filtros ────────────────────────────────────────
+        st.write("#### 🔍 Filtros")
+
+        sb1, sb2, sb3 = st.columns([2, 2, 2])
+        sb4, sb5, sb6 = st.columns([2, 2, 2])
+
+        busca_codigo = sb1.text_input(
+            "CODIGO_CONTRATO (busca parcial)",
+            placeholder="Ex: 1877542",
+            key="cliq_busca_codigo"
+        )
+        busca_situacao = sb2.selectbox(
+            "SITUACAO_CONTRATO",
+            options=["Todos"] + sorted(df_cliq_unif['SITUACAO_CONTRATO'].dropna().astype(str).unique().tolist()),
+            key="cliq_busca_situacao"
+        )
+        busca_submercado = sb3.selectbox(
+            "SUBMERCADO_ENTREGA",
+            options=["Todos"] + sorted(
+                [s for s in df_cliq_unif['SUBMERCADO_ENTREGA'].dropna().astype(str).unique().tolist() if s.strip() != ""]
+            ),
+            key="cliq_busca_submercado"
+        )
+        busca_vendedor = sb4.text_input(
+            "SIGLA_PERFIL_VENDEDOR (busca parcial)",
+            placeholder="Ex: MATRIX COM",
+            key="cliq_busca_vendedor"
+        )
+        busca_comprador = sb5.text_input(
+            "SIGLA_PERFIL_COMPRADOR (busca parcial)",
+            placeholder="Ex: CEJAMA",
+            key="cliq_busca_comprador"
+        )
+        busca_status_mont = sb6.selectbox(
+            "STATUS_MONTANTE",
+            options=["Todos"] + sorted(
+                [s for s in df_cliq_unif['STATUS_MONTANTE'].dropna().astype(str).unique().tolist() if s.strip() != ""]
+            ),
+            key="cliq_busca_status_mont"
+        )
+
+        # Filtro de origem (bases)
+        origens_disponiveis = sorted(df_cliq_unif['ORIGEM'].unique().tolist())
+        origem_selecionada = st.multiselect(
+            "Bases / Origem (vazio = todas)",
+            options=origens_disponiveis,
+            default=[],
+            placeholder="Todas as bases",
+            key="cliq_busca_origem"
+        )
+
+        # ── Aplicar filtros ────────────────────────────────────────────────
+        df_view = df_cliq_unif.copy()
+
+        if busca_codigo.strip():
+            df_view = df_view[
+                df_view['CODIGO_CONTRATO'].astype(str).str.contains(busca_codigo.strip(), case=False, na=False)
             ]
+        if busca_situacao != "Todos":
+            df_view = df_view[df_view['SITUACAO_CONTRATO'].astype(str) == busca_situacao]
+        if busca_submercado != "Todos":
+            df_view = df_view[df_view['SUBMERCADO_ENTREGA'].astype(str).str.strip() == busca_submercado]
+        if busca_vendedor.strip():
+            df_view = df_view[
+                df_view['SIGLA_PERFIL_VENDEDOR'].astype(str).str.contains(busca_vendedor.strip(), case=False, na=False)
+            ]
+        if busca_comprador.strip():
+            df_view = df_view[
+                df_view['SIGLA_PERFIL_COMPRADOR'].astype(str).str.contains(busca_comprador.strip(), case=False, na=False)
+            ]
+        if busca_status_mont != "Todos":
+            df_view = df_view[df_view['STATUS_MONTANTE'].astype(str) == busca_status_mont]
+        if origem_selecionada:
+            df_view = df_view[df_view['ORIGEM'].isin(origem_selecionada)]
 
-            def highlight_rows(row):
-                return ['background-color: #fff4cc'] * len(row) if row['Editado'] else [''] * len(row)
+        st.markdown(f"**{len(df_view):,} contrato(s) encontrado(s)**")
 
-            col_config_main = {
-                "Editado":              None,
-                "Montante MWh":         st.column_config.NumberColumn(format="%.3f"),
-                "Volume MWm":           st.column_config.NumberColumn(format="%.6f"),
-                "Volume BOOK":          st.column_config.NumberColumn(format="%.6f"),
-                "Volume CliqCCEE":      st.column_config.NumberColumn(format="%.6f"),
-                "Lim Min CCEE":         st.column_config.NumberColumn(format="%.6f"),
-                "Lim Max CCEE":         st.column_config.NumberColumn(format="%.6f"),
-                "Pendência Financeira": st.column_config.NumberColumn(format="R$ %.2f"),
-                "Varejista":            st.column_config.TextColumn("Varejista"),
-                "% Modulacao Min":      st.column_config.TextColumn("% Mod Min"),
-                "% Modulacao Max":      st.column_config.TextColumn("% Mod Max"),
+        # ── Tabela de resultados ───────────────────────────────────────────
+        st.dataframe(
+            df_view.reset_index(drop=True),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "CODIGO_CONTRATO":        st.column_config.TextColumn("Código Contrato"),
+                "SITUACAO_CONTRATO":      st.column_config.TextColumn("Situação"),
+                "SUBMERCADO_ENTREGA":     st.column_config.TextColumn("Submercado"),
+                "SIGLA_PERFIL_VENDEDOR":  st.column_config.TextColumn("Vendedor"),
+                "SIGLA_PERFIL_COMPRADOR": st.column_config.TextColumn("Comprador"),
+                "MWmedio":                st.column_config.NumberColumn("MW Médio", format="%.6f"),
+                "STATUS_MONTANTE":        st.column_config.TextColumn("Status Montante"),
+                "ORIGEM":                 st.column_config.TextColumn("Base / Origem"),
             }
+        )
 
+        # ── Resumo MWmedio por origem ──────────────────────────────────────
+        with st.expander("📊 Resumo MW Médio por Base e Submercado", expanded=False):
+            df_resumo = (
+                df_view
+                .groupby(['ORIGEM', 'SUBMERCADO_ENTREGA'])['MWmedio']
+                .sum()
+                .reset_index()
+                .rename(columns={'MWmedio': 'MW Médio Total'})
+                .sort_values(['ORIGEM', 'MW Médio Total'], ascending=[True, False])
+            )
+            df_resumo['MW Médio Total'] = df_resumo['MW Médio Total'].round(6)
             st.dataframe(
-                df_final[ordem].sort_values(by=col_boleta).style.apply(highlight_rows, axis=1),
+                df_resumo,
                 use_container_width=True,
                 hide_index=True,
-                column_config=col_config_main,
+                column_config={
+                    "ORIGEM":          st.column_config.TextColumn("Base"),
+                    "SUBMERCADO_ENTREGA": st.column_config.TextColumn("Submercado"),
+                    "MW Médio Total":  st.column_config.NumberColumn("MW Médio Total", format="%.6f"),
+                }
             )
-
-            # ─────────────────────────────────────────────────────────────────
-            # HELPER: aplica flags de zeragem sobre df_conferencia completo
-            # ─────────────────────────────────────────────────────────────────
-            def df_wbc_completo():
-                df_w = df_conferencia.copy()
-                if zerar_intra:
-                    mask_zi = df_w['Vendedor'].str.lower().str.strip() == df_w['Comprador'].str.lower().str.strip()
-                    df_w.loc[mask_zi, 'Volume MWm'] = 0.0
-                if zerar_entre:
-                    mask_zp = df_w['Parte'].str.contains("BISMUT|GET", na=False, case=False)
-                    mask_zc = (df_w['Contraparte'].str.upper().str.startswith("MATRIX", na=False) &
-                               ~df_w['Contraparte'].str.upper().str.contains("MATRIX VAR", na=False))
-                    df_w.loc[mask_zp & mask_zc, 'Volume MWm'] = 0.0
-                return df_w
-
-            df_wbc_base = df_wbc_completo()
-
-            # ─────────────────────────────────────────────────────────────────
-            # BLOCO BISMUT
-            # ─────────────────────────────────────────────────────────────────
-            st.write("### 📊 Tabela — BISMUT CCEE  |  BISMUT WBC")
-
-            db_bismut_ccee = st.session_state.get('db_bismut')
-
-            submercados_bismut = ["Todos"]
-            if db_bismut_ccee is not None:
-                df_bism_temp = db_bismut_ccee.reset_index()
-                if 'SUBMERCADO_ENTREGA' in df_bism_temp.columns:
-                    subs_unicos = sorted(
-                        df_bism_temp['SUBMERCADO_ENTREGA'].dropna().astype(str).str.strip()
-                        .replace('', pd.NA).dropna().unique().tolist()
-                    )
-                    submercados_bismut += subs_unicos
-
-            filtro_sub_bismut = st.selectbox(
-                "Filtro Submercado (Tabela CCEE Bismut)",
-                options=submercados_bismut,
-                key="filtro_submercado_bismut_ccee"
-            )
-
-            PERFIS_BISMUT = [
-                "BISMUT COM I5",
-                "BISMUT COM I0",
-                "BISMUT COM I1",
-                "BISMUT COM",
-            ]
-
-            df_bismut_ccee_tab = build_ccee_tabela(PERFIS_BISMUT, ['db_bismut'], filtro_sub_bismut)
-            df_bismut_wbc_tab  = build_wbc_tabela(PERFIS_BISMUT, df_wbc_base)
-
-            render_tabela_par(
-                "BISMUT CCEE", "BISMUT WBC",
-                df_bismut_ccee_tab, df_bismut_wbc_tab,
-                aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
-            )
-            render_reconciliacao("BISMUT", df_bismut_ccee_tab, df_bismut_wbc_tab)
-
-            # ─────────────────────────────────────────────────────────────────
-            # BLOCO MATRIX
-            # ─────────────────────────────────────────────────────────────────
-            st.write("### 📊 Tabela — MATRIX CCEE  |  MATRIX WBC")
-
-            DBS_MATRIX = ['db_ccear', 'db_cbr', 'db_matrix']
-
-            submercados_matrix = ["Todos"]
-            for db_key in DBS_MATRIX:
-                df_m = st.session_state.get(db_key)
-                if df_m is not None:
-                    df_mt = df_m.reset_index()
-                    if 'SUBMERCADO_ENTREGA' in df_mt.columns:
-                        for s in sorted(df_mt['SUBMERCADO_ENTREGA'].dropna().astype(str).str.strip()
-                                        .replace('', pd.NA).dropna().unique().tolist()):
-                            if s not in submercados_matrix:
-                                submercados_matrix.append(s)
-            submercados_matrix = ["Todos"] + sorted(submercados_matrix[1:])
-
-            filtro_sub_matrix = st.selectbox(
-                "Filtro Submercado (Tabela Matrix CCEE)",
-                options=submercados_matrix,
-                key="filtro_submercado_matrix_ccee"
-            )
-
-            PERFIS_MATRIX = [
-                "MATRIX COM I5",
-                "MATRIX COM",
-                "MATRIX COM I1",
-                "MATRIX COM I0",
-                "MATRIX COM CQ5",
-            ]
-
-            df_matrix_ccee_tab = build_ccee_tabela(PERFIS_MATRIX, DBS_MATRIX, filtro_sub_matrix)
-            df_matrix_wbc_tab  = build_wbc_tabela(PERFIS_MATRIX, df_wbc_base)
-
-            bases_matrix_ok = any(st.session_state.get(k) is not None for k in DBS_MATRIX)
-            render_tabela_par(
-                "MATRIX CCEE", "MATRIX WBC",
-                df_matrix_ccee_tab, df_matrix_wbc_tab,
-                aviso_sem_base="Nenhuma base Cliq Matrix/CCEAR/CBR carregada." if not bases_matrix_ok else None
-            )
-            render_reconciliacao("MATRIX", df_matrix_ccee_tab, df_matrix_wbc_tab)
-
-            # ─────────────────────────────────────────────────────────────────
-            # BLOCO GET ENERGY TRADING
-            # ─────────────────────────────────────────────────────────────────
-            st.write("### 📊 Tabela — GET ENERGY TRADING CCEE  |  GET ENERGY TRADING WBC")
-
-            filtro_sub_get = st.selectbox(
-                "Filtro Submercado (Tabela GET CCEE)",
-                options=submercados_bismut,
-                key="filtro_submercado_get_ccee"
-            )
-
-            PERFIS_GET = [
-                "GET ENERGY TRADING",
-                "GET ENERGY TRADING I5",
-                "GET ENERGY TRADING I0",
-                "GET ENERGY TRADING I1",
-                "GET ENERGY TRADING CQ5",
-            ]
-
-            df_get_ccee_tab = build_ccee_tabela(PERFIS_GET, ['db_bismut'], filtro_sub_get)
-            df_get_wbc_tab  = build_wbc_tabela(PERFIS_GET, df_wbc_base)
-
-            render_tabela_par(
-                "GET ENERGY TRADING CCEE", "GET ENERGY TRADING WBC",
-                df_get_ccee_tab, df_get_wbc_tab,
-                aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
-            )
-            render_reconciliacao("GET ENERGY TRADING", df_get_ccee_tab, df_get_wbc_tab)
-
-            # ─────────────────────────────────────────────────────────────────
-            # BLOCO CINERGY
-            # ─────────────────────────────────────────────────────────────────
-            st.write("### 📊 Tabela — CINERGY CCEE  |  CINERGY WBC")
-
-            filtro_sub_cinergy = st.selectbox(
-                "Filtro Submercado (Tabela CINERGY CCEE)",
-                options=submercados_bismut,
-                key="filtro_submercado_cinergy_ccee"
-            )
-
-            PERFIS_CINERGY = [
-                "CINERGY COM",
-                "CINERGY COM I1",
-                "CINERGY COM I5",
-                "CINERGY COM I0",
-                "CINERGY COM I8",
-                "CINERGY COM I5 2",
-                "CINERGY COM I1 2",
-                "CINERGY COM I0 2",
-                "CINERGY COM I8 2",
-            ]
-
-            df_cinergy_ccee_tab = build_ccee_tabela(PERFIS_CINERGY, ['db_bismut'], filtro_sub_cinergy)
-            df_cinergy_wbc_tab  = build_wbc_tabela(PERFIS_CINERGY, df_wbc_base)
-
-            render_tabela_par(
-                "CINERGY CCEE", "CINERGY WBC",
-                df_cinergy_ccee_tab, df_cinergy_wbc_tab,
-                aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
-            )
-            render_reconciliacao("CINERGY", df_cinergy_ccee_tab, df_cinergy_wbc_tab)
-
-            # ─────────────────────────────────────────────────────────────────
-            # BLOCO MTX CAMANDUCAIA
-            # ─────────────────────────────────────────────────────────────────
-            st.write("### 📊 Tabela — MTX CAMANDUCAIA CCEE  |  MTX CAMANDUCAIA WBC")
-
-            filtro_sub_mtx = st.selectbox(
-                "Filtro Submercado (Tabela MTX CAMANDUCAIA CCEE)",
-                options=submercados_bismut,
-                key="filtro_submercado_mtx_ccee"
-            )
-
-            PERFIS_MTX = [
-                "MTX CAMANDUCAIA",
-            ]
-
-            df_mtx_ccee_tab = build_ccee_tabela(PERFIS_MTX, ['db_bismut'], filtro_sub_mtx)
-            df_mtx_wbc_tab  = build_wbc_tabela(PERFIS_MTX, df_wbc_base)
-
-            render_tabela_par(
-                "MTX CAMANDUCAIA CCEE", "MTX CAMANDUCAIA WBC",
-                df_mtx_ccee_tab, df_mtx_wbc_tab,
-                aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
-            )
-            render_reconciliacao("MTX CAMANDUCAIA", df_mtx_ccee_tab, df_mtx_wbc_tab)
-
-            # ─────────────────────────────────────────────────────────────────
-            # BLOCO ARGENTUM
-            # ─────────────────────────────────────────────────────────────────
-            st.write("### 📊 Tabela — ARGENTUM CCEE  |  ARGENTUM WBC")
-
-            filtro_sub_argentum = st.selectbox(
-                "Filtro Submercado (Tabela ARGENTUM CCEE)",
-                options=submercados_bismut,
-                key="filtro_submercado_argentum_ccee"
-            )
-
-            PERFIS_ARGENTUM = [
-                "ARGENTUM COM",
-                "ARGENTUM COM I1",
-                "ARGENTUM COM I5",
-                "ARGENTUM COM I0",
-                "ARGENTUM COM I8",
-            ]
-
-            df_argentum_ccee_tab = build_ccee_tabela(PERFIS_ARGENTUM, ['db_bismut'], filtro_sub_argentum)
-            df_argentum_wbc_tab  = build_wbc_tabela(PERFIS_ARGENTUM, df_wbc_base)
-
-            render_tabela_par(
-                "ARGENTUM CCEE", "ARGENTUM WBC",
-                df_argentum_ccee_tab, df_argentum_wbc_tab,
-                aviso_sem_base="Base Cliq Bismut não carregada." if db_bismut_ccee is None else None
-            )
-            render_reconciliacao("ARGENTUM", df_argentum_ccee_tab, df_argentum_wbc_tab)
-
-        else:
-            st.warning("Sem dados para este período.")
-
-    except Exception as e:
-        st.error(f"Erro no processamento: {e}")
