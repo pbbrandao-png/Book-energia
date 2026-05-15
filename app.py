@@ -72,10 +72,10 @@ def calcular_cp_lp(dias):
 
 
 # ─────────────────────────────────────────────────────────
-# FORMATA MONTANTE
+# FORMATA NÚMEROS
 # ─────────────────────────────────────────────────────────
 
-def formatar_mwh(valor):
+def formatar_numero(valor):
 
     try:
 
@@ -89,6 +89,30 @@ def formatar_mwh(valor):
     except:
 
         return valor
+
+
+# ─────────────────────────────────────────────────────────
+# HORAS DO MÊS
+# ─────────────────────────────────────────────────────────
+
+def horas_mes(mes):
+
+    mapa = {
+        1: 744,
+        2: 672,
+        3: 744,
+        4: 720,
+        5: 744,
+        6: 720,
+        7: 744,
+        8: 744,
+        9: 720,
+        10: 744,
+        11: 720,
+        12: 744
+    }
+
+    return mapa.get(mes)
 
 
 # =========================================================
@@ -207,14 +231,49 @@ if arquivo is not None:
         )
 
     # =====================================================
-    # FORMATAÇÃO MONTANTE
+    # CALCULA HORAS DO MÊS
+    # =====================================================
+
+    if 'MES' in df.columns:
+
+        df['MES'] = pd.to_numeric(
+            df['MES'],
+            errors='coerce'
+        )
+
+        df['HORAS_MES'] = df['MES'].apply(
+            horas_mes
+        )
+
+    # =====================================================
+    # FORMATA MONTANTE MWH
     # =====================================================
 
     if 'MONTANTE_MWH' in df.columns:
 
-        df['MONTANTE_MWH'] = df['MONTANTE_MWH'].apply(
-            formatar_mwh
+        df['MONTANTE_MWH'] = pd.to_numeric(
+            df['MONTANTE_MWH'],
+            errors='coerce'
         )
+
+        # CALCULA MWm
+
+        if 'HORAS_MES' in df.columns:
+
+            df['MONTANTE_MWM'] = (
+                df['MONTANTE_MWH']
+                / df['HORAS_MES']
+            )
+
+            df['MONTANTE_MWM'] = df[
+                'MONTANTE_MWM'
+            ].apply(formatar_numero)
+
+        # FORMATA MWh
+
+        df['MONTANTE_MWH'] = df[
+            'MONTANTE_MWH'
+        ].apply(formatar_numero)
 
     # =====================================================
     # RENOMEAÇÃO VISUAL
@@ -222,7 +281,8 @@ if arquivo is not None:
 
     df = df.rename(
         columns={
-            'MONTANTE_MWH': 'MONTANTE MWh'
+            'MONTANTE_MWH': 'MONTANTE MWh',
+            'MONTANTE_MWM': 'MONTANTE MWm'
         }
     )
 
@@ -238,7 +298,8 @@ if arquivo is not None:
         'CONTRAPARTE',
         'CP/LP',
         'SUBMERCADO',
-        'MONTANTE MWh'
+        'MONTANTE MWh',
+        'MONTANTE MWm'
     ]
 
     # =====================================================
