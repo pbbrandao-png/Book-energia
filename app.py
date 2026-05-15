@@ -5,7 +5,7 @@ st.title("Book de Energia")
 
 # Caixa de upload
 arquivo = st.file_uploader(
-    "Suba sua planilha",
+    "Contratos aprovados",
     type=['xlsx', 'csv']
 )
 
