@@ -1,28 +1,31 @@
 import streamlit as st
 import pandas as pd
 
-
-# Título do app
+# Título
 st.title("Book de Energia")
 
-# Caixa de upload
+# Upload
 arquivo = st.file_uploader(
     "Contratos aprovados",
-    type=['xlsx', 'csv','xlsm']
+    type=['xlsx', 'csv', 'xlsm']
 )
 
-# Verifica se usuário subiu algo
+# Se subiu arquivo
 if arquivo is not None:
 
     st.success("Arquivo carregado com sucesso!")
-    
- # LER A PLANILHA
-    df = pd.read_excel(arquivo)
 
-    # MOSTRAR AS COLUNAS
+    # LÊ A ABA CORRETA
+    df = pd.read_excel(
+        arquivo,
+        sheet_name='Contratos_Selecionados'
+    )
+
+    # MOSTRA COLUNAS
+    st.write("Colunas encontradas:")
     st.write(df.columns)
 
-    # Mostra coluna Codigo_WBC
+    # MOSTRA A COLUNA Codigo_WBC
     st.write("Codigo_WBC:")
 
     st.write(df['Codigo_WBC'])
