@@ -44,7 +44,7 @@ if arquivo is not None:
     # LÊ O EXCEL
     df = pd.read_excel(
         arquivo,
-        skiprows=8
+        skiprows=9
     )
 
     # PADRONIZA COLUNAS
@@ -65,14 +65,38 @@ if arquivo is not None:
 
     # TRATA FONTE
     if 'FONTE' in df.columns:
+
         df['FONTE'] = df['FONTE'].apply(tratar_fonte)
+
+    # CONVERTE DATAS
+    df['SUPRIMENTO_INICIO'] = pd.to_datetime(
+        df['SUPRIMENTO_INICIO'],
+        errors='coerce'
+    )
+
+    df['SUPRIMENTO_TERMINO'] = pd.to_datetime(
+        df['SUPRIMENTO_TERMINO'],
+        errors='coerce'
+    )
+
+    # CALCULA DIFERENÇA EM DIAS
+    df['DIAS'] = (
+        df['SUPRIMENTO_TERMINO']
+        - df['SUPRIMENTO_INICIO']
+    ).dt.days
+
+    # CRIA COLUNA CP/LP
+    df['CP/LP'] = df['DIAS'].apply(
+        lambda x: 'LP' if x > 31 else 'CP'
+    )
 
     # COLUNAS QUE VOCÊ QUER MOSTRAR
     colunas_desejadas = [
         'CODIGO_WBC',
         'OPERACAO',
         'FONTE',
-        'PARTE'
+        'PARTE',
+        'CP/LP'
     ]
 
     # VERIFICA QUAIS EXISTEM
