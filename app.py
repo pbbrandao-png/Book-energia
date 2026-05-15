@@ -13,6 +13,3 @@ arquivo = st.file_uploader(
 if arquivo is not None:
 
     st.success("Arquivo carregado com sucesso!")
-
-    st.write("Nome do arquivo:")
-    st.write(arquivo.name)
