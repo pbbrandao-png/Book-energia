@@ -44,7 +44,7 @@ if arquivo is not None:
     # LÊ O EXCEL
     df = pd.read_excel(
         arquivo,
-        skiprows=9
+        skiprows=8
     )
 
     # PADRONIZA COLUNAS
