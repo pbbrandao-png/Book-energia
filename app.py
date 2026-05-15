@@ -28,7 +28,7 @@ def tratar_fonte(valor):
 
 
 # TÍTULO
-st.title("Book de Energia")
+st.title("Livro de Energia - Abril/2026")
 
 # UPLOAD
 arquivo = st.file_uploader(
@@ -50,6 +50,10 @@ if arquivo is not None:
     # PADRONIZA COLUNAS
     df.columns = [limpar_coluna(col) for col in df.columns]
 
+    # MOSTRA COLUNAS EXISTENTES
+    st.write("Colunas encontradas no arquivo:")
+    st.write(df.columns.tolist())
+
     # RENOMEIA COLUNAS
     df = df.rename(
         columns={
@@ -60,10 +64,25 @@ if arquivo is not None:
     )
 
     # TRATA FONTE
-    df['FONTE'] = df['FONTE'].apply(tratar_fonte)
+    if 'FONTE' in df.columns:
+        df['FONTE'] = df['FONTE'].apply(tratar_fonte)
+
+    # COLUNAS QUE VOCÊ QUER MOSTRAR
+    colunas_desejadas = [
+        'CODIGO_WBC',
+        'OPERACAO',
+        'FONTE',
+        'PARTE'
+    ]
+
+    # VERIFICA QUAIS EXISTEM
+    colunas_existentes = [
+        col for col in colunas_desejadas
+        if col in df.columns
+    ]
 
     # MOSTRA TABELA
     st.dataframe(
-        df[['CODIGO_WBC', 'OPERACAO', 'FONTE', 'PARTE']],
+        df[colunas_existentes],
         hide_index=True
     )
