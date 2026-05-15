@@ -789,9 +789,22 @@ def resolver_tipo_energia(tipo_raw, parte_raw):
     return tipo
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PARTES QUE USAM BASE BISMUT
+# APENAS BISMUT USA BASE BISMUT
+# GET / CINERGY / ARGENTUM / MTX CAMANDUCAIA
+# usam as bases normais da Matrix
 # ─────────────────────────────────────────────────────────────────────────────
-PARTES_BISMUT = ('BISMUT', 'GET', 'CINERGY', 'MTX CAMANDUCAIA', 'ARGENTUM')
+PARTES_BISMUT = ('BISMUT',)
+
+
+def obter_bases_por_parte(parte):
+    parte_upper = str(parte).upper().strip()
+
+    # Apenas BISMUT usa db_bismut
+    if any(p in parte_upper for p in PARTES_BISMUT):
+        return ['db_bismut']
+
+    # Todas as demais usam bases Matrix
+    return ['db_ccear', 'db_cbr', 'db_matrix']
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FUNÇÃO: Monta tabela unificada de todas as bases Cliq
@@ -994,32 +1007,39 @@ with tab_book:
                     comp = row['Comprador'] if row['Comprador'] != "-" else ""
                     parte_upper = str(row['Parte']).upper()
 
-                    # Partes que usam EXCLUSIVAMENTE a base Bismut / CCEAL
-                    if any(p in parte_upper for p in PARTES_BISMUT):
-                        return buscar_cliq_ccee(
-                            row['CliqCCEE Paradigma'], row['Contrato CliqCCEE mes anterior'],
-                            st.session_state.get('db_bismut'), 'bismut', vend, comp
-                        )
+                  bases = obter_bases_por_parte(row['Parte'])
 
-                    # Demais partes (Matrix): busca em CCEAR → CBR → MATRIX
-                    # NÃO usa db_bismut para partes Matrix
-                    for tipo, db_key in [('ccear', 'db_ccear'), ('cbr', 'db_cbr'), ('matrix', 'db_matrix')]:
-                        res = buscar_cliq_ccee(
-                            row['CliqCCEE Paradigma'], row['Contrato CliqCCEE mes anterior'],
-                            st.session_state.get(db_key), tipo, vend, comp
-                        )
-                        if res != "Verificar":
-                            return res
-                    return "Verificar"
+if bases == ['db_bismut']:
+    return buscar_cliq_ccee(
+        row['CliqCCEE Paradigma'],
+        row['Contrato CliqCCEE mes anterior'],
+        st.session_state.get('db_bismut'),
+        'bismut',
+        vend,
+        comp
+    )
 
-                df_conferencia['Contrato CliqCCEE'] = df_conferencia.apply(resolver_cliq, axis=1)
-                df_conferencia['Modulação CCEE']    = df_conferencia.apply(buscar_modulacao_cliq, axis=1)
+for tipo, db_key in [
+    ('ccear', 'db_ccear'),
+    ('cbr', 'db_cbr'),
+    ('matrix', 'db_matrix')
+]:
+    if db_key not in bases:
+        continue
 
-                def check_modulacao(row):
-                    wbc  = str(row['Modulacao WBC']).strip().lower()
-                    ccee = str(row['Modulação CCEE']).strip().lower()
-                    if wbc in ['-', '', 'nan'] or ccee in ['-', '', 'nan', 'verificar']: return "-"
-                    return "OK" if wbc == ccee else "Verificar"
+    res = buscar_cliq_ccee(
+        row['CliqCCEE Paradigma'],
+        row['Contrato CliqCCEE mes anterior'],
+        st.session_state.get(db_key),
+        tipo,
+        vend,
+        comp
+    )
+
+    if res != "Verificar":
+        return res
+
+return "Verificar"
 
                 df_conferencia['Check Modulação'] = df_conferencia.apply(check_modulacao, axis=1)
 
