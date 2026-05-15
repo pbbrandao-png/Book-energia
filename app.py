@@ -73,7 +73,8 @@ if arquivo is not None:
             'MOVIMENTACAO': 'OPERACAO',
             'FONTE_CONTRATO': 'FONTE',
             'CODIGO_WBC': 'BOLETA',
-            'CONTRAPARTE_NOME_FANTASIA': 'CONTRAPARTE'
+            'CONTRAPARTE_NOME_FANTASIA': 'CONTRAPARTE',
+            'QUANTATUALIZADA': 'MONTANTE MWh'
         }
     )
 
@@ -117,7 +118,8 @@ if arquivo is not None:
         'PARTE',
         'CONTRAPARTE',
         'CP/LP',
-        'SUBMERCADO'
+        'SUBMERCADO',
+        'MONTANTE MWh'
     ]
 
     # VERIFICA QUAIS EXISTEM
