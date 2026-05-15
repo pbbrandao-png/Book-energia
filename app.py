@@ -15,14 +15,14 @@ if arquivo is not None:
 
     st.success("Arquivo carregado com sucesso!")
 
-    # LÊ A ABA CORRETA
+    # Lê a aba correta
     df = pd.read_excel(
         arquivo,
         sheet_name='Contratos_Selecionados'
     )
 
-
-    # MOSTRA A COLUNA Codigo_WBC
-    st.write("Codigo_WBC:")
-
-    st.write(df['Codigo_WBC'])
+    # Mostra apenas a coluna Codigo_WBC
+    st.dataframe(
+        df[['Codigo_WBC']],
+        hide_index=True
+    )
