@@ -194,7 +194,8 @@ if arquivo is not None:
             'CODIGO_WBC': 'BOLETA',
             'CONTRAPARTE_NOME_FANTASIA': 'CONTRAPARTE',
             'QUANTATUALIZADA': 'MONTANTE_MWH',
-            'CODIGO_CCEE': 'CLIQ PARADIGMA'
+            'CODIGO_CCEE': 'CLIQ PARADIGMA',
+            'TIPO_DE_MODULACAO':'MODULACAO WBC'
         }
     )
 
@@ -325,7 +326,8 @@ if arquivo is not None:
         'SUBMERCADO',
         'MONTANTE MWh',
         'MONTANTE MWm',
-        'CLIQ PARADIGMA'
+        'CLIQ PARADIGMA',
+        'MODULACAO WBC'
     ]
 
     # =====================================================
