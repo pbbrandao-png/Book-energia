@@ -44,8 +44,7 @@ if arquivo is not None:
     # LÊ O EXCEL
     df = pd.read_excel(
         arquivo,
-        sheet_name='Contratos_Selecionados',
-        skiprows=9
+               skiprows=9
     )
 
     # PADRONIZA COLUNAS
