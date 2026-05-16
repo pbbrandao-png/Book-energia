@@ -180,7 +180,7 @@ if arquivo is not None:
     # LEITURA
     # =====================================================
 
-    df = pd.read_excel(
+    df_contratos_aprovados_contratos_aprovados_contratos_aprovados = pd.read_excel(
         arquivo,
         skiprows=8
     )
@@ -189,20 +189,20 @@ if arquivo is not None:
     # PADRONIZAÇÃO DE COLUNAS
     # =====================================================
 
-    df.columns = [limpar_coluna(col) for col in df.columns]
+    df_contratos_aprovados_contratos_aprovados.columns = [limpar_coluna(col) for col in df_contratos_aprovados_contratos_aprovados.columns]
 
     # =====================================================
     # DEBUG
     # =====================================================
 
     st.write("Colunas encontradas:")
-    st.write(df.columns.tolist())
+    st.write(df_contratos_aprovados_contratos_aprovados.columns.tolist())
 
     # =====================================================
     # RENOMEAÇÃO DE COLUNAS
     # =====================================================
 
-    df = df.rename(
+    df_contratos_aprovados_contratos_aprovados = df_contratos_aprovados_contratos_aprovados.rename(
         columns={
             'PARTE_NOME_FANTASIA': 'PARTE',
             'MOVIMENTACAO': 'OPERACAO',
@@ -219,9 +219,9 @@ if arquivo is not None:
     # TRATAMENTO FONTE
     # =====================================================
 
-    if 'FONTE' in df.columns:
+    if 'FONTE' in df_contratos_aprovados.columns:
 
-        df['FONTE'] = df['FONTE'].apply(
+        df_contratos_aprovados['FONTE'] = df_contratos_aprovados['FONTE'].apply(
             tratar_fonte
         )
 
@@ -229,9 +229,9 @@ if arquivo is not None:
     # TRATAMENTO SUBMERCADO
     # =====================================================
 
-    if 'SUBMERCADO' in df.columns:
+    if 'SUBMERCADO' in df_contratos_aprovados.columns:
 
-        df['SUBMERCADO'] = df['SUBMERCADO'].apply(
+        df_contratos_aprovados['SUBMERCADO'] = df_contratos_aprovados['SUBMERCADO'].apply(
             tratar_submercado
         )
 
@@ -240,31 +240,31 @@ if arquivo is not None:
     # =====================================================
 
     if (
-        'SUPRIMENTO_INICIO' in df.columns
+        'SUPRIMENTO_INICIO' in df_contratos_aprovados.columns
         and
-        'SUPRIMENTO_TERMINO' in df.columns
+        'SUPRIMENTO_TERMINO' in df_contratos_aprovados.columns
     ):
 
-        df['SUPRIMENTO_INICIO'] = pd.to_datetime(
-            df['SUPRIMENTO_INICIO'],
+        df_contratos_aprovados['SUPRIMENTO_INICIO'] = pd.to_datetime(
+            df_contratos_aprovados['SUPRIMENTO_INICIO'],
             errors='coerce'
         )
 
-        df['SUPRIMENTO_TERMINO'] = pd.to_datetime(
-            df['SUPRIMENTO_TERMINO'],
+        df_contratos_aprovados['SUPRIMENTO_TERMINO'] = pd.to_datetime(
+            df_contratos_aprovados['SUPRIMENTO_TERMINO'],
             errors='coerce'
         )
 
         # CALCULA DIAS
 
-        df['DIAS'] = (
-            df['SUPRIMENTO_TERMINO']
-            - df['SUPRIMENTO_INICIO']
+        df_contratos_aprovados['DIAS'] = (
+            df_contratos_aprovados['SUPRIMENTO_TERMINO']
+            - df_contratos_aprovados['SUPRIMENTO_INICIO']
         ).dt.days
 
         # CALCULA CP / LP
 
-        df['CP/LP'] = df['DIAS'].apply(
+        df_contratos_aprovados['CP/LP'] = df_contratos_aprovados['DIAS'].apply(
             calcular_cp_lp
         )
 
@@ -272,14 +272,14 @@ if arquivo is not None:
     # HORAS DO MÊS
     # =====================================================
 
-    if 'MES' in df.columns:
+    if 'MES' in df_contratos_aprovados.columns:
 
-        df['MES'] = pd.to_numeric(
-            df['MES'],
+        df_contratos_aprovados['MES'] = pd.to_numeric(
+            df_contratos_aprovados['MES'],
             errors='coerce'
         )
 
-        df['HORAS_MES'] = df['MES'].apply(
+        df_contratos_aprovados['HORAS_MES'] = df_contratos_aprovados['MES'].apply(
             horas_mes
         )
 
@@ -287,42 +287,42 @@ if arquivo is not None:
     # TRATAMENTO MONTANTE
     # =====================================================
 
-    if 'MONTANTE_MWH' in df.columns:
+    if 'MONTANTE_MWH' in df_contratos_aprovados.columns:
 
         # GARANTE NÚMERO
 
-        df['MONTANTE_MWH'] = pd.to_numeric(
-            df['MONTANTE_MWH'],
+        df_contratos_aprovados['MONTANTE_MWH'] = pd.to_numeric(
+            df_contratos_aprovados['MONTANTE_MWH'],
             errors='coerce'
         )
 
         # CALCULA MWm
 
-        if 'HORAS_MES' in df.columns:
+        if 'HORAS_MES' in df_contratos_aprovados.columns:
 
-            df['MONTANTE_MWM'] = (
-                df['MONTANTE_MWH']
-                / df['HORAS_MES']
+            df_contratos_aprovados['MONTANTE_MWM'] = (
+                df_contratos_aprovados['MONTANTE_MWH']
+                / df_contratos_aprovados['HORAS_MES']
             )
 
             # FORMATA MWm (6 CASAS)
 
-            df['MONTANTE_MWM'] = df[
+            df_contratos_aprovados['MONTANTE_MWM'] = df_contratos_aprovados[
                 'MONTANTE_MWM'
             ].apply(formatar_6_casas)
 
         # FORMATA MWh (3 CASAS)
 
-        df['MONTANTE_MWH'] = df[
+        df_contratos_aprovados['MONTANTE_MWH'] = df_contratos_aprovados[
             'MONTANTE_MWH'
         ].apply(formatar_3_casas)
     # =====================================================
     # TRATAMENTO MODULACAO
     # =====================================================
 
-    if 'MODULACAO WBC' in df.columns:
+    if 'MODULACAO WBC' in df_contratos_aprovados.columns:
 
-        df['MODULACAO WBC'] = df['MODULACAO WBC'].apply(
+        df_contratos_aprovados['MODULACAO WBC'] = df_contratos_aprovados['MODULACAO WBC'].apply(
             tratar_modulacao
         )
 
@@ -330,7 +330,7 @@ if arquivo is not None:
     # RENOMEAÇÃO VISUAL
     # =====================================================
 
-    df = df.rename(
+    df_contratos_aprovados = df_contratos_aprovados.rename(
         columns={
             'MONTANTE_MWH': 'MONTANTE MWh',
             'MONTANTE_MWM': 'MONTANTE MWm'
@@ -362,7 +362,7 @@ if arquivo is not None:
     colunas_existentes = [
         col
         for col in colunas_desejadas
-        if col in df.columns
+        if col in df_contratos_aprovados.columns
     ]
 
     # =====================================================
@@ -370,6 +370,6 @@ if arquivo is not None:
     # =====================================================
 
     st.dataframe(
-        df[colunas_existentes],
+        df_contratos_aprovados[colunas_existentes],
         hide_index=True
     )
