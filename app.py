@@ -202,7 +202,7 @@ if arquivo is not None:
     # RENOMEAÇÃO DE COLUNAS
     # =====================================================
 
-    df_contratos_aprovados_contratos_aprovados = df_contratos_aprovados.rename(
+    df_contratos_aprovados = df_contratos_aprovados.rename(
         columns={
             'PARTE_NOME_FANTASIA': 'PARTE',
             'MOVIMENTACAO': 'OPERACAO',
