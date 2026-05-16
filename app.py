@@ -180,7 +180,7 @@ if arquivo is not None:
     # LEITURA
     # =====================================================
 
-    df_contratos_aprovados_contratos_aprovados_contratos_aprovados = pd.read_excel(
+    df_contratos_aprovados = pd.read_excel(
         arquivo,
         skiprows=8
     )
@@ -189,20 +189,20 @@ if arquivo is not None:
     # PADRONIZAÇÃO DE COLUNAS
     # =====================================================
 
-    df_contratos_aprovados_contratos_aprovados.columns = [limpar_coluna(col) for col in df_contratos_aprovados_contratos_aprovados.columns]
+    df_contratos_aprovados.columns = [limpar_coluna(col) for col in df_contratos_aprovados.columns]
 
     # =====================================================
     # DEBUG
     # =====================================================
 
     st.write("Colunas encontradas:")
-    st.write(df_contratos_aprovados_contratos_aprovados.columns.tolist())
+    st.write(df_contratos_aprovados.columns.tolist())
 
     # =====================================================
     # RENOMEAÇÃO DE COLUNAS
     # =====================================================
 
-    df_contratos_aprovados_contratos_aprovados = df_contratos_aprovados_contratos_aprovados.rename(
+    df_contratos_aprovados_contratos_aprovados = df_contratos_aprovados.rename(
         columns={
             'PARTE_NOME_FANTASIA': 'PARTE',
             'MOVIMENTACAO': 'OPERACAO',
