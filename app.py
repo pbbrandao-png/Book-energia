@@ -188,7 +188,7 @@ if arquivo is not None:
         skiprows=8,
     
     df_mes_anterior = pd.read_excel(
-        arquivo,
+        arquivo_2,
         
     )
     df_contratos_aprovados = df_contratos_aprovados.fillna("-")
