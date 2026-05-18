@@ -114,7 +114,7 @@ def tratar_cnpj(df):
 
     return df
 
-df = tratar_cnpj(df)
+
 
 
 # =============================================================================
@@ -188,7 +188,7 @@ def renomear_colunas(df):
     return df
 
 df = renomear_colunas(df)
-
+df = tratar_cnpj(df)
 
 # =============================================================================
 # DATAS DE SUPRIMENTO
