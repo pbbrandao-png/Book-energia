@@ -133,8 +133,6 @@ st.title('⚡ Book de Energia')
 
 col1, col2, col3 = st.columns(3)
 
-col1, col2, col3 = st.columns(3)
-
 with col1:
     arquivo_aprovados = st.file_uploader(
         label='Contratos aprovados',
@@ -184,7 +182,7 @@ if arquivo_zip is not None:
                     if 'cliq bismut' in arquivo.lower()
                 ),
                 None
-                 if arquivo_bismut is None:
+ if arquivo_bismut is None:
                 st.warning('⚠️ Arquivo CLIQ BISMUT não encontrado.')
 
             else:
