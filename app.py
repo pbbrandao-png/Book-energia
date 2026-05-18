@@ -16,8 +16,7 @@ def limpar_coluna(texto):
         .normalize('NFKD', texto)
         .encode('ASCII', 'ignore')
         .decode('utf-8')
-        df = df.fillna("-")
-    )
+           )
 
     return texto
 
@@ -184,7 +183,7 @@ if arquivo is not None:
         arquivo,
         skiprows=8
     )
-
+    df_contratos_aprovados = df_contratos_aprovados.fillna("-")
     # =====================================================
     # PADRONIZAÇÃO DE COLUNAS
     # =====================================================
