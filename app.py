@@ -234,12 +234,14 @@ if arquivo_zip is not None:
 
                     if arquivo_bismut.lower().endswith('.csv'):
 
+                        # CSV da CCEE tem "sep=\t" na linha 1 — pular com skiprows=1
                         try:
 
                             df_bismut = pd.read_csv(
                                 arquivo,
                                 encoding='utf-8',
-                                sep=';'
+                                sep='\t',
+                                skiprows=1
                             )
 
                         except:
@@ -249,7 +251,8 @@ if arquivo_zip is not None:
                             df_bismut = pd.read_csv(
                                 arquivo,
                                 encoding='latin1',
-                                sep=';'
+                                sep='\t',
+                                skiprows=1
                             )
 
                     elif arquivo_bismut.lower().endswith(
@@ -635,9 +638,10 @@ if df_bismut is not None:
         ]
 
         # Normalizar colunas de lookup no arquivo CCEE
+        # CODIGO_CONTRATO pode vir como int — converter para string
         df_bismut['CODIGO_CONTRATO'] = (
             df_bismut['CODIGO_CONTRATO']
-            .astype(str)
+            .apply(lambda v: str(int(float(v))) if str(v).replace('.','').isdigit() else str(v))
             .str.strip()
         )
 
