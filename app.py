@@ -1,3 +1,4 @@
+```python
 # =============================================================================
 #
 # ⚡ BOOK DE ENERGIA
@@ -59,7 +60,7 @@ def limpar_coluna(texto):
 
 
 def formatar_numero_br(valor, casas=2):
-    """Formata número no padrão brasileiro (ex: 1.234,56)."""
+    """Formata número no padrão brasileiro."""
 
     try:
         return (
@@ -70,14 +71,15 @@ def formatar_numero_br(valor, casas=2):
         )
     except Exception:
         return '-'
-        
+
+
 def formatar_cnpj(valor):
     """Formata número no padrão de CNPJ."""
 
     try:
         digits = ''.join(filter(str.isdigit, str(valor)))
 
-        # completa com zeros à esquerda
+        # completa zeros à esquerda
         digits = digits.zfill(14)
 
         return f"{digits[:2]}.{digits[2:5]}.{digits[5:8]}/{digits[8:12]}-{digits[12:]}"
@@ -91,7 +93,6 @@ def formatar_cnpj(valor):
 # =============================================================================
 
 def classificar_cp_lp(dias):
-    """Retorna 'CP' ou 'LP' com base na quantidade de dias."""
 
     if pd.isna(dias):
         return '-'
@@ -100,7 +101,6 @@ def classificar_cp_lp(dias):
 
 
 def total_horas_mes(mes, ano):
-    """Retorna o total de horas de um determinado mês/ano."""
 
     try:
         dias_mes = calendar.monthrange(int(ano), int(mes))[1]
@@ -108,7 +108,9 @@ def total_horas_mes(mes, ano):
     except Exception:
         return None
 
+
 def tratar_cnpj(df):
+
     if 'CONTRAPARTE_CNPJ' not in df.columns:
         return df
 
@@ -120,8 +122,6 @@ def tratar_cnpj(df):
     )
 
     return df
-
-
 
 
 # =============================================================================
@@ -164,44 +164,53 @@ if arquivo_aprovados is None:
 # =============================================================================
 
 try:
+
     df = pd.read_excel(arquivo_aprovados, skiprows=8)
+
     st.success('✅ Arquivo principal carregado!')
+
+    # =============================================================================
+    # LEITURA DO ZIP
+    # =============================================================================
+
     df_bismut = None
 
     if arquivo_zip is not None:
 
-    try:
-        with zipfile.ZipFile(arquivo_zip) as zip_ref:
+        try:
 
-            arquivos_zip = zip_ref.namelist()
+            with zipfile.ZipFile(arquivo_zip) as zip_ref:
 
-            arquivo_bismut = next(
-                (
-                    arquivo
-                    for arquivo in arquivos_zip
-                    if 'cliq bismut' in arquivo.lower()
-                ),
-                None
-      if arquivo_bismut is None:
-                st.warning('⚠️ Arquivo CLIQ BISMUT não encontrado.')
+                arquivos_zip = zip_ref.namelist()
 
-            else:
+                arquivo_bismut = next(
+                    (
+                        arquivo
+                        for arquivo in arquivos_zip
+                        if 'cliq bismut' in arquivo.lower()
+                    ),
+                    None
+                )
 
-                with zip_ref.open(arquivo_bismut) as arquivo:
+                if arquivo_bismut is None:
 
-                    if arquivo_bismut.endswith('.csv'):
-                        df_bismut = pd.read_csv(arquivo)
+                    st.warning('⚠️ Arquivo CLIQ BISMUT não encontrado.')
 
-                    elif arquivo_bismut.endswith(('.xlsx', '.xlsm', '.xls')):
-                        df_bismut = pd.read_excel(arquivo)
+                else:
 
-                st.success(f'✅ Arquivo encontrado: {arquivo_bismut}')
-            )
+                    with zip_ref.open(arquivo_bismut) as arquivo:
 
-           
+                        if arquivo_bismut.endswith('.csv'):
+                            df_bismut = pd.read_csv(arquivo)
 
-    except Exception as erro:
-        st.error(f'❌ Erro ao ler ZIP: {erro}')
+                        elif arquivo_bismut.endswith(('.xlsx', '.xlsm', '.xls')):
+                            df_bismut = pd.read_excel(arquivo)
+
+                    st.success(f'✅ Arquivo encontrado: {arquivo_bismut}')
+
+        except Exception as erro:
+            st.error(f'❌ Erro ao ler ZIP: {erro}')
+
 except Exception as erro:
     st.error(f'❌ Erro ao ler arquivo principal: {erro}')
     st.stop()
@@ -212,8 +221,11 @@ except Exception as erro:
 # =============================================================================
 
 def limpar_nomes_colunas(df):
+
     df.columns = [limpar_coluna(col) for col in df.columns]
+
     return df
+
 
 df = limpar_nomes_colunas(df)
 
@@ -223,7 +235,9 @@ df = limpar_nomes_colunas(df)
 # =============================================================================
 
 def renomear_colunas(df):
+
     df = df.rename(columns={
+
         'PARTE_NOME_FANTASIA':       'PARTE',
         'MOVIMENTACAO':              'OPERACAO',
         'FONTE_CONTRATO':            'FONTE',
@@ -234,26 +248,39 @@ def renomear_colunas(df):
         'TIPO_DE_MODULACAO':         'MODULACAO WBC',
         'FLEXLIMITE_MODULACAOMAX':   'MOD MAX',
         'FLEXLIMITE_MODULACAOMIN':   'MOD MIN',
-        'SIGLA_CCEE_VENDEDOR':'VENDEDOR',
-        'SIGLA_CCEE_COMPRADOR':'COMPRADOR'
+        'SIGLA_CCEE_VENDEDOR':       'VENDEDOR',
+        'SIGLA_CCEE_COMPRADOR':      'COMPRADOR'
+
     })
+
     return df
+
 
 df = renomear_colunas(df)
 df = tratar_cnpj(df)
+
 
 # =============================================================================
 # DATAS DE SUPRIMENTO
 # =============================================================================
 
 def converter_datas(df):
+
     if 'SUPRIMENTO_INICIO' not in df.columns or 'SUPRIMENTO_TERMINO' not in df.columns:
         return df
 
-    df['SUPRIMENTO_INICIO']  = pd.to_datetime(df['SUPRIMENTO_INICIO'],  errors='coerce')
-    df['SUPRIMENTO_TERMINO'] = pd.to_datetime(df['SUPRIMENTO_TERMINO'], errors='coerce')
+    df['SUPRIMENTO_INICIO'] = pd.to_datetime(
+        df['SUPRIMENTO_INICIO'],
+        errors='coerce'
+    )
+
+    df['SUPRIMENTO_TERMINO'] = pd.to_datetime(
+        df['SUPRIMENTO_TERMINO'],
+        errors='coerce'
+    )
 
     return df
+
 
 df = converter_datas(df)
 
@@ -263,13 +290,19 @@ df = converter_datas(df)
 # =============================================================================
 
 def calcular_cp_lp(df):
+
     if 'SUPRIMENTO_INICIO' not in df.columns or 'SUPRIMENTO_TERMINO' not in df.columns:
         return df
 
-    df['DIAS']  = (df['SUPRIMENTO_TERMINO'] - df['SUPRIMENTO_INICIO']).dt.days
+    df['DIAS'] = (
+        df['SUPRIMENTO_TERMINO'] -
+        df['SUPRIMENTO_INICIO']
+    ).dt.days
+
     df['CP/LP'] = df['DIAS'].apply(classificar_cp_lp)
 
     return df
+
 
 df = calcular_cp_lp(df)
 
@@ -279,18 +312,24 @@ df = calcular_cp_lp(df)
 # =============================================================================
 
 def calcular_horas_mes(df):
+
     if 'MES' not in df.columns or 'SUPRIMENTO_INICIO' not in df.columns:
         return df
 
     df['MES'] = pd.to_numeric(df['MES'], errors='coerce')
+
     df['ANO'] = df['SUPRIMENTO_INICIO'].dt.year
 
     df['HORAS_MES'] = df.apply(
-        lambda linha: total_horas_mes(linha['MES'], linha['ANO']),
+        lambda linha: total_horas_mes(
+            linha['MES'],
+            linha['ANO']
+        ),
         axis=1
     )
 
     return df
+
 
 df = calcular_horas_mes(df)
 
@@ -300,17 +339,21 @@ df = calcular_horas_mes(df)
 # =============================================================================
 
 def tratar_fonte(df):
+
     if 'FONTE' not in df.columns:
         return df
 
     df['FONTE'] = df['FONTE'].replace({
+
         'Incentivada 50%':           'Incentivada-I5',
         'Cogeração Qualificada 50%': 'Incentivada-CQ5',
         'Incentivada 100%':          'Incentivada-I1',
         'Incentivada 0%':            'Incentivada-I0',
+
     })
 
     return df
+
 
 df = tratar_fonte(df)
 
@@ -320,6 +363,7 @@ df = tratar_fonte(df)
 # =============================================================================
 
 def tratar_submercado(df):
+
     if 'SUBMERCADO' not in df.columns:
         return df
 
@@ -329,14 +373,17 @@ def tratar_submercado(df):
         .str.strip()
         .str.upper()
         .replace({
+
             'N':     'NORTE',
             'S':     'SUL',
             'NE':    'NORDESTE',
             'SE/CO': 'SUDESTE',
+
         })
     )
 
     return df
+
 
 df = tratar_submercado(df)
 
@@ -346,16 +393,20 @@ df = tratar_submercado(df)
 # =============================================================================
 
 def tratar_modulacao(df):
+
     if 'MODULACAO WBC' not in df.columns:
         return df
 
     df['MODULACAO WBC'] = df['MODULACAO WBC'].replace({
+
         'C - Carga': 'CARGA',
         'F - Flat':  'FLAT',
         'DECLARADO': 'DECLARADA',
+
     })
 
     return df
+
 
 df = tratar_modulacao(df)
 
@@ -365,16 +416,21 @@ df = tratar_modulacao(df)
 # =============================================================================
 
 def calcular_montante_mwh(df):
+
     if 'MONTANTE_MWH' not in df.columns:
         return df
 
-    df['MONTANTE_MWH_NUM'] = pd.to_numeric(df['MONTANTE_MWH'], errors='coerce')
+    df['MONTANTE_MWH_NUM'] = pd.to_numeric(
+        df['MONTANTE_MWH'],
+        errors='coerce'
+    )
 
     df['MONTANTE MWh'] = df['MONTANTE_MWH_NUM'].apply(
         lambda valor: formatar_numero_br(valor, 3)
     )
 
     return df
+
 
 df = calcular_montante_mwh(df)
 
@@ -384,16 +440,21 @@ df = calcular_montante_mwh(df)
 # =============================================================================
 
 def calcular_montante_mwm(df):
+
     if 'MONTANTE_MWH_NUM' not in df.columns or 'HORAS_MES' not in df.columns:
         return df
 
-    df['MONTANTE_MWM_NUM'] = df['MONTANTE_MWH_NUM'] / df['HORAS_MES']
+    df['MONTANTE_MWM_NUM'] = (
+        df['MONTANTE_MWH_NUM'] /
+        df['HORAS_MES']
+    )
 
     df['MONTANTE MWm'] = df['MONTANTE_MWM_NUM'].apply(
         lambda valor: formatar_numero_br(valor, 6)
     )
 
     return df
+
 
 df = calcular_montante_mwm(df)
 
@@ -412,17 +473,32 @@ df = df.fillna('-')
 if arquivo_mes_anterior is not None:
 
     try:
+
         df_anterior = pd.read_excel(arquivo_mes_anterior)
 
-        df_anterior.columns = [limpar_coluna(col) for col in df_anterior.columns]
+        df_anterior.columns = [
+            limpar_coluna(col)
+            for col in df_anterior.columns
+        ]
 
         df_anterior = df_anterior.rename(columns={
+
             'CODIGO_WBC':  'BOLETA',
             'CODIGO_CCEE': 'Cliq Mês Anterior',
+
         })
 
-        df['BOLETA']          = df['BOLETA'].astype(str).str.strip()
-        df_anterior['BOLETA'] = df_anterior['BOLETA'].astype(str).str.strip()
+        df['BOLETA'] = (
+            df['BOLETA']
+            .astype(str)
+            .str.strip()
+        )
+
+        df_anterior['BOLETA'] = (
+            df_anterior['BOLETA']
+            .astype(str)
+            .str.strip()
+        )
 
         df = df.merge(
             df_anterior[['BOLETA', 'Cliq Mês Anterior']],
@@ -430,11 +506,15 @@ if arquivo_mes_anterior is not None:
             how='left'
         )
 
-        df['Cliq Mês Anterior'] = df['Cliq Mês Anterior'].fillna('-')
+        df['Cliq Mês Anterior'] = (
+            df['Cliq Mês Anterior']
+            .fillna('-')
+        )
 
         st.success('✅ Cliq do mês anterior encontrado!')
 
     except Exception as erro:
+
         st.warning(f'⚠️ Erro ao buscar mês anterior: {erro}')
 
 
@@ -445,7 +525,17 @@ if arquivo_mes_anterior is not None:
 with st.expander('🔍 Ver colunas disponíveis'):
     st.write(df.columns.tolist())
 
-colunas_existentes = [col for col in COLUNAS_EXIBICAO if col in df.columns]
+colunas_existentes = [
+    col
+    for col in COLUNAS_EXIBICAO
+    if col in df.columns
+]
 
 st.subheader('Contratos Aprovados')
-st.dataframe(df[colunas_existentes], hide_index=True, use_container_width=True)
+
+st.dataframe(
+    df[colunas_existentes],
+    hide_index=True,
+    use_container_width=True
+)
+```
