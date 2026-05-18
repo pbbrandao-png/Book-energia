@@ -163,6 +163,10 @@ st.title("Livro de Energia - Abril/2026")
 
 arquivo = st.file_uploader(
     "Contratos aprovados",
+    type=['xlsx', 'csv', 'xlsm'],
+
+    arquivo = st.file_uploader(
+    "Contratos mês anterior",
     type=['xlsx', 'csv', 'xlsm']
 )
 
