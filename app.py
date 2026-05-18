@@ -154,19 +154,18 @@ def tratar_modulacao(valor):
 # TÍTULO
 # =========================================================
 
-st.title("Livro de Energia - Abril/2026")
+st.title("Book de Energia")
 
 
 # =========================================================
 # UPLOAD
 # =========================================================
-
-    arquivo = st.file_uploader(
+arquivo = st.file_uploader(
     "Contratos aprovados",
     type=['xlsx', 'csv', 'xlsm']
     )
 
-    arquivo_2 = st.file_uploader(
+arquivo_2 = st.file_uploader(
     "Contratos mês anterior",
     type=['xlsx', 'csv', 'xlsm']
 )
