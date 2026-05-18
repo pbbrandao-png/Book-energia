@@ -200,7 +200,19 @@ try:
                     with zip_ref.open(arquivo_bismut) as arquivo:
 
                         if arquivo_bismut.endswith('.csv'):
-                            df_bismut = pd.read_csv(arquivo)
+                           try:
+                                df_bismut = pd.read_csv(
+                                arquivo,
+                                encoding='utf-8',
+                                sep=';'
+                           )
+
+except:
+    df_bismut = pd.read_csv(
+        arquivo,
+        encoding='latin1',
+        sep=';'
+    )
 
                         elif arquivo_bismut.endswith(('.xlsx', '.xlsm', '.xls')):
                             df_bismut = pd.read_excel(arquivo)
