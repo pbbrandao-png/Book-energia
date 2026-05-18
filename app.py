@@ -133,6 +133,8 @@ st.title('⚡ Book de Energia')
 
 col1, col2, col3 = st.columns(3)
 
+col1, col2, col3 = st.columns(3)
+
 with col1:
     arquivo_aprovados = st.file_uploader(
         label='Contratos aprovados',
@@ -146,13 +148,13 @@ with col2:
         type=TIPOS_ARQUIVO,
         key='mes_anterior'
     )
-    with col3:
-    
+
+with col3:
     arquivo_zip = st.file_uploader(
-    label='ZIP CLIQ BISMUT',
-    type=['zip'],
-    key='zip_bismut'
-)
+        label='ZIP CLIQ BISMUT',
+        type=['zip'],
+        key='zip_bismut'
+    )
 
 if arquivo_aprovados is None:
     st.info('📂 Faça upload do arquivo principal.')
@@ -182,9 +184,7 @@ if arquivo_zip is not None:
                     if 'cliq bismut' in arquivo.lower()
                 ),
                 None
-            )
-
-            if arquivo_bismut is None:
+                 if arquivo_bismut is None:
                 st.warning('⚠️ Arquivo CLIQ BISMUT não encontrado.')
 
             else:
@@ -198,6 +198,9 @@ if arquivo_zip is not None:
                         df_bismut = pd.read_excel(arquivo)
 
                 st.success(f'✅ Arquivo encontrado: {arquivo_bismut}')
+            )
+
+           
 
     except Exception as erro:
         st.error(f'❌ Erro ao ler ZIP: {erro}')
