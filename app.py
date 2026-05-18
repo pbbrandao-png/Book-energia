@@ -182,7 +182,7 @@ try:
                     if 'cliq bismut' in arquivo.lower()
                 ),
                 None
- if arquivo_bismut is None:
+      if arquivo_bismut is None:
                 st.warning('⚠️ Arquivo CLIQ BISMUT não encontrado.')
 
             else:
