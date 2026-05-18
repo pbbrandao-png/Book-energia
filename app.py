@@ -18,6 +18,13 @@ import io
 
 TIPOS_ARQUIVO = ['xlsx', 'xlsm', 'csv']
 
+# CLIQs que pertencem à Matrix — buscam no ccear_q
+CLIQS_MATRIX = {
+    '2813298', '2813299', '2813300', '2813301', '2813302',
+    '2813303', '2813304', '2813305', '4159778', '4159779',
+    '4159780', '4686267', '4686268', '4686269', '4686270'
+}
+
 COLUNAS_EXIBICAO = [
     'BOLETA',
     'OPERACAO',
@@ -135,6 +142,62 @@ def tratar_cnpj(df):
     return df
 
 
+def normalizar_codigo(valor):
+    """Converte código para string sem decimais (ex: 1255694.0 → '1255694')."""
+
+    s = str(valor).strip()
+
+    if s.replace('.', '').isdigit():
+        try:
+            return str(int(float(s)))
+        except Exception:
+            pass
+
+    return s
+
+
+def preparar_base_ccee(df_base):
+    """Normaliza colunas de lookup de qualquer base da CCEE."""
+
+    df_base = df_base.copy()
+
+    df_base.columns = [limpar_coluna(c) for c in df_base.columns]
+
+    df_base['CODIGO_CONTRATO'] = (
+        df_base['CODIGO_CONTRATO']
+        .apply(normalizar_codigo)
+    )
+
+    df_base['SIGLA_PERFIL_VENDEDOR'] = (
+        df_base['SIGLA_PERFIL_VENDEDOR']
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+
+    df_base['SIGLA_PERFIL_COMPRADOR'] = (
+        df_base['SIGLA_PERFIL_COMPRADOR']
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+
+    return df_base
+
+
+def ler_csv_ccee(zip_ref, nome_arquivo):
+    """Lê um CSV da CCEE dentro do ZIP (sep=tab, skiprows=1)."""
+
+    with zip_ref.open(nome_arquivo) as f:
+
+        try:
+            return pd.read_csv(f, sep='\t', encoding='utf-8', skiprows=1)
+
+        except Exception:
+            f.seek(0)
+            return pd.read_csv(f, sep='\t', encoding='latin1', skiprows=1)
+
+
 # =============================================================================
 # UPLOADS
 # =============================================================================
@@ -167,9 +230,9 @@ with col2:
 with col3:
 
     arquivo_zip = st.file_uploader(
-        label='ZIP CLIQ BISMUT',
+        label='ZIP CCEE',
         type=['zip'],
-        key='zip_bismut'
+        key='zip_ccee'
     )
 
 if arquivo_aprovados is None:
@@ -200,10 +263,11 @@ except Exception as erro:
 
 
 # =============================================================================
-# LEITURA ZIP BISMUT
+# LEITURA ZIP CCEE (cceal_firme + ccear_q)
 # =============================================================================
 
-df_bismut = None
+df_cceal_firme = None
+df_ccear_q     = None
 
 if arquivo_zip is not None:
 
@@ -211,59 +275,35 @@ if arquivo_zip is not None:
 
         with zipfile.ZipFile(arquivo_zip) as zip_ref:
 
-            arquivos_zip = zip_ref.namelist()
+            nomes = zip_ref.namelist()
 
-            arquivo_bismut = next(
-                (
-                    arquivo
-                    for arquivo in arquivos_zip
-                    if 'cceal_firme_' in arquivo.lower()
-                ),
+            # cceal_firme — usado para Bismut
+            nome_firme = next(
+                (n for n in nomes if 'cceal_firme_' in n.lower()),
                 None
             )
 
-            if arquivo_bismut is None:
-
-                st.warning(
-                    '⚠️ Arquivo cceal_firme não encontrado.'
+            if nome_firme:
+                df_cceal_firme = preparar_base_ccee(
+                    ler_csv_ccee(zip_ref, nome_firme)
                 )
-
+                st.success(f'✅ Carregado: {nome_firme}')
             else:
+                st.warning('⚠️ cceal_firme não encontrado no ZIP.')
 
-                with zip_ref.open(arquivo_bismut) as arquivo:
+            # ccear_q — usado para Matrix
+            nome_ccear_q = next(
+                (n for n in nomes if 'ccear_q_' in n.lower()),
+                None
+            )
 
-                    if arquivo_bismut.lower().endswith('.csv'):
-
-                        # CSV da CCEE tem "sep=\t" na linha 1 — pular com skiprows=1
-                        try:
-
-                            df_bismut = pd.read_csv(
-                                arquivo,
-                                encoding='utf-8',
-                                sep='\t',
-                                skiprows=1
-                            )
-
-                        except:
-
-                            arquivo.seek(0)
-
-                            df_bismut = pd.read_csv(
-                                arquivo,
-                                encoding='latin1',
-                                sep='\t',
-                                skiprows=1
-                            )
-
-                    elif arquivo_bismut.lower().endswith(
-                        ('.xlsx', '.xlsm', '.xls')
-                    ):
-
-                        df_bismut = pd.read_excel(arquivo)
-
-                st.success(
-                    f'✅ Arquivo encontrado: {arquivo_bismut}'
+            if nome_ccear_q:
+                df_ccear_q = preparar_base_ccee(
+                    ler_csv_ccee(zip_ref, nome_ccear_q)
                 )
+                st.success(f'✅ Carregado: {nome_ccear_q}')
+            else:
+                st.warning('⚠️ ccear_q não encontrado no ZIP.')
 
     except Exception as erro:
 
@@ -595,15 +635,11 @@ if arquivo_mes_anterior is not None:
             .fillna('-')
         )
 
-        st.success(
-            '✅ Cliq do mês anterior encontrado!'
-        )
+        st.success('✅ Cliq do mês anterior encontrado!')
 
     except Exception as erro:
 
-        st.warning(
-            f'⚠️ Erro ao buscar mês anterior: {erro}'
-        )
+        st.warning(f'⚠️ Erro ao buscar mês anterior: {erro}')
 
 
 # =============================================================================
@@ -622,140 +658,117 @@ df = df.fillna('-')
 
 
 # =============================================================================
-# MATCH CLIQ BISMUT
+# NORMALIZAR COLUNAS DO DF PRINCIPAL PARA O MATCH
 # =============================================================================
 
-# Garantir coluna CLIQ CCEE sempre existe
+for col in ['PARTE', 'VENDEDOR', 'COMPRADOR']:
+    if col in df.columns:
+        df[col] = df[col].astype(str).str.strip().str.upper()
+
+for col in ['CLIQ PARADIGMA', 'Cliq Mês Anterior']:
+    if col in df.columns:
+        df[col] = df[col].apply(normalizar_codigo)
+
+
+# =============================================================================
+# MATCH CLIQ CCEE
+#
+# Regras:
+#   - PARTE contém "BISMUT"  → busca no cceal_firme
+#   - CLIQ está em CLIQS_MATRIX → busca no ccear_q
+#   - Prioridade: CLIQ PARADIGMA primeiro; Cliq Mês Anterior como fallback
+#   - Vendedor e comprador devem bater na base
+#   - Se não encontrar: VERIFICAR
+#   - Nenhuma regra se aplica: deixa '-'
+# =============================================================================
+
 df['CLIQ CCEE'] = '-'
 
-if df_bismut is not None:
+tem_alguma_base = (df_cceal_firme is not None) or (df_ccear_q is not None)
+
+if tem_alguma_base:
 
     try:
 
-        df_bismut.columns = [
-            limpar_coluna(col)
-            for col in df_bismut.columns
-        ]
+        vazios = {'', '-', 'nan', 'none'}
 
-        # Normalizar colunas de lookup no arquivo CCEE
-        # CODIGO_CONTRATO pode vir como int — converter para string
-        df_bismut['CODIGO_CONTRATO'] = (
-            df_bismut['CODIGO_CONTRATO']
-            .apply(lambda v: str(int(float(v))) if str(v).replace('.','').isdigit() else str(v))
-            .str.strip()
-        )
+        def buscar_em_base(df_base, codigo, vendedor, comprador):
+            """Retorna True se código + vendedor + comprador existe na base."""
 
-        df_bismut['SIGLA_PERFIL_VENDEDOR'] = (
-            df_bismut['SIGLA_PERFIL_VENDEDOR']
-            .astype(str)
-            .str.strip()
-            .str.upper()
-        )
+            if df_base is None:
+                return False
 
-        df_bismut['SIGLA_PERFIL_COMPRADOR'] = (
-            df_bismut['SIGLA_PERFIL_COMPRADOR']
-            .astype(str)
-            .str.strip()
-            .str.upper()
-        )
+            resultado = df_base[
+                (df_base['CODIGO_CONTRATO']        == codigo)
+                &
+                (df_base['SIGLA_PERFIL_VENDEDOR']  == vendedor)
+                &
+                (df_base['SIGLA_PERFIL_COMPRADOR'] == comprador)
+            ]
 
-        # Normalizar colunas do df principal
-        df['PARTE'] = (
-            df['PARTE']
-            .astype(str)
-            .str.strip()
-            .str.upper()
-        )
-
-        df['CLIQ PARADIGMA'] = (
-            df['CLIQ PARADIGMA']
-            .astype(str)
-            .str.strip()
-        )
-
-        df['Cliq Mês Anterior'] = (
-            df['Cliq Mês Anterior']
-            .astype(str)
-            .str.strip()
-        )
-
-        df['VENDEDOR'] = (
-            df['VENDEDOR']
-            .astype(str)
-            .str.strip()
-            .str.upper()
-        )
-
-        df['COMPRADOR'] = (
-            df['COMPRADOR']
-            .astype(str)
-            .str.strip()
-            .str.upper()
-        )
+            return not resultado.empty
 
         def localizar_cliq(linha):
 
-            # Só processa linhas onde PARTE é Bismut
-            if 'BISMUT' not in str(linha['PARTE']).upper():
-                return '-'
-
+            parte         = str(linha['PARTE']).upper()
             cliq_atual    = linha['CLIQ PARADIGMA']
             cliq_anterior = linha['Cliq Mês Anterior']
             vendedor      = linha['VENDEDOR']
             comprador     = linha['COMPRADOR']
 
-            vazios = {'', '-', 'nan', 'none'}
+            e_bismut             = 'BISMUT' in parte
+            cliq_atual_matrix    = cliq_atual    in CLIQS_MATRIX
+            cliq_anterior_matrix = cliq_anterior in CLIQS_MATRIX
 
-            # Tenta com CLIQ PARADIGMA atual
-            if cliq_atual.lower() not in vazios:
+            # Se não é Bismut e nenhum CLIQ é Matrix: não processar
+            if not e_bismut and not cliq_atual_matrix and not cliq_anterior_matrix:
+                return '-'
 
-                resultado = df_bismut[
-                    (df_bismut['CODIGO_CONTRATO']        == cliq_atual)
-                    &
-                    (df_bismut['SIGLA_PERFIL_VENDEDOR']  == vendedor)
-                    &
-                    (df_bismut['SIGLA_PERFIL_COMPRADOR'] == comprador)
-                ]
+            # Escolher base para CLIQ PARADIGMA
+            if cliq_atual_matrix:
+                base_atual = df_ccear_q
+            elif e_bismut:
+                base_atual = df_cceal_firme
+            else:
+                base_atual = None
 
-                if not resultado.empty:
+            # Escolher base para Cliq Mês Anterior
+            if cliq_anterior_matrix:
+                base_anterior = df_ccear_q
+            elif e_bismut:
+                base_anterior = df_cceal_firme
+            else:
+                base_anterior = None
+
+            # Tentar CLIQ PARADIGMA (prioridade)
+            if cliq_atual.lower() not in vazios and base_atual is not None:
+
+                if buscar_em_base(base_atual, cliq_atual, vendedor, comprador):
                     return cliq_atual
 
-            # Tenta com CLIQ do mês anterior
-            if cliq_anterior.lower() not in vazios:
+            # Tentar Cliq Mês Anterior (fallback)
+            if cliq_anterior.lower() not in vazios and base_anterior is not None:
 
-                resultado = df_bismut[
-                    (df_bismut['CODIGO_CONTRATO']        == cliq_anterior)
-                    &
-                    (df_bismut['SIGLA_PERFIL_VENDEDOR']  == vendedor)
-                    &
-                    (df_bismut['SIGLA_PERFIL_COMPRADOR'] == comprador)
-                ]
-
-                if not resultado.empty:
+                if buscar_em_base(base_anterior, cliq_anterior, vendedor, comprador):
                     return cliq_anterior
 
             return 'VERIFICAR'
 
         df['CLIQ CCEE'] = df.apply(localizar_cliq, axis=1)
 
-        linhas_bismut = df['PARTE'].str.contains('BISMUT', na=False)
-        total         = linhas_bismut.sum()
-        encontrados   = (
-            df.loc[linhas_bismut, 'CLIQ CCEE']
-            .isin(['-', 'VERIFICAR'])
-            == False
-        ).sum()
-        verificar     = (df.loc[linhas_bismut, 'CLIQ CCEE'] == 'VERIFICAR').sum()
+        processadas = df['CLIQ CCEE'] != '-'
+        encontrados = processadas & ~df['CLIQ CCEE'].isin(['VERIFICAR'])
+        verificar   = df['CLIQ CCEE'] == 'VERIFICAR'
 
         st.success(
-            f'✅ Match Bismut realizado! '
-            f'{encontrados}/{total} contratos Bismut encontrados | '
-            f'{verificar} para VERIFICAR'
+            f'✅ Match CCEE realizado! '
+            f'{encontrados.sum()} encontrados | '
+            f'{verificar.sum()} para VERIFICAR'
         )
 
     except Exception as erro:
 
-        st.warning(f'⚠️ Erro no match Bismut: {erro}')
+        st.warning(f'⚠️ Erro no match CCEE: {erro}')
 
 
 # =============================================================================
