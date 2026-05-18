@@ -57,22 +57,6 @@ def tratar_submercado(valor):
     }
 
     return mapa.get(valor, valor)
-# ─────────────────────────────────────────────────────────
-# CLIQ PARADIGMA
-# ─────────────────────────────────────────────────────────
-
-def tratar_cliq(valor):
-
-    valor = str(valor).strip().upper()
-
-    mapa = {
-        'None': '-',
-    }
-
-    return mapa.get(valor, valor)
-
-
-
 
 # ─────────────────────────────────────────────────────────
 # CP / LP
@@ -249,16 +233,7 @@ if arquivo is not None:
         df_contratos_aprovados['SUBMERCADO'] = df_contratos_aprovados['SUBMERCADO'].apply(
             tratar_submercado
         )
-    # =====================================================
-    # TRATAMENTO SUBMERCADO
-    # =====================================================
-
-    if 'SUBMERCADO' in df_contratos_aprovados.columns:
-
-        df_contratos_aprovados['CLIQ PARADIGMA'] = df_contratos_aprovados['CLIQ PARADIGMA'].apply(
-            tratar__cliq
-        )
-
+  
     # =====================================================
     # TRATAMENTO DATAS
     # =====================================================
