@@ -68,13 +68,16 @@ def formatar_numero_br(valor, casas=2):
         return '-'
         
 def formatar_cnpj(valor):
-    """Formata número no padrão de CNPJ (ex: 12.345.678/0001-99)."""
+    """Formata número no padrão de CNPJ."""
 
     try:
         digits = ''.join(filter(str.isdigit, str(valor)))
-        if len(digits) != 14:
-            return str(valor)
+
+        # completa com zeros à esquerda
+        digits = digits.zfill(14)
+
         return f"{digits[:2]}.{digits[2:5]}.{digits[5:8]}/{digits[8:12]}-{digits[12:]}"
+
     except Exception:
         return str(valor)
 
