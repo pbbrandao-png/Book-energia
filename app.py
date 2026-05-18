@@ -168,7 +168,7 @@ try:
     st.success('✅ Arquivo principal carregado!')
     df_bismut = None
 
-if arquivo_zip is not None:
+    if arquivo_zip is not None:
 
     try:
         with zipfile.ZipFile(arquivo_zip) as zip_ref:
