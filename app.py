@@ -32,6 +32,8 @@ COLUNAS_EXIBICAO = [
     'MOD MIN',
     'MOD MAX',
     'Cliq Mês Anterior',
+    'VENDEDOR',
+    'COMPRADOR'
 ]
 
 
@@ -187,7 +189,8 @@ def renomear_colunas(df):
         'TIPO_DE_MODULACAO':         'MODULACAO WBC',
         'FLEXLIMITE_MODULACAOMAX':   'MOD MAX',
         'FLEXLIMITE_MODULACAOMIN':   'MOD MIN',
-        'CONTRAPARTE_RAZAO_SOCIAL': '
+        'PERFIL_CCEE_VENDEDOR': 'VENDEDOR'
+        'PERFIL_CCEE_COMPRADOR': 'COMPRADOR'
     })
     return df
 
