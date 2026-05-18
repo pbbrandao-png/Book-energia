@@ -634,121 +634,120 @@ if df_bismut is not None:
             for col in df_bismut.columns
         ]
 
-        # Verificar se coluna PARTE existe no bismut
-        if 'PARTE' not in df_bismut.columns:
-            st.warning('⚠️ Coluna PARTE não encontrada no arquivo Bismut.')
+        # Normalizar colunas de lookup no arquivo CCEE
+        df_bismut['CODIGO_CONTRATO'] = (
+            df_bismut['CODIGO_CONTRATO']
+            .astype(str)
+            .str.strip()
+        )
 
-        else:
+        df_bismut['SIGLA_PERFIL_VENDEDOR'] = (
+            df_bismut['SIGLA_PERFIL_VENDEDOR']
+            .astype(str)
+            .str.strip()
+            .str.upper()
+        )
 
-            df_bismut_filtrado = df_bismut[
-                df_bismut['PARTE']
-                .astype(str)
-                .str.strip()
-                .str.upper()
-                .str.contains('BISMUT', na=False)
-            ].copy()
+        df_bismut['SIGLA_PERFIL_COMPRADOR'] = (
+            df_bismut['SIGLA_PERFIL_COMPRADOR']
+            .astype(str)
+            .str.strip()
+            .str.upper()
+        )
 
-            if df_bismut_filtrado.empty:
-                st.warning('⚠️ Nenhuma linha da Bismut encontrada no arquivo.')
+        # Normalizar colunas do df principal
+        df['PARTE'] = (
+            df['PARTE']
+            .astype(str)
+            .str.strip()
+            .str.upper()
+        )
 
-            else:
+        df['CLIQ PARADIGMA'] = (
+            df['CLIQ PARADIGMA']
+            .astype(str)
+            .str.strip()
+        )
 
-                df['CLIQ PARADIGMA'] = (
-                    df['CLIQ PARADIGMA']
-                    .astype(str)
-                    .str.strip()
-                )
+        df['Cliq Mês Anterior'] = (
+            df['Cliq Mês Anterior']
+            .astype(str)
+            .str.strip()
+        )
 
-                df['Cliq Mês Anterior'] = (
-                    df['Cliq Mês Anterior']
-                    .astype(str)
-                    .str.strip()
-                )
+        df['VENDEDOR'] = (
+            df['VENDEDOR']
+            .astype(str)
+            .str.strip()
+            .str.upper()
+        )
 
-                df['VENDEDOR'] = (
-                    df['VENDEDOR']
-                    .astype(str)
-                    .str.strip()
-                    .str.upper()
-                )
+        df['COMPRADOR'] = (
+            df['COMPRADOR']
+            .astype(str)
+            .str.strip()
+            .str.upper()
+        )
 
-                df['COMPRADOR'] = (
-                    df['COMPRADOR']
-                    .astype(str)
-                    .str.strip()
-                    .str.upper()
-                )
+        def localizar_cliq(linha):
 
-                df_bismut_filtrado['CODIGO_CONTRATO'] = (
-                    df_bismut_filtrado['CODIGO_CONTRATO']
-                    .astype(str)
-                    .str.strip()
-                )
+            # Só processa linhas onde PARTE é Bismut
+            if 'BISMUT' not in str(linha['PARTE']).upper():
+                return '-'
 
-                df_bismut_filtrado['SIGLA_PERFIL_VENDEDOR'] = (
-                    df_bismut_filtrado['SIGLA_PERFIL_VENDEDOR']
-                    .astype(str)
-                    .str.strip()
-                    .str.upper()
-                )
+            cliq_atual    = linha['CLIQ PARADIGMA']
+            cliq_anterior = linha['Cliq Mês Anterior']
+            vendedor      = linha['VENDEDOR']
+            comprador     = linha['COMPRADOR']
 
-                df_bismut_filtrado['SIGLA_PERFIL_COMPRADOR'] = (
-                    df_bismut_filtrado['SIGLA_PERFIL_COMPRADOR']
-                    .astype(str)
-                    .str.strip()
-                    .str.upper()
-                )
+            vazios = {'', '-', 'nan', 'none'}
 
-                def localizar_cliq(linha):
+            # Tenta com CLIQ PARADIGMA atual
+            if cliq_atual.lower() not in vazios:
 
-                    cliq_atual    = linha['CLIQ PARADIGMA']
-                    cliq_anterior = linha['Cliq Mês Anterior']
-                    vendedor      = linha['VENDEDOR']
-                    comprador     = linha['COMPRADOR']
+                resultado = df_bismut[
+                    (df_bismut['CODIGO_CONTRATO']        == cliq_atual)
+                    &
+                    (df_bismut['SIGLA_PERFIL_VENDEDOR']  == vendedor)
+                    &
+                    (df_bismut['SIGLA_PERFIL_COMPRADOR'] == comprador)
+                ]
 
-                    valores_vazios = {'', '-', 'nan', 'none', 'NAN', 'NONE'}
+                if not resultado.empty:
+                    return cliq_atual
 
-                    # Tenta com CLIQ PARADIGMA atual
-                    if cliq_atual.lower() not in {'', '-', 'nan', 'none'}:
+            # Tenta com CLIQ do mês anterior
+            if cliq_anterior.lower() not in vazios:
 
-                        resultado = df_bismut_filtrado[
-                            (df_bismut_filtrado['CODIGO_CONTRATO']        == cliq_atual)
-                            &
-                            (df_bismut_filtrado['SIGLA_PERFIL_VENDEDOR']  == vendedor)
-                            &
-                            (df_bismut_filtrado['SIGLA_PERFIL_COMPRADOR'] == comprador)
-                        ]
+                resultado = df_bismut[
+                    (df_bismut['CODIGO_CONTRATO']        == cliq_anterior)
+                    &
+                    (df_bismut['SIGLA_PERFIL_VENDEDOR']  == vendedor)
+                    &
+                    (df_bismut['SIGLA_PERFIL_COMPRADOR'] == comprador)
+                ]
 
-                        if not resultado.empty:
-                            return cliq_atual
+                if not resultado.empty:
+                    return cliq_anterior
 
-                    # Tenta com CLIQ do mês anterior
-                    if cliq_anterior.lower() not in {'', '-', 'nan', 'none'}:
+            return 'VERIFICAR'
 
-                        resultado = df_bismut_filtrado[
-                            (df_bismut_filtrado['CODIGO_CONTRATO']        == cliq_anterior)
-                            &
-                            (df_bismut_filtrado['SIGLA_PERFIL_VENDEDOR']  == vendedor)
-                            &
-                            (df_bismut_filtrado['SIGLA_PERFIL_COMPRADOR'] == comprador)
-                        ]
+        df['CLIQ CCEE'] = df.apply(localizar_cliq, axis=1)
 
-                        if not resultado.empty:
-                            return cliq_anterior
+        linhas_bismut = df['PARTE'].str.contains('BISMUT', na=False)
+        total         = linhas_bismut.sum()
+        encontrados   = (
+            df.loc[linhas_bismut, 'CLIQ CCEE']
+            .isin(['-', 'VERIFICAR'])
+            == False
+        ).sum()
+        verificar     = (df.loc[linhas_bismut, 'CLIQ CCEE'] == 'VERIFICAR').sum()
 
-                    return 'VERIFICAR'
-
-                df['CLIQ CCEE'] = df.apply(localizar_cliq, axis=1)
-
-                total         = len(df)
-                encontrados   = (df['CLIQ CCEE'] != 'VERIFICAR').sum()
-                verificar     = (df['CLIQ CCEE'] == 'VERIFICAR').sum()
-
-                st.success(
-                    f'✅ Match Bismut realizado! '
-                    f'{encontrados}/{total} encontrados | '
-                    f'{verificar} para VERIFICAR'
-                )
+        st.success(
+            f'✅ Match Bismut realizado! '
+            f'{encontrados}/{total} contratos Bismut encontrados | '
+            f'{verificar} para VERIFICAR'
+        )
 
     except Exception as erro:
 
