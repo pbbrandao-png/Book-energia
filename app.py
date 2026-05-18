@@ -189,8 +189,8 @@ def renomear_colunas(df):
         'TIPO_DE_MODULACAO':         'MODULACAO WBC',
         'FLEXLIMITE_MODULACAOMAX':   'MOD MAX',
         'FLEXLIMITE_MODULACAOMIN':   'MOD MIN',
-        'PERFIL_CCEE_VENDEDOR':'VENDEDOR',
-        'PERFIL_CCEE_COMPRADOR':'COMPRADOR'
+        'SIGLA_CCEE_VENDEDOR':'VENDEDOR',
+        'SIGLA_CCEE_COMPRADOR':'COMPRADOR'
     })
     return df
 
