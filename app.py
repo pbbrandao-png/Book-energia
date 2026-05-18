@@ -210,7 +210,9 @@ if arquivo is not None:
             'CONTRAPARTE_NOME_FANTASIA': 'CONTRAPARTE',
             'QUANTATUALIZADA': 'MONTANTE_MWH',
             'CODIGO_CCEE': 'CLIQ PARADIGMA',
-            'TIPO_DE_MODULACAO':'MODULACAO WBC'
+            'TIPO_DE_MODULACAO':'MODULACAO WBC',
+            'FLEXLIMITE_MODULACAOMAX':'MOD MAX',
+            'FLEXLIMITE_MODULACAOMIN':'MOD MIN'
         }
     )
 
@@ -351,7 +353,9 @@ if arquivo is not None:
         'MONTANTE MWh',
         'MONTANTE MWm',
         'CLIQ PARADIGMA',
-        'MODULACAO WBC'
+        'MODULACAO WBC',
+        'MOD MIN',
+        'MOD MAX'
     ]
 
     # =====================================================
