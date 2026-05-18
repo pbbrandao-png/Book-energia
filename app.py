@@ -16,6 +16,7 @@ def limpar_coluna(texto):
         .normalize('NFKD', texto)
         .encode('ASCII', 'ignore')
         .decode('utf-8')
+        df = df.fillna("-")
     )
 
     return texto
