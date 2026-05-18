@@ -185,9 +185,14 @@ if arquivo is not None:
 
     df_contratos_aprovados = pd.read_excel(
         arquivo,
-        skiprows=8
+        skiprows=8,
+    
+    df_mes_anterior = pd.read_excel(
+        arquivo,
+        
     )
     df_contratos_aprovados = df_contratos_aprovados.fillna("-")
+    df_mes_anterior = df_mes_anterior.fillna("-")
     # =====================================================
     # PADRONIZAÇÃO DE COLUNAS
     # =====================================================
