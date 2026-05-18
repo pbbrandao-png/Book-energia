@@ -209,7 +209,7 @@ st.set_page_config(
 
 st.title('⚡ Book de Energia')
 
-col1, col2, col3 = st.columns(3)
+col1, col2 = st.columns(2)
 
 with col1:
 
@@ -227,12 +227,22 @@ with col2:
         key='mes_anterior'
     )
 
+col3, col4 = st.columns(2)
+
 with col3:
 
-    arquivo_zip = st.file_uploader(
-        label='ZIP CCEE',
+    arquivo_zip_bismut = st.file_uploader(
+        label='ZIP CCEE — Bismut (cceal_firme)',
         type=['zip'],
-        key='zip_ccee'
+        key='zip_bismut'
+    )
+
+with col4:
+
+    arquivo_zip_matrix = st.file_uploader(
+        label='ZIP CCEE — Matrix / UFV Jacarandá (ccear_q)',
+        type=['zip'],
+        key='zip_matrix'
     )
 
 if arquivo_aprovados is None:
@@ -263,21 +273,19 @@ except Exception as erro:
 
 
 # =============================================================================
-# LEITURA ZIP CCEE (cceal_firme + ccear_q)
+# LEITURA ZIP BISMUT (cceal_firme)
 # =============================================================================
 
 df_cceal_firme = None
-df_ccear_q     = None
 
-if arquivo_zip is not None:
+if arquivo_zip_bismut is not None:
 
     try:
 
-        with zipfile.ZipFile(arquivo_zip) as zip_ref:
+        with zipfile.ZipFile(arquivo_zip_bismut) as zip_ref:
 
             nomes = zip_ref.namelist()
 
-            # cceal_firme — usado para Bismut
             nome_firme = next(
                 (n for n in nomes if 'cceal_firme_' in n.lower()),
                 None
@@ -287,11 +295,29 @@ if arquivo_zip is not None:
                 df_cceal_firme = preparar_base_ccee(
                     ler_csv_ccee(zip_ref, nome_firme)
                 )
-                st.success(f'✅ Carregado: {nome_firme}')
+                st.success(f'✅ Bismut carregado: {nome_firme}')
             else:
-                st.warning('⚠️ cceal_firme não encontrado no ZIP.')
+                st.warning('⚠️ cceal_firme não encontrado no ZIP Bismut.')
 
-            # ccear_q — usado para Matrix
+    except Exception as erro:
+
+        st.error(f'❌ Erro ao ler ZIP Bismut: {erro}')
+
+
+# =============================================================================
+# LEITURA ZIP MATRIX / UFV JACARANDÁ (ccear_q)
+# =============================================================================
+
+df_ccear_q = None
+
+if arquivo_zip_matrix is not None:
+
+    try:
+
+        with zipfile.ZipFile(arquivo_zip_matrix) as zip_ref:
+
+            nomes = zip_ref.namelist()
+
             nome_ccear_q = next(
                 (n for n in nomes if 'ccear_q_' in n.lower()),
                 None
@@ -301,13 +327,13 @@ if arquivo_zip is not None:
                 df_ccear_q = preparar_base_ccee(
                     ler_csv_ccee(zip_ref, nome_ccear_q)
                 )
-                st.success(f'✅ Carregado: {nome_ccear_q}')
+                st.success(f'✅ Matrix/Jacarandá carregado: {nome_ccear_q}')
             else:
-                st.warning('⚠️ ccear_q não encontrado no ZIP.')
+                st.warning('⚠️ ccear_q não encontrado no ZIP Matrix/Jacarandá.')
 
     except Exception as erro:
 
-        st.error(f'❌ Erro ao ler ZIP: {erro}')
+        st.error(f'❌ Erro ao ler ZIP Matrix/Jacarandá: {erro}')
 
 
 # =============================================================================
@@ -674,8 +700,9 @@ for col in ['CLIQ PARADIGMA', 'Cliq Mês Anterior']:
 # MATCH CLIQ CCEE
 #
 # Regras:
-#   - PARTE contém "BISMUT"  → busca no cceal_firme
-#   - CLIQ está em CLIQS_MATRIX → busca no ccear_q
+#   - PARTE contém "BISMUT"                    → busca no df_cceal_firme (ZIP Bismut)
+#   - CLIQ está em CLIQS_MATRIX ou
+#     PARTE contém "MATRIX" ou "JACARANDA"     → busca no df_ccear_q    (ZIP Matrix)
 #   - Prioridade: CLIQ PARADIGMA primeiro; Cliq Mês Anterior como fallback
 #   - Vendedor e comprador devem bater na base
 #   - Se não encontrar: VERIFICAR
@@ -708,6 +735,27 @@ if tem_alguma_base:
 
             return not resultado.empty
 
+        def resolver_base(cliq, parte):
+            """
+            Decide qual base usar para um dado CLIQ + PARTE.
+
+            Retorna df_cceal_firme ou df_ccear_q ou None.
+            """
+
+            # CLIQ explicitamente listado como Matrix → ccear_q
+            if cliq in CLIQS_MATRIX:
+                return df_ccear_q
+
+            # PARTE é Bismut → cceal_firme
+            if 'BISMUT' in parte:
+                return df_cceal_firme
+
+            # PARTE é Matrix ou UFV Jacarandá → ccear_q
+            if 'MATRIX' in parte or 'JACARANDA' in parte:
+                return df_ccear_q
+
+            return None
+
         def localizar_cliq(linha):
 
             parte         = str(linha['PARTE']).upper()
@@ -716,29 +764,12 @@ if tem_alguma_base:
             vendedor      = linha['VENDEDOR']
             comprador     = linha['COMPRADOR']
 
-            e_bismut             = 'BISMUT' in parte
-            cliq_atual_matrix    = cliq_atual    in CLIQS_MATRIX
-            cliq_anterior_matrix = cliq_anterior in CLIQS_MATRIX
+            base_atual    = resolver_base(cliq_atual,    parte)
+            base_anterior = resolver_base(cliq_anterior, parte)
 
-            # Se não é Bismut e nenhum CLIQ é Matrix: não processar
-            if not e_bismut and not cliq_atual_matrix and not cliq_anterior_matrix:
+            # Se nenhuma base se aplica: não processar
+            if base_atual is None and base_anterior is None:
                 return '-'
-
-            # Escolher base para CLIQ PARADIGMA
-            if cliq_atual_matrix:
-                base_atual = df_ccear_q
-            elif e_bismut:
-                base_atual = df_cceal_firme
-            else:
-                base_atual = None
-
-            # Escolher base para Cliq Mês Anterior
-            if cliq_anterior_matrix:
-                base_anterior = df_ccear_q
-            elif e_bismut:
-                base_anterior = df_cceal_firme
-            else:
-                base_anterior = None
 
             # Tentar CLIQ PARADIGMA (prioridade)
             if cliq_atual.lower() not in vazios and base_atual is not None:
