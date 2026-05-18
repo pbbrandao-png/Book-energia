@@ -27,11 +27,11 @@ COLUNAS_EXIBICAO = [
     'MONTANTE MWh',
     'MONTANTE MWm',
     'CLIQ PARADIGMA',
-    'Cliq Mês Anterior',
     'MODULACAO WBC',
     'MOD MIN',
     'MOD MAX',
     'Cliq Mês Anterior'
+    
     
 ]
 
