@@ -66,6 +66,17 @@ def formatar_numero_br(valor, casas=2):
         )
     except Exception:
         return '-'
+        
+def formatar_cnpj(valor):
+    """Formata número no padrão de CNPJ (ex: 12.345.678/0001-99)."""
+
+    try:
+        digits = ''.join(filter(str.isdigit, str(valor)))
+        if len(digits) != 14:
+            return str(valor)
+        return f"{digits[:2]}.{digits[2:5]}.{digits[5:8]}/{digits[8:12]}-{digits[12:]}"
+    except Exception:
+        return str(valor)
 
 
 # =============================================================================
@@ -89,6 +100,21 @@ def total_horas_mes(mes, ano):
         return dias_mes * 24
     except Exception:
         return None
+
+def tratar_cnpj(df):
+    if 'CONTRAPARTE_CNPJ' not in df.columns:
+        return df
+
+    df['CONTRAPARTE_CNPJ'] = (
+        df['CONTRAPARTE_CNPJ']
+        .astype(str)
+        .str.strip()
+        .apply(formatar_cnpj)
+    )
+
+    return df
+
+df = tratar_cnpj(df)
 
 
 # =============================================================================
