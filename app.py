@@ -186,7 +186,7 @@ try:
                     (
                         arquivo
                         for arquivo in arquivos_zip
-                        if 'cliq bismut' in arquivo.lower()
+                        if 'cceal_firme_' in arquivo.lower()
                     ),
                     None
                 )
