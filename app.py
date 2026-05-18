@@ -161,7 +161,7 @@ st.title("Livro de Energia - Abril/2026")
 # UPLOAD
 # =========================================================
 
-arquivo = st.file_uploader(
+    arquivo = st.file_uploader(
     "Contratos aprovados",
     type=['xlsx', 'csv', 'xlsm'],
 
