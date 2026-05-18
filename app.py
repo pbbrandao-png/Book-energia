@@ -8,6 +8,8 @@ import streamlit as st
 import pandas as pd
 import unicodedata
 import calendar
+import zipfile
+import io
 
 
 # =============================================================================
@@ -129,7 +131,7 @@ def tratar_cnpj(df):
 st.set_page_config(page_title='Book de Energia', layout='wide')
 st.title('⚡ Book de Energia')
 
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 
 with col1:
     arquivo_aprovados = st.file_uploader(
@@ -144,6 +146,13 @@ with col2:
         type=TIPOS_ARQUIVO,
         key='mes_anterior'
     )
+    with col3:
+    
+    arquivo_zip = st.file_uploader(
+    label='ZIP CLIQ BISMUT',
+    type=['zip'],
+    key='zip_bismut'
+)
 
 if arquivo_aprovados is None:
     st.info('📂 Faça upload do arquivo principal.')
@@ -157,6 +166,41 @@ if arquivo_aprovados is None:
 try:
     df = pd.read_excel(arquivo_aprovados, skiprows=8)
     st.success('✅ Arquivo principal carregado!')
+    df_bismut = None
+
+if arquivo_zip is not None:
+
+    try:
+        with zipfile.ZipFile(arquivo_zip) as zip_ref:
+
+            arquivos_zip = zip_ref.namelist()
+
+            arquivo_bismut = next(
+                (
+                    arquivo
+                    for arquivo in arquivos_zip
+                    if 'cliq bismut' in arquivo.lower()
+                ),
+                None
+            )
+
+            if arquivo_bismut is None:
+                st.warning('⚠️ Arquivo CLIQ BISMUT não encontrado.')
+
+            else:
+
+                with zip_ref.open(arquivo_bismut) as arquivo:
+
+                    if arquivo_bismut.endswith('.csv'):
+                        df_bismut = pd.read_csv(arquivo)
+
+                    elif arquivo_bismut.endswith(('.xlsx', '.xlsm', '.xls')):
+                        df_bismut = pd.read_excel(arquivo)
+
+                st.success(f'✅ Arquivo encontrado: {arquivo_bismut}')
+
+    except Exception as erro:
+        st.error(f'❌ Erro ao ler ZIP: {erro}')
 except Exception as erro:
     st.error(f'❌ Erro ao ler arquivo principal: {erro}')
     st.stop()
