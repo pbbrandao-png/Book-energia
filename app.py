@@ -3,19 +3,6 @@
 # ⚡ BOOK DE ENERGIA
 #
 # =============================================================================
-#
-# OBJETIVO
-# --------
-# Ler arquivos de contratos de energia,
-# tratar os dados
-# e exibir o resultado no Streamlit.
-#
-# =============================================================================
-
-
-# =============================================================================
-# 1. IMPORTAÇÕES
-# =============================================================================
 
 import streamlit as st
 import pandas as pd
@@ -24,7 +11,7 @@ import calendar
 
 
 # =============================================================================
-# 2. CONFIGURAÇÕES
+# CONFIGURAÇÕES
 # =============================================================================
 
 TIPOS_ARQUIVO = ['xlsx', 'xlsm', 'csv']
@@ -40,6 +27,7 @@ COLUNAS_EXIBICAO = [
     'MONTANTE MWh',
     'MONTANTE MWm',
     'CLIQ PARADIGMA',
+    'Cliq Mês Anterior',
     'MODULACAO WBC',
     'MOD MIN',
     'MOD MAX',
@@ -47,13 +35,10 @@ COLUNAS_EXIBICAO = [
 
 
 # =============================================================================
-# 3. FUNÇÕES UTILITÁRIAS
+# FUNÇÕES UTILITÁRIAS
 # =============================================================================
 
 def limpar_coluna(texto):
-    """
-    Remove acentos, espaços e padroniza em maiúsculo.
-    """
 
     texto = str(texto).strip().upper()
 
@@ -68,9 +53,6 @@ def limpar_coluna(texto):
 
 
 def formatar_numero_br(valor, casas=2):
-    """
-    Formata números no padrão brasileiro.
-    """
 
     try:
 
@@ -87,9 +69,6 @@ def formatar_numero_br(valor, casas=2):
 
 
 def calcular_cp_lp(dias):
-    """
-    Define se contrato é CP ou LP.
-    """
 
     if pd.isna(dias):
         return '-'
@@ -98,9 +77,6 @@ def calcular_cp_lp(dias):
 
 
 def calcular_horas_mes(mes, ano):
-    """
-    Calcula horas do mês.
-    """
 
     try:
 
@@ -117,13 +93,13 @@ def calcular_horas_mes(mes, ano):
 
 
 # =============================================================================
-# 4. PROCESSAMENTO PRINCIPAL
+# PROCESSAMENTO
 # =============================================================================
 
 def processar_contratos(df):
 
     # =========================================================================
-    # CÓPIA DO DATAFRAME
+    # CÓPIA
     # =========================================================================
 
     df = df.copy()
@@ -140,7 +116,7 @@ def processar_contratos(df):
 
 
     # =========================================================================
-    # RENOMEAÇÃO DAS COLUNAS
+    # RENOMEAÇÃO
     # =========================================================================
 
     df = df.rename(columns={
@@ -166,7 +142,9 @@ def processar_contratos(df):
     if 'FONTE' in df.columns:
 
         df['FONTE'] = (
+
             df['FONTE']
+
             .replace({
 
                 'Incentivada 50%': 'Incentivada-I5',
@@ -302,19 +280,10 @@ def processar_contratos(df):
 
     if 'MONTANTE_MWH' in df.columns:
 
-        # ---------------------------------------------------------------------
-        # Conversão numérica
-        # ---------------------------------------------------------------------
-
         df['MONTANTE_MWH_NUM'] = pd.to_numeric(
             df['MONTANTE_MWH'],
             errors='coerce'
         )
-
-
-        # ---------------------------------------------------------------------
-        # MWh formatado
-        # ---------------------------------------------------------------------
 
         df['MONTANTE MWh'] = (
 
@@ -325,11 +294,6 @@ def processar_contratos(df):
                 formatar_numero_br(valor, 3)
             )
         )
-
-
-        # ---------------------------------------------------------------------
-        # MWm
-        # ---------------------------------------------------------------------
 
         if 'HORAS_MES' in df.columns:
 
@@ -353,21 +317,17 @@ def processar_contratos(df):
 
 
     # =========================================================================
-    # SUBSTITUI VAZIOS
+    # VAZIOS
     # =========================================================================
 
     df = df.fillna('-')
 
 
-    # =========================================================================
-    # RETORNO FINAL
-    # =========================================================================
-
     return df
 
 
 # =============================================================================
-# 5. INTERFACE STREAMLIT
+# STREAMLIT
 # =============================================================================
 
 st.set_page_config(
@@ -427,14 +387,14 @@ with col2:
 if arquivo_aprovados is None:
 
     st.info(
-        '📂 Faça upload do arquivo de contratos aprovados.'
+        '📂 Faça upload do arquivo principal.'
     )
 
     st.stop()
 
 
 # =============================================================================
-# LEITURA DO ARQUIVO PRINCIPAL
+# LEITURA PRINCIPAL
 # =============================================================================
 
 try:
@@ -448,47 +408,20 @@ try:
     )
 
     st.success(
-        '✅ Arquivo carregado com sucesso!'
+        '✅ Arquivo principal carregado!'
     )
 
 except Exception as erro:
 
     st.error(
-        f'❌ Erro ao ler arquivo: {erro}'
+        f'❌ Erro ao ler arquivo principal: {erro}'
     )
 
     st.stop()
 
 
 # =============================================================================
-# LEITURA MÊS ANTERIOR
-# =============================================================================
-
-df_mes_anterior = None
-
-if arquivo_mes_anterior is not None:
-
-    try:
-
-        df_mes_anterior = pd.read_excel(
-            arquivo_mes_anterior
-        )
-
-        df_mes_anterior = df_mes_anterior.fillna('-')
-
-        st.success(
-            '✅ Arquivo do mês anterior carregado!'
-        )
-
-    except Exception as erro:
-
-        st.warning(
-            f'⚠️ Erro no mês anterior: {erro}'
-        )
-
-
-# =============================================================================
-# PROCESSAMENTO
+# PROCESSAMENTO PRINCIPAL
 # =============================================================================
 
 try:
@@ -504,6 +437,116 @@ except Exception as erro:
     )
 
     st.stop()
+
+
+# =============================================================================
+# PROCX — MÊS ANTERIOR
+# =============================================================================
+
+if arquivo_mes_anterior is not None:
+
+    try:
+
+        # ---------------------------------------------------------------------
+        # LEITURA
+        # ---------------------------------------------------------------------
+
+        df_mes_anterior = pd.read_excel(
+            arquivo_mes_anterior
+        )
+
+
+        # ---------------------------------------------------------------------
+        # PADRONIZAÇÃO DAS COLUNAS
+        # ---------------------------------------------------------------------
+
+        df_mes_anterior.columns = [
+
+            limpar_coluna(col)
+
+            for col in df_mes_anterior.columns
+
+        ]
+
+
+        # ---------------------------------------------------------------------
+        # RENOMEAÇÃO
+        # CODIGO_WBC -> BOLETA
+        # CODIGO_CCEE -> Cliq Mês Anterior
+        # ---------------------------------------------------------------------
+
+        df_mes_anterior = df_mes_anterior.rename(columns={
+
+            'CODIGO_WBC': 'BOLETA',
+            'CODIGO_CCEE': 'Cliq Mês Anterior',
+
+        })
+
+
+        # ---------------------------------------------------------------------
+        # PADRONIZAÇÃO DA BOLETA
+        # ---------------------------------------------------------------------
+
+        df_processado['BOLETA'] = (
+
+            df_processado['BOLETA']
+
+            .astype(str)
+
+            .str.strip()
+
+        )
+
+        df_mes_anterior['BOLETA'] = (
+
+            df_mes_anterior['BOLETA']
+
+            .astype(str)
+
+            .str.strip()
+
+        )
+
+
+        # ---------------------------------------------------------------------
+        # PROCX / MERGE
+        # ---------------------------------------------------------------------
+
+        df_processado = df_processado.merge(
+
+            df_mes_anterior[[
+                'BOLETA',
+                'Cliq Mês Anterior'
+            ]],
+
+            on='BOLETA',
+
+            how='left'
+
+        )
+
+
+        # ---------------------------------------------------------------------
+        # SUBSTITUI VAZIOS
+        # ---------------------------------------------------------------------
+
+        df_processado['Cliq Mês Anterior'] = (
+
+            df_processado['Cliq Mês Anterior']
+
+            .fillna('-')
+
+        )
+
+        st.success(
+            '✅ Cliq do mês anterior encontrado!'
+        )
+
+    except Exception as erro:
+
+        st.warning(
+            f'⚠️ Erro ao buscar mês anterior: {erro}'
+        )
 
 
 # =============================================================================
@@ -533,7 +576,7 @@ colunas_existentes = [
 
 
 # =============================================================================
-# TABELA PRINCIPAL
+# EXIBIÇÃO FINAL
 # =============================================================================
 
 st.subheader('Contratos Aprovados')
@@ -547,22 +590,3 @@ st.dataframe(
     use_container_width=True
 
 )
-
-
-# =============================================================================
-# MÊS ANTERIOR
-# =============================================================================
-
-if df_mes_anterior is not None:
-
-    st.subheader('Contratos Mês Anterior')
-
-    st.dataframe(
-
-        df_mes_anterior,
-
-        hide_index=True,
-
-        use_container_width=True
-
-    )
