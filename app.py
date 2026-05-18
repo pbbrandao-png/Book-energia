@@ -163,7 +163,8 @@ st.title("Livro de Energia - Abril/2026")
 
     arquivo = st.file_uploader(
     "Contratos aprovados",
-    type=['xlsx', 'csv', 'xlsm'],
+    type=['xlsx', 'csv', 'xlsm']
+    )
 
     arquivo_2 = st.file_uploader(
     "Contratos mês anterior",
@@ -186,6 +187,7 @@ if arquivo is not None:
     df_contratos_aprovados = pd.read_excel(
         arquivo,
         skiprows=8,
+    )
     
     df_mes_anterior = pd.read_excel(
         arquivo_2,
