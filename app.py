@@ -36,6 +36,7 @@ COLUNAS_EXIBICAO = [
     'Cliq Mês Anterior',
     'VENDEDOR',
     'COMPRADOR'
+    'CLIQ CCEE'
 ]
 
 
@@ -696,7 +697,7 @@ if df_bismut is not None:
         # CRIA COLUNA FINAL
         # ==========================================
 
-        df['CLIQ BISMUT'] = df.apply(
+        df['CLIQ CCEE'] = df.apply(
             localizar_cliq,
             axis=1
         )
