@@ -31,6 +31,8 @@ COLUNAS_EXIBICAO = [
     'MODULACAO WBC',
     'MOD MIN',
     'MOD MAX',
+    'Cliq Mês Anterior'
+    
 ]
 
 
