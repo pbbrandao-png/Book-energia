@@ -1,3 +1,9 @@
+# APP_BOOK_ENERGIA_V4
+# Alteração principal:
+# Exibição padronizada:
+# MWh = 3 casas
+# MWm = 6 casas
+
 import streamlit as st
 import pandas as pd
 from io import BytesIO
@@ -82,65 +88,45 @@ if arquivo is not None:
         base["Contraparte"] = df["Sigla_CCEE_Contraparte"]
         base["CP/LP"] = cp_lp
         base["CNPJ CONTRAPARTE"] = df["Contraparte_CNPJ"]
-
-        base["Submercado"] = (
-            df["Submercado"]
-            .astype(str)
-            .str.strip()
-            .map(mapa_submercado)
-            .fillna(df["Submercado"])
-        )
-
+        base["Submercado"] = df["Submercado"].astype(str).str.strip().map(mapa_submercado).fillna(df["Submercado"])
         base["Volume (MWh)"] = df["QuantAtualizada"].round(3)
         base["Volume MWm"] = volume_mwm.round(6)
-
         base["CliqCCEE Paradigma"] = df["Codigo_CCEE"]
-
-        base["Modulação WBC"] = (
-            df["Tipo_de_modulacao"]
-            .astype(str)
-            .str.strip()
-            .map(mapa_modulacao)
-            .fillna(df["Tipo_de_modulacao"])
-        )
-
+        base["Modulação WBC"] = df["Tipo_de_modulacao"].astype(str).str.strip().map(mapa_modulacao).fillna(df["Tipo_de_modulacao"])
         base["Modulação Mínima"] = df["FlexLimite_modulacaoMin"]
         base["Modulação Máxima"] = df["FlexLimite_modulacaoMax"]
 
         compras_net = (
             base[base["Operação"] == "Compra"]
-            .groupby(
-                ["Parte", "Contraparte", "Submercado", "Tipo de Energia"],
-                as_index=False
-            )["Volume (MWh)"]
+            .groupby(["Parte","Contraparte","Submercado","Tipo de Energia"], as_index=False)["Volume (MWh)"]
             .sum()
-            .rename(columns={"Volume (MWh)": "Compra (MWh)"})
+            .rename(columns={"Volume (MWh)":"Compra (MWh)"})
         )
 
         vendas_net = (
             base[base["Operação"] == "Venda"]
-            .groupby(
-                ["Parte", "Contraparte", "Submercado", "Tipo de Energia"],
-                as_index=False
-            )["Volume (MWh)"]
+            .groupby(["Parte","Contraparte","Submercado","Tipo de Energia"], as_index=False)["Volume (MWh)"]
             .sum()
-            .rename(columns={"Volume (MWh)": "Venda (MWh)"})
+            .rename(columns={"Volume (MWh)":"Venda (MWh)"})
         )
 
         nets = compras_net.merge(
             vendas_net,
-            on=["Parte", "Contraparte", "Submercado", "Tipo de Energia"],
+            on=["Parte","Contraparte","Submercado","Tipo de Energia"],
             how="inner"
         )
-
-        nets["NET (MWh)"] = nets["Compra (MWh)"] - nets["Venda (MWh)"]
 
         if pagina == "Base Conferência":
 
             st.subheader("Base Conferência")
 
+            base_exibicao = base.copy()
+
+            base_exibicao["Volume (MWh)"] = base_exibicao["Volume (MWh)"].map(lambda x: f"{x:.3f}")
+            base_exibicao["Volume MWm"] = base_exibicao["Volume MWm"].map(lambda x: f"{x:.6f}")
+
             st.dataframe(
-                base,
+                base_exibicao,
                 use_container_width=True,
                 hide_index=True
             )
@@ -148,52 +134,28 @@ if arquivo is not None:
             output = BytesIO()
 
             with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                base.to_excel(
-                    writer,
-                    sheet_name="Base Conferência",
-                    index=False
-                )
+                base.to_excel(writer, sheet_name="Base Conferência", index=False)
 
             st.download_button(
                 "📥 Download Base Conferência",
                 data=output.getvalue(),
-                file_name=f"Base_Conferencia_{mes}_{ano}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                file_name=f"Base_Conferencia_{mes}_{ano}.xlsx"
             )
 
         else:
 
             st.subheader("🤝 Encontro Energético")
 
-            parte = st.selectbox(
-                "Parte",
-                sorted(nets["Parte"].dropna().unique())
-            )
-
+            parte = st.selectbox("Parte", sorted(nets["Parte"].dropna().unique()))
             df_parte = nets[nets["Parte"] == parte]
 
-            contraparte = st.selectbox(
-                "Contraparte",
-                sorted(df_parte["Contraparte"].dropna().unique())
-            )
+            contraparte = st.selectbox("Contraparte", sorted(df_parte["Contraparte"].dropna().unique()))
+            df_contraparte = df_parte[df_parte["Contraparte"] == contraparte]
 
-            df_contraparte = df_parte[
-                df_parte["Contraparte"] == contraparte
-            ]
+            submercado = st.selectbox("Submercado", sorted(df_contraparte["Submercado"].dropna().unique()))
+            df_sub = df_contraparte[df_contraparte["Submercado"] == submercado]
 
-            submercado = st.selectbox(
-                "Submercado",
-                sorted(df_contraparte["Submercado"].dropna().unique())
-            )
-
-            df_sub = df_contraparte[
-                df_contraparte["Submercado"] == submercado
-            ]
-
-            tipo_energia = st.selectbox(
-                "Tipo de Energia",
-                sorted(df_sub["Tipo de Energia"].dropna().unique())
-            )
+            tipo_energia = st.selectbox("Tipo de Energia", sorted(df_sub["Tipo de Energia"].dropna().unique()))
 
             encontro = base[
                 (base["Parte"] == parte) &
@@ -205,70 +167,39 @@ if arquivo is not None:
             compras = encontro[encontro["Operação"] == "Compra"].copy()
             vendas = encontro[encontro["Operação"] == "Venda"].copy()
 
-            compras["Volume (MWh)"] = compras["Volume (MWh)"].round(3)
-            compras["Volume MWm"] = compras["Volume MWm"].round(6)
+            compras["Volume (MWh)"] = compras["Volume (MWh)"].map(lambda x: f"{x:.3f}")
+            compras["Volume MWm"] = compras["Volume MWm"].map(lambda x: f"{x:.6f}")
 
-            vendas["Volume (MWh)"] = vendas["Volume (MWh)"].round(3)
-            vendas["Volume MWm"] = vendas["Volume MWm"].round(6)
-
-            st.markdown("---")
-            st.markdown(f"### Parte: {parte}")
-            st.markdown(f"### Contraparte: {contraparte}")
-            st.markdown(f"### Submercado: {submercado}")
-            st.markdown(f"### Tipo Energia: {tipo_energia}")
+            vendas["Volume (MWh)"] = vendas["Volume (MWh)"].map(lambda x: f"{x:.3f}")
+            vendas["Volume MWm"] = vendas["Volume MWm"].map(lambda x: f"{x:.6f}")
 
             st.markdown("## COMPRAS")
-
-            st.dataframe(
-                compras[["BOLETA", "Volume (MWh)", "Volume MWm"]],
-                use_container_width=True,
-                hide_index=True
-            )
+            st.dataframe(compras[["BOLETA","Volume (MWh)","Volume MWm"]], hide_index=True, use_container_width=True)
 
             st.markdown("## VENDAS")
+            st.dataframe(vendas[["BOLETA","Volume (MWh)","Volume MWm"]], hide_index=True, use_container_width=True)
 
-            st.dataframe(
-                vendas[["BOLETA", "Volume (MWh)", "Volume MWm"]],
-                use_container_width=True,
-                hide_index=True
-            )
+            compras_calc = encontro[encontro["Operação"] == "Compra"]
+            vendas_calc = encontro[encontro["Operação"] == "Venda"]
 
-            total_compra = compras["Volume (MWh)"].sum()
-            total_venda = vendas["Volume (MWh)"].sum()
+            total_compra = compras_calc["Volume (MWh)"].sum()
+            total_venda = vendas_calc["Volume (MWh)"].sum()
             saldo = total_compra - total_venda
 
-            total_compra_mwm = compras["Volume MWm"].sum()
-            total_venda_mwm = vendas["Volume MWm"].sum()
+            total_compra_mwm = compras_calc["Volume MWm"].sum()
+            total_venda_mwm = vendas_calc["Volume MWm"].sum()
             saldo_mwm = total_compra_mwm - total_venda_mwm
 
-            if saldo > 0:
-                ajuste = contraparte
-            elif saldo < 0:
-                ajuste = parte
-            else:
-                ajuste = "ZERADO"
+            ajuste = contraparte if saldo > 0 else parte if saldo < 0 else "ZERADO"
 
             resumo = pd.DataFrame({
-                "Tipo": ["Compras", "Vendas", "Saldo"],
-                "MWh": [
-                    round(total_compra, 3),
-                    round(total_venda, 3),
-                    round(saldo, 3)
-                ],
-                "MWm": [
-                    round(total_compra_mwm, 6),
-                    round(total_venda_mwm, 6),
-                    round(saldo_mwm, 6)
-                ]
+                "Tipo":["Compras","Vendas","Saldo"],
+                "MWh":[f"{total_compra:.3f}", f"{total_venda:.3f}", f"{saldo:.3f}"],
+                "MWm":[f"{total_compra_mwm:.6f}", f"{total_venda_mwm:.6f}", f"{saldo_mwm:.6f}"]
             })
 
             st.markdown("## RESUMO")
-
-            st.dataframe(
-                resumo,
-                use_container_width=True,
-                hide_index=True
-            )
+            st.dataframe(resumo, hide_index=True, use_container_width=True)
 
             c1, c2 = st.columns(2)
 
@@ -276,28 +207,8 @@ if arquivo is not None:
                 st.metric("Quem Ajusta", ajuste)
 
             with c2:
-                st.metric(
-                    "Volume a Ajustar (MWm)",
-                    f"{abs(saldo_mwm):.6f}"
-                )
-
-            output_nets = BytesIO()
-
-            with pd.ExcelWriter(output_nets, engine="openpyxl") as writer:
-                nets.to_excel(
-                    writer,
-                    sheet_name="NETS",
-                    index=False
-                )
-
-            st.download_button(
-                "📥 Exportar Todos os NETs",
-                data=output_nets.getvalue(),
-                file_name=f"NETS_{mes}_{ano}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+                st.metric("Volume a Ajustar (MWm)", f"{abs(saldo_mwm):.6f}")
 
     except Exception as erro:
-
         st.error("Erro ao processar a planilha")
         st.exception(erro)
