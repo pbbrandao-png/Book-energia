@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 from io import BytesIO
@@ -70,7 +69,7 @@ if arquivo is not None:
 
         cp_lp = dias_periodo.apply(lambda x: "CP" if x <= 31 else "LP")
 
-        volume_mwm = (df["QuantAtualizada"] / horas_periodo).round(4)
+        volume_mwm = (df["QuantAtualizada"] / horas_periodo).round(6)
 
         base = pd.DataFrame()
 
@@ -83,6 +82,7 @@ if arquivo is not None:
         base["Contraparte"] = df["Sigla_CCEE_Contraparte"]
         base["CP/LP"] = cp_lp
         base["CNPJ CONTRAPARTE"] = df["Contraparte_CNPJ"]
+
         base["Submercado"] = (
             df["Submercado"]
             .astype(str)
@@ -90,9 +90,12 @@ if arquivo is not None:
             .map(mapa_submercado)
             .fillna(df["Submercado"])
         )
-        base["Volume (MWh)"] = df["QuantAtualizada"]
-        base["Volume MWm"] = volume_mwm
+
+        base["Volume (MWh)"] = df["QuantAtualizada"].round(3)
+        base["Volume MWm"] = volume_mwm.round(6)
+
         base["CliqCCEE Paradigma"] = df["Codigo_CCEE"]
+
         base["Modulação WBC"] = (
             df["Tipo_de_modulacao"]
             .astype(str)
@@ -100,6 +103,7 @@ if arquivo is not None:
             .map(mapa_modulacao)
             .fillna(df["Tipo_de_modulacao"])
         )
+
         base["Modulação Mínima"] = df["FlexLimite_modulacaoMin"]
         base["Modulação Máxima"] = df["FlexLimite_modulacaoMax"]
 
@@ -130,15 +134,6 @@ if arquivo is not None:
         )
 
         nets["NET (MWh)"] = nets["Compra (MWh)"] - nets["Venda (MWh)"]
-
-        def Ajuste(row):
-            if row["NET (MWh)"] > 0:
-                return row["Contraparte"]
-            elif row["NET (MWh)"] < 0:
-                return row["Parte"]
-            return "ZERADO"
-
-        nets["Ajuste"] = nets.apply(Ajuste, axis=1)
 
         if pagina == "Base Conferência":
 
@@ -207,8 +202,14 @@ if arquivo is not None:
                 (base["Tipo de Energia"] == tipo_energia)
             ]
 
-            compras = encontro[encontro["Operação"] == "Compra"]
-            vendas = encontro[encontro["Operação"] == "Venda"]
+            compras = encontro[encontro["Operação"] == "Compra"].copy()
+            vendas = encontro[encontro["Operação"] == "Venda"].copy()
+
+            compras["Volume (MWh)"] = compras["Volume (MWh)"].round(3)
+            compras["Volume MWm"] = compras["Volume MWm"].round(6)
+
+            vendas["Volume (MWh)"] = vendas["Volume (MWh)"].round(3)
+            vendas["Volume MWm"] = vendas["Volume MWm"].round(6)
 
             st.markdown("---")
             st.markdown(f"### Parte: {parte}")
@@ -236,16 +237,29 @@ if arquivo is not None:
             total_venda = vendas["Volume (MWh)"].sum()
             saldo = total_compra - total_venda
 
+            total_compra_mwm = compras["Volume MWm"].sum()
+            total_venda_mwm = vendas["Volume MWm"].sum()
+            saldo_mwm = total_compra_mwm - total_venda_mwm
+
             if saldo > 0:
-                reg = contraparte
+                ajuste = contraparte
             elif saldo < 0:
-                reg = parte
+                ajuste = parte
             else:
-                reg = "ZERADO"
+                ajuste = "ZERADO"
 
             resumo = pd.DataFrame({
                 "Tipo": ["Compras", "Vendas", "Saldo"],
-                "MWh": [total_compra, total_venda, saldo]
+                "MWh": [
+                    round(total_compra, 3),
+                    round(total_venda, 3),
+                    round(saldo, 3)
+                ],
+                "MWm": [
+                    round(total_compra_mwm, 6),
+                    round(total_venda_mwm, 6),
+                    round(saldo_mwm, 6)
+                ]
             })
 
             st.markdown("## RESUMO")
@@ -256,7 +270,16 @@ if arquivo is not None:
                 hide_index=True
             )
 
-            st.success(f"Ajuste: {reg}")
+            c1, c2 = st.columns(2)
+
+            with c1:
+                st.metric("Quem Ajusta", ajuste)
+
+            with c2:
+                st.metric(
+                    "Volume a Ajustar (MWm)",
+                    f"{abs(saldo_mwm):.6f}"
+                )
 
             output_nets = BytesIO()
 
