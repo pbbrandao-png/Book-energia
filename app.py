@@ -131,14 +131,14 @@ if arquivo is not None:
 
         nets["NET (MWh)"] = nets["Compra (MWh)"] - nets["Venda (MWh)"]
 
-        def registrante(row):
+        def Ajuste(row):
             if row["NET (MWh)"] > 0:
                 return row["Contraparte"]
             elif row["NET (MWh)"] < 0:
                 return row["Parte"]
             return "ZERADO"
 
-        nets["Registrante"] = nets.apply(registrante, axis=1)
+        nets["Ajuste"] = nets.apply(Ajuste, axis=1)
 
         if pagina == "Base Conferência":
 
@@ -256,7 +256,7 @@ if arquivo is not None:
                 hide_index=True
             )
 
-            st.success(f"Registrante: {reg}")
+            st.success(f"Ajuste: {reg}")
 
             output_nets = BytesIO()
 
