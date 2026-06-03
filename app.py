@@ -87,7 +87,27 @@ if arquivo is not None:
         base["Parte"] = df["Parte_razao_social"]
         base["Contraparte"] = df["Sigla_CCEE_Contraparte"]
         base["CP/LP"] = cp_lp
-        base["CNPJ CONTRAPARTE"] = df["Contraparte_CNPJ"]
+       def formatar_cnpj(valor):
+
+    if pd.isna(valor):
+        return ""
+
+    cnpj = ''.join(filter(str.isdigit, str(valor)))
+
+    cnpj = cnpj.zfill(14)
+
+    return (
+        f"{cnpj[:2]}."
+        f"{cnpj[2:5]}."
+        f"{cnpj[5:8]}/"
+        f"{cnpj[8:12]}-"
+        f"{cnpj[12:]}"
+    )
+
+base["CNPJ CONTRAPARTE"] = (
+    df["Contraparte_CNPJ"]
+    .apply(formatar_cnpj)
+)
         base["Submercado"] = df["Submercado"].astype(str).str.strip().map(mapa_submercado).fillna(df["Submercado"])
         base["Volume (MWh)"] = df["QuantAtualizada"].round(3)
         base["Volume MWm"] = volume_mwm.round(6)
