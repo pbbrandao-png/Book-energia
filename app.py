@@ -27,7 +27,7 @@ st.set_page_config(page_title="Book Energia", layout="wide")
 
 pagina = st.sidebar.radio(
     "Menu",
-    ["Base Conferência", "Encontro Energético"]
+    ["Base Conferência", "Encontro Energético", "Arquivos CCEE"]
 )
 
 st.title("📊 Book Energia")
@@ -40,6 +40,16 @@ arquivo = st.file_uploader(
 arquivo_mes_anterior = st.file_uploader(
     "Selecione a planilha Mês Anterior",
     type=["xlsx"]
+)
+
+zip_matrix = st.file_uploader(
+    "Selecione o ZIP Matrix",
+    type=["zip"]
+)
+
+zip_bismut = st.file_uploader(
+    "Selecione o ZIP Bismut",
+    type=["zip"]
 )
 
 if arquivo is not None:
