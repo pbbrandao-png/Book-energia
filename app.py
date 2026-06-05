@@ -1,9 +1,4 @@
 # APP_BOOK_ENERGIA_V6
-# Removidas colunas Mês e Ano
-# CNPJ formatado
-# MWh = 3 casas
-# MWm = 6 casas
-
 import streamlit as st
 import pandas as pd
 from io import BytesIO
@@ -102,10 +97,14 @@ if arquivo is not None:
         df["Suprimento_termino"] = pd.to_datetime(df["Suprimento_termino"], errors="coerce")
 
         dias_periodo = (df["Suprimento_termino"] - df["Suprimento_inicio"]).dt.days + 1
-        horas_periodo = dias_periodo * 24
 
         cp_lp = dias_periodo.apply(lambda x: "CP" if x <= 31 else "LP")
-        volume_mwm = (df["QuantAtualizada"] / horas_periodo).round(6)
+
+        horas_por_linha = df["Mes"].map(horas_mes)
+
+        volume_mwm = (
+            df["QuantAtualizada"] / horas_por_linha
+        ).round(6)
 
         base = pd.DataFrame()
 
