@@ -48,6 +48,21 @@ if arquivo is not None:
 
         df = pd.read_excel(arquivo, header=8)
 
+        horas_mes = {
+            1: 744,
+            2: 672,
+            3: 744,
+            4: 720,
+            5: 744,
+            6: 720,
+            7: 744,
+            8: 744,
+            9: 720,
+            10: 744,
+            11: 720,
+            12: 744
+        }
+
         if arquivo_mes_anterior is not None:
             df_mes_anterior = pd.read_excel(arquivo_mes_anterior)
 
@@ -201,7 +216,9 @@ if arquivo is not None:
 
             total_compra_mwm = compras_calc["Volume MWm"].sum()
             total_venda_mwm = vendas_calc["Volume MWm"].sum()
-            saldo_mwm = total_compra_mwm - total_venda_mwm
+
+            mes_referencia = int(df["Mes"].dropna().iloc[0])
+            saldo_mwm = saldo / horas_mes.get(mes_referencia, 744)
 
             ajuste = contraparte if saldo > 0 else parte if saldo < 0 else "ZERADO"
 
