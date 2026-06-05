@@ -89,8 +89,8 @@ if arquivo is not None:
         base["Volume MWm"] = volume_mwm.round(6)
         base["CliqCCEE Paradigma"] = df["Codigo_CCEE"]
         base["Modulação WBC"] = df["Tipo_de_modulacao"].astype(str).str.strip().map(mapa_modulacao).fillna(df["Tipo_de_modulacao"])
-        base["Modulação Mínima"] = df["FlexLimite_modulacaoMin"]
-        base["Modulação Máxima"] = df["FlexLimite_modulacaoMax"]
+        base["Modulação Mínima"] = df["FlexLimite_modulacaoMin"].fillna("-")
+        base["Modulação Máxima"] = df["FlexLimite_modulacaoMax"].fillna("-")
 
         compras_net = (
             base[base["Operação"] == "Compra"]
