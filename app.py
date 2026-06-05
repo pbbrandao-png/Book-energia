@@ -1,4 +1,9 @@
 # APP_BOOK_ENERGIA_V6
+# Removidas colunas Mês e Ano
+# CNPJ formatado
+# MWh = 3 casas
+# MWm = 6 casas
+
 import streamlit as st
 import pandas as pd
 from io import BytesIO
@@ -128,6 +133,9 @@ if arquivo is not None:
             .map(mapa_mes_anterior)
             .fillna("-")
         )
+
+        base["Vendedor"] = df["Sigla_CCEE_vendedor"]
+        base["Comprador"] = df["Sigla_CCEE_comprador"]
 
         compras_net = (
             base[base["Operação"] == "Compra"]
