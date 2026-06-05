@@ -1,12 +1,27 @@
-# APP_BOOK_ENERGIA_V4
-# Alteração principal:
+# APP_BOOK_ENERGIA_V5
 # Exibição padronizada:
 # MWh = 3 casas
 # MWm = 6 casas
+# CNPJ CONTRAPARTE formatado
 
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+
+def formatar_cnpj(valor):
+    if pd.isna(valor):
+        return ""
+
+    cnpj = "".join(filter(str.isdigit, str(valor)))
+    cnpj = cnpj.zfill(14)
+
+    return (
+        f"{cnpj[:2]}."
+        f"{cnpj[2:5]}."
+        f"{cnpj[5:8]}/"
+        f"{cnpj[8:12]}-"
+        f"{cnpj[12:]}"
+    )
 
 st.set_page_config(page_title="Book Energia", layout="wide")
 
@@ -74,7 +89,6 @@ if arquivo is not None:
         horas_periodo = dias_periodo * 24
 
         cp_lp = dias_periodo.apply(lambda x: "CP" if x <= 31 else "LP")
-
         volume_mwm = (df["QuantAtualizada"] / horas_periodo).round(6)
 
         base = pd.DataFrame()
@@ -87,27 +101,7 @@ if arquivo is not None:
         base["Parte"] = df["Parte_razao_social"]
         base["Contraparte"] = df["Sigla_CCEE_Contraparte"]
         base["CP/LP"] = cp_lp
-       def formatar_cnpj(valor):
-
-    if pd.isna(valor):
-        return ""
-
-    cnpj = ''.join(filter(str.isdigit, str(valor)))
-
-    cnpj = cnpj.zfill(14)
-
-    return (
-        f"{cnpj[:2]}."
-        f"{cnpj[2:5]}."
-        f"{cnpj[5:8]}/"
-        f"{cnpj[8:12]}-"
-        f"{cnpj[12:]}"
-    )
-
-base["CNPJ CONTRAPARTE"] = (
-    df["Contraparte_CNPJ"]
-    .apply(formatar_cnpj)
-)
+        base["CNPJ CONTRAPARTE"] = df["Contraparte_CNPJ"].apply(formatar_cnpj)
         base["Submercado"] = df["Submercado"].astype(str).str.strip().map(mapa_submercado).fillna(df["Submercado"])
         base["Volume (MWh)"] = df["QuantAtualizada"].round(3)
         base["Volume MWm"] = volume_mwm.round(6)
@@ -141,18 +135,12 @@ base["CNPJ CONTRAPARTE"] = (
             st.subheader("Base Conferência")
 
             base_exibicao = base.copy()
-
             base_exibicao["Volume (MWh)"] = base_exibicao["Volume (MWh)"].map(lambda x: f"{x:.3f}")
             base_exibicao["Volume MWm"] = base_exibicao["Volume MWm"].map(lambda x: f"{x:.6f}")
 
-            st.dataframe(
-                base_exibicao,
-                use_container_width=True,
-                hide_index=True
-            )
+            st.dataframe(base_exibicao, use_container_width=True, hide_index=True)
 
             output = BytesIO()
-
             with pd.ExcelWriter(output, engine="openpyxl") as writer:
                 base.to_excel(writer, sheet_name="Base Conferência", index=False)
 
@@ -184,8 +172,11 @@ base["CNPJ CONTRAPARTE"] = (
                 (base["Tipo de Energia"] == tipo_energia)
             ]
 
-            compras = encontro[encontro["Operação"] == "Compra"].copy()
-            vendas = encontro[encontro["Operação"] == "Venda"].copy()
+            compras_calc = encontro[encontro["Operação"] == "Compra"]
+            vendas_calc = encontro[encontro["Operação"] == "Venda"]
+
+            compras = compras_calc.copy()
+            vendas = vendas_calc.copy()
 
             compras["Volume (MWh)"] = compras["Volume (MWh)"].map(lambda x: f"{x:.3f}")
             compras["Volume MWm"] = compras["Volume MWm"].map(lambda x: f"{x:.6f}")
@@ -198,9 +189,6 @@ base["CNPJ CONTRAPARTE"] = (
 
             st.markdown("## VENDAS")
             st.dataframe(vendas[["BOLETA","Volume (MWh)","Volume MWm"]], hide_index=True, use_container_width=True)
-
-            compras_calc = encontro[encontro["Operação"] == "Compra"]
-            vendas_calc = encontro[encontro["Operação"] == "Venda"]
 
             total_compra = compras_calc["Volume (MWh)"].sum()
             total_venda = vendas_calc["Volume (MWh)"].sum()
