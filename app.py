@@ -37,11 +37,28 @@ arquivo = st.file_uploader(
     type=["xlsx", "xlsm"]
 )
 
+arquivo_mes_anterior = st.file_uploader(
+    "Selecione a planilha Mês Anterior",
+    type=["xlsx"]
+)
+
 if arquivo is not None:
 
     try:
 
         df = pd.read_excel(arquivo, header=8)
+
+        if arquivo_mes_anterior is not None:
+            df_mes_anterior = pd.read_excel(arquivo_mes_anterior)
+
+            mapa_mes_anterior = dict(
+                zip(
+                    df_mes_anterior["BOLETA"],
+                    df_mes_anterior["Codigo_CCEE"]
+                )
+            )
+        else:
+            mapa_mes_anterior = {}
 
         mapa_energia = {
             "Incentivada 50%": "Incentivada-I5",
@@ -91,6 +108,12 @@ if arquivo is not None:
         base["Modulação WBC"] = df["Tipo_de_modulacao"].astype(str).str.strip().map(mapa_modulacao).fillna(df["Tipo_de_modulacao"])
         base["Modulação Mínima"] = df["FlexLimite_modulacaoMin"].fillna("-")
         base["Modulação Máxima"] = df["FlexLimite_modulacaoMax"].fillna("-")
+
+        base["Contrato CliqCCEE mês anterior"] = (
+            base["BOLETA"]
+            .map(mapa_mes_anterior)
+            .fillna("-")
+        )
 
         compras_net = (
             base[base["Operação"] == "Compra"]
