@@ -1,8 +1,8 @@
-# APP_BOOK_ENERGIA_V5
-# Exibição padronizada:
+# APP_BOOK_ENERGIA_V6
+# Removidas colunas Mês e Ano
+# CNPJ formatado
 # MWh = 3 casas
 # MWm = 6 casas
-# CNPJ CONTRAPARTE formatado
 
 import streamlit as st
 import pandas as pd
@@ -31,22 +31,6 @@ pagina = st.sidebar.radio(
 )
 
 st.title("📊 Book Energia")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    mes = st.selectbox(
-        "Mês",
-        ["Janeiro","Fevereiro","Março","Abril","Maio","Junho",
-         "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
-    )
-
-with col2:
-    ano = st.selectbox(
-        "Ano",
-        list(range(2024, 2036)),
-        index=2
-    )
 
 arquivo = st.file_uploader(
     "Selecione a RelPers",
@@ -93,8 +77,6 @@ if arquivo is not None:
 
         base = pd.DataFrame()
 
-        base["Mês"] = mes
-        base["Ano"] = ano
         base["BOLETA"] = df["Codigo_WBC"]
         base["Operação"] = df["Movimentacao"]
         base["Tipo de Energia"] = df["Fonte_Contrato"].map(mapa_energia).fillna(df["Fonte_Contrato"])
@@ -147,7 +129,7 @@ if arquivo is not None:
             st.download_button(
                 "📥 Download Base Conferência",
                 data=output.getvalue(),
-                file_name=f"Base_Conferencia_{mes}_{ano}.xlsx"
+                file_name="Base_Conferencia.xlsx"
             )
 
         else:
