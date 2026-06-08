@@ -259,3 +259,27 @@ if arquivo is not None:
     except Exception as erro:
         st.error("Erro ao processar a planilha")
         st.exception(erro)
+
+
+# =========================
+# V15 - MELHORIAS SUGERIDAS
+# =========================
+# Imports adicionais:
+# import win32com.client as win32
+#
+# Adicionar após cálculo do NET:
+#
+# nets["NET (MWh)"] = nets["Compra (MWh)"] - nets["Venda (MWh)"]
+# nets["NET (MWm)"] = nets["NET (MWh)"] / horas_mes.get(mes_referencia,744)
+#
+# Criar relatório consolidado e botão Outlook.
+#
+# email_destino = st.text_input("Para")
+#
+# if st.button("📧 Gerar E-mail Outlook"):
+#     outlook = win32.Dispatch("Outlook.Application")
+#     mail = outlook.CreateItem(0)
+#     mail.To = email_destino
+#     mail.Subject = f"Encontro Energético {mes_referencia}/2026 - {contraparte}"
+#     mail.HTMLBody = html_email
+#     mail.Display()
