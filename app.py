@@ -27,7 +27,7 @@ st.set_page_config(page_title="Book Energia", layout="wide")
 
 pagina = st.sidebar.radio(
     "Menu",
-    ["Base Conferência", "Encontro Energético", "Arquivos CCEE"]
+    ["Base Conferência", "Encontro Energético", "Arquivos CCEE", "Declaradas"]
 )
 
 st.title("📊 Book Energia")
@@ -187,7 +187,7 @@ if arquivo is not None:
                 file_name="Base_Conferencia.xlsx"
             )
 
-        else:
+        elif pagina == "Encontro Energético":
 
             st.subheader("🤝 Encontro Energético")
 
@@ -255,6 +255,198 @@ if arquivo is not None:
 
             with c2:
                 st.metric("Volume a Ajustar (MWm)", f"{abs(saldo_mwm):.6f}")
+
+        elif pagina == "Arquivos CCEE":
+            st.subheader("📁 Arquivos CCEE")
+            st.info("Em construção.")
+
+        elif pagina == "Declaradas":
+
+            st.subheader("📋 Declaradas")
+
+            arquivo_xml = st.file_uploader(
+                "Selecione o XML da CCEE (Declaração de Modulação)",
+                type=["xml"],
+                key="xml_declaradas"
+            )
+
+            arquivo_med = st.file_uploader(
+                "Selecione o arquivo de Medições (xlsx)",
+                type=["xlsx"],
+                key="med_declaradas"
+            )
+
+            if arquivo_xml is not None and arquivo_med is not None:
+
+                try:
+                    import xml.etree.ElementTree as ET
+
+                    # ── Lê XML ──────────────────────────────────────────────
+                    tree = ET.parse(arquivo_xml)
+                    root_xml = tree.getroot()
+
+                    contrato_node = root_xml.find("Contrato")
+                    numero_contrato = contrato_node.attrib.get("numeroContrato", "")
+
+                    mm_node = contrato_node.find("MontanteMedio")
+                    firme_node = mm_node.find("MontanteMedioContratoCCEALFirme")
+                    montante_medio_mwm = float(firme_node.attrib["montanteMedio"])
+
+                    vigencia_inicio = mm_node.attrib.get("vigenciaDeInicio", "")
+                    vigencia_fim    = mm_node.attrib.get("vigenciaDeFim", "")
+
+                    # Extrai mês/ano e horas totais do período
+                    mesano_node = mm_node.find("MesAno")
+                    mes_ano_str = mesano_node.attrib["mesAno"]           # "03/2026"
+                    mes_ref = int(mes_ano_str.split("/")[0])
+                    horas_periodo = horas_mes.get(mes_ref, 744)
+
+                    # MWh total contratado = MWm médio × horas do período
+                    montante_total_mwh = montante_medio_mwm * horas_periodo
+
+                    # Lê todas as horas declaradas do XML → lista de dicts
+                    rows_xml = []
+                    for dia_node in mesano_node.findall("Dia"):
+                        dia = int(dia_node.attrib["dia"])
+                        for hora_node in dia_node.findall("Hora"):
+                            hora = int(hora_node.attrib["hora"])          # 0–23
+                            mwm  = float(hora_node.attrib["montanteHorario"])
+                            rows_xml.append({
+                                "Dia": dia,
+                                "Hora_XML": hora,     # 0-based (padrão CCEE)
+                                "Declarado_MWm": mwm,
+                                "Declarado_MWh": mwm  # 1 hora → MWh = MWm × 1
+                            })
+
+                    df_xml = pd.DataFrame(rows_xml)
+
+                    # ── Lê Medições ─────────────────────────────────────────
+                    df_med = pd.read_excel(arquivo_med, header=5)
+                    df_med.columns = [
+                        "Agente", "Ponto", "Data", "Hora",
+                        "Ativa_kWh", "Qualidade", "Origem"
+                    ]
+
+                    # Hora nas medições é 1-based; converte para 0-based p/ merge
+                    df_med["Hora_XML"] = df_med["Hora"] - 1
+
+                    # Data pode vir como datetime ou serial Excel
+                    if pd.api.types.is_datetime64_any_dtype(df_med["Data"]):
+                        df_med["Dia"] = df_med["Data"].dt.day
+                    else:
+                        # serial Excel → datetime
+                        df_med["Dia"] = pd.to_datetime(
+                            df_med["Data"], unit="D", origin="1899-12-30"
+                        ).dt.day
+
+                    # Agrega por dia+hora (caso haja múltiplos pontos de medição)
+                    agg_med = (
+                        df_med
+                        .groupby(["Dia", "Hora_XML"], as_index=False)["Ativa_kWh"]
+                        .sum()
+                    )
+                    agg_med["Medido_MWh"] = agg_med["Ativa_kWh"] / 1000
+                    agg_med["Medido_MWm"] = agg_med["Medido_MWh"]   # 1h → MWm = MWh
+
+                    # ── Merge declarado × medido ─────────────────────────────
+                    df_dec = df_xml.merge(
+                        agg_med[["Dia", "Hora_XML", "Medido_MWh", "Medido_MWm"]],
+                        on=["Dia", "Hora_XML"],
+                        how="left"
+                    )
+
+                    df_dec["Hora_Exibicao"] = df_dec["Hora_XML"]   # mantém 0-based (CCEE)
+                    df_dec["Diferença_MWh"] = (
+                        df_dec["Declarado_MWh"] - df_dec["Medido_MWh"]
+                    ).round(6)
+
+                    # ── Totais para validação CK vs CP ───────────────────────
+                    total_declarado_mwh = df_dec["Declarado_MWh"].sum()   # coluna CP
+                    total_declarado_mwm = montante_medio_mwm              # coluna CK
+                    total_medido_mwh    = df_dec["Medido_MWh"].sum()
+
+                    # CP (MWh) ÷ horas = deve bater com CK (MWm)
+                    cp_convertido_mwm = total_declarado_mwh / horas_periodo
+
+                    ok_ck_cp = abs(cp_convertido_mwm - total_declarado_mwm) < 0.0001
+
+                    # ── Cabeçalho informativo ────────────────────────────────
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Contrato", numero_contrato)
+                    col2.metric("Período", f"{vigencia_inicio} → {vigencia_fim}")
+                    col3.metric("Mês de referência", mes_ano_str)
+
+                    st.markdown("---")
+
+                    col4, col5, col6 = st.columns(3)
+                    col4.metric(
+                        "Total Declarado — CK (MWm)",
+                        f"{total_declarado_mwm:.6f}"
+                    )
+                    col5.metric(
+                        "Total Declarado — CP (MWh)",
+                        f"{total_declarado_mwh:.3f}"
+                    )
+                    col6.metric(
+                        "CP ÷ horas = MWm",
+                        f"{cp_convertido_mwm:.6f}",
+                        delta="✅ Bate com CK" if ok_ck_cp else "⚠️ Diverge de CK",
+                        delta_color="normal" if ok_ck_cp else "inverse"
+                    )
+
+                    st.markdown("---")
+                    col7, col8 = st.columns(2)
+                    col7.metric("Total Medido (MWh)", f"{total_medido_mwh:.3f}")
+                    col8.metric(
+                        "Diferença Total (MWh)",
+                        f"{(total_declarado_mwh - total_medido_mwh):.3f}"
+                    )
+
+                    # ── Tabela horária ───────────────────────────────────────
+                    st.markdown("### Detalhamento Horário")
+
+                    tabela = df_dec[[
+                        "Dia", "Hora_Exibicao",
+                        "Declarado_MWm", "Declarado_MWh",
+                        "Medido_MWh", "Diferença_MWh"
+                    ]].copy()
+
+                    tabela.columns = [
+                        "Dia", "Hora (0-based)",
+                        "Declarado MWm (CK)", "Declarado MWh (CP)",
+                        "Medido MWh", "Diferença MWh"
+                    ]
+
+                    st.dataframe(
+                        tabela.style.format({
+                            "Declarado MWm (CK)": "{:.6f}",
+                            "Declarado MWh (CP)": "{:.6f}",
+                            "Medido MWh":         "{:.3f}",
+                            "Diferença MWh":      "{:.6f}",
+                        }),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                    # ── Download ─────────────────────────────────────────────
+                    output_dec = BytesIO()
+                    with pd.ExcelWriter(output_dec, engine="openpyxl") as writer:
+                        tabela.to_excel(
+                            writer, sheet_name="Declaradas", index=False
+                        )
+
+                    st.download_button(
+                        "📥 Download Declaradas",
+                        data=output_dec.getvalue(),
+                        file_name=f"Declaradas_{numero_contrato}_{mes_ano_str.replace('/','_')}.xlsx"
+                    )
+
+                except Exception as erro_dec:
+                    st.error("Erro ao processar Declaradas")
+                    st.exception(erro_dec)
+
+            else:
+                st.info("Faça upload do XML da CCEE e do arquivo de Medições para continuar.")
 
     except Exception as erro:
         st.error("Erro ao processar a planilha")
