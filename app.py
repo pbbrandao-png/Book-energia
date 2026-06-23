@@ -144,7 +144,11 @@ if arquivo is not None:
             .fillna("-")
         )
 
-        base["Vendedor"] = df["Sigla_CCEE_vendedor"]
+        
+        # V15 - Contrato CliqCCEE
+        base["Contrato CliqCCEE"] = base["Contrato CliqCCEE mês anterior"]
+
+base["Vendedor"] = df["Sigla_CCEE_vendedor"]
         base["Comprador"] = df["Sigla_CCEE_comprador"]
 
         compras_net = (
