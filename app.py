@@ -1,8 +1,9 @@
-# APP_BOOK_ENERGIA_V16
+# APP_BOOK_ENERGIA_V17
 # Coluna "Contrato CliqCCEE" via CSVs extraídos dos ZIPs Matrix e Bismut
 # Boletas ACR (lista fixa) → ccear_q (extraído do ZIP Matrix)
 # Matrix (não-Bismut, não-ACR) → cceal_firme + cbr_mercado_proprio (ZIP Matrix)
 # Bismut → cceal_firme (ZIP Bismut)
+# V17: + Contraparte Razão Social | highlight amarelo Parte==Contraparte | flag ocultar zerados
 
 import streamlit as st
 import pandas as pd
@@ -59,12 +60,10 @@ def extrair_csvs_zip(zip_file):
         with zipfile.ZipFile(zip_file) as zf:
             for nome in zf.namelist():
                 nome_lower = nome.lower()
-                # ignora diretórios
                 if nome_lower.endswith('/'):
                     continue
                 if not nome_lower.endswith('.csv'):
                     continue
-                # arquivos _parcela não têm as colunas necessárias
                 if 'parcela' in nome_lower:
                     continue
                 dados = zf.read(nome)
@@ -135,6 +134,17 @@ def resolver_contrato_cliqccee(boleta, codigo_mes_anterior, codigo_paradigma,
     if resultado == 'Verificar':
         resultado = buscar_contrato_cliqccee(codigo_paradigma, chave, df)
     return resultado
+
+
+def highlight_mesmo_titular(row):
+    """
+    Pinta a linha de amarelo quando Parte == Contraparte Razão Social.
+    """
+    parte = str(row.get("Parte", "")).strip().upper()
+    contraparte_rs = str(row.get("Contraparte Razão Social", "")).strip().upper()
+    if parte and contraparte_rs and parte == contraparte_rs:
+        return ["background-color: #FFD700"] * len(row)
+    return [""] * len(row)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -234,7 +244,9 @@ if arquivo is not None:
         base["Operação"]                       = df["Movimentacao"]
         base["Tipo de Energia"]                = df["Fonte_Contrato"].map(mapa_energia).fillna(df["Fonte_Contrato"])
         base["Parte"]                          = df["Parte_razao_social"]
-        base["Contraparte Razão Social"]       = df["Contraparte_razao_social"]
+        # ── NOVO: Contraparte Razão Social logo após Parte ─────────────────────
+        base["Contraparte Razão Social"]       = df["Contraparte_razao_social"] if "Contraparte_razao_social" in df.columns else "-"
+        # ───────────────────────────────────────────────────────────────────────
         base["Contraparte"]                    = df["Sigla_CCEE_Contraparte"]
         base["CP/LP"]                          = cp_lp
         base["CNPJ CONTRAPARTE"]               = df["Contraparte_CNPJ"].apply(formatar_cnpj)
@@ -248,6 +260,15 @@ if arquivo is not None:
         base["Contrato CliqCCEE mês anterior"] = base["BOLETA"].map(mapa_mes_anterior).fillna("-")
         base["Vendedor"]                       = df["Sigla_CCEE_vendedor"]
         base["Comprador"]                      = df["Sigla_CCEE_comprador"]
+
+        # ── Flag: zera volumes quando Parte == Contraparte Razão Social ────────
+        mask_mesmo_titular = (
+            base["Parte"].astype(str).str.strip().str.upper()
+            == base["Contraparte Razão Social"].astype(str).str.strip().str.upper()
+        )
+        base.loc[mask_mesmo_titular, "Volume (MWh)"] = 0.0
+        base.loc[mask_mesmo_titular, "Volume MWm"]   = 0.0
+        # ───────────────────────────────────────────────────────────────────────
 
         # ── Coluna "Contrato CliqCCEE" ─────────────────────────────────────────
         BISMUT_NOME = "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A."
@@ -307,15 +328,44 @@ if arquivo is not None:
 
             st.subheader("Base Conferência")
 
+            # ── Flags da Base Conferência ──────────────────────────────────────
+            col_flag1, col_flag2 = st.columns(2)
+            with col_flag1:
+                flag_mesmo_titular = st.toggle(
+                    "🟡 Destacar Parte = Contraparte (mesmo titular)",
+                    value=True
+                )
+            with col_flag2:
+                flag_ocultar_zerados = st.toggle(
+                    "🚫 Ocultar contratos zerados (Volume MWh = 0)",
+                    value=False
+                )
+            # ───────────────────────────────────────────────────────────────────
+
             base_exibicao = base.copy()
+
+            # Aplica filtro de zerados antes de formatar
+            if flag_ocultar_zerados:
+                base_exibicao = base_exibicao[base_exibicao["Volume (MWh)"] != 0.0]
+
             base_exibicao["Volume (MWh)"] = base_exibicao["Volume (MWh)"].map(lambda x: f"{x:.3f}")
             base_exibicao["Volume MWm"]   = base_exibicao["Volume MWm"].map(lambda x: f"{x:.6f}")
 
-            st.dataframe(base_exibicao, use_container_width=True, hide_index=True)
+            # Aplica highlight amarelo quando flag ativa
+            if flag_mesmo_titular:
+                styled = base_exibicao.style.apply(highlight_mesmo_titular, axis=1)
+                st.dataframe(styled, use_container_width=True, hide_index=True)
+            else:
+                st.dataframe(base_exibicao, use_container_width=True, hide_index=True)
+
+            # Download sempre com dados numéricos originais (sem formatação de string)
+            base_download = base.copy()
+            if flag_ocultar_zerados:
+                base_download = base_download[base_download["Volume (MWh)"] != 0.0]
 
             output = BytesIO()
             with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                base.to_excel(writer, sheet_name="Base Conferência", index=False)
+                base_download.to_excel(writer, sheet_name="Base Conferência", index=False)
 
             st.download_button(
                 "📥 Download Base Conferência",
