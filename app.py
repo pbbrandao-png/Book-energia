@@ -1,20 +1,25 @@
-# APP_BOOK_ENERGIA_V6
-# Removidas colunas Mês e Ano
-# CNPJ formatado
-# MWh = 3 casas
-# MWm = 6 casas
+# APP_BOOK_ENERGIA_V16
+# Coluna "Contrato CliqCCEE" via lookup nos CSVs da CCEE
+# Boletas ACR (lista fixa) → buscam no CSV ccear_q
+# Matrix (não-Bismut, não-ACR) → buscam no CSV cceal/cbr Matrix
+# Bismut → buscam no CSV cceal Bismut
 
 import streamlit as st
 import pandas as pd
 from io import BytesIO
 
+# Boletas que devem buscar no CSV ccear_q em vez do cceal_firme
+BOLETAS_ACR = {
+    122387, 122389, 122391, 122393, 122395, 122397, 122399, 122401,
+    144795, 144797, 144799, 148084, 148088, 148090, 148092, 148518,
+}
+
+
 def formatar_cnpj(valor):
     if pd.isna(valor):
         return ""
-
     cnpj = "".join(filter(str.isdigit, str(valor)))
     cnpj = cnpj.zfill(14)
-
     return (
         f"{cnpj[:2]}."
         f"{cnpj[2:5]}."
@@ -23,6 +28,97 @@ def formatar_cnpj(valor):
         f"{cnpj[12:]}"
     )
 
+
+def carregar_csv_ccee(arquivo_csv):
+    """
+    Carrega um CSV da CCEE (cceal_firme, cbr_mercado_proprio ou ccear_q)
+    e devolve um DataFrame pronto para lookup.
+    Estrutura esperada: sep=TAB, encoding=latin1, 1 linha de cabeçalho a pular (sep=;).
+    Colunas obrigatórias: CODIGO_CONTRATO, SITUACAO_CONTRATO,
+                          SIGLA_PERFIL_VENDEDOR, SIGLA_PERFIL_COMPRADOR, SUBMERCADO_ENTREGA.
+    """
+    if arquivo_csv is None:
+        return pd.DataFrame()
+    try:
+        df = pd.read_csv(arquivo_csv, sep='\t', encoding='latin1', skiprows=1, dtype=str)
+        df.columns = df.columns.str.strip()
+
+        for col in ['CODIGO_CONTRATO', 'SITUACAO_CONTRATO',
+                    'SIGLA_PERFIL_VENDEDOR', 'SIGLA_PERFIL_COMPRADOR', 'SUBMERCADO_ENTREGA']:
+            if col in df.columns:
+                df[col] = df[col].str.strip()
+
+        # Chave de comparação = Vendedor + Comprador + Submercado
+        df['_CHAVE'] = (
+            df['SIGLA_PERFIL_VENDEDOR'].fillna('')
+            + df['SIGLA_PERFIL_COMPRADOR'].fillna('')
+            + df['SUBMERCADO_ENTREGA'].fillna('')
+        )
+        return df
+    except Exception as e:
+        st.warning(f"Erro ao carregar CSV CCEE: {e}")
+        return pd.DataFrame()
+
+
+def buscar_contrato_cliqccee(codigo_busca, chave_esperada, df_ccee):
+    """
+    Procura codigo_busca na coluna CODIGO_CONTRATO do df_ccee.
+    Retorna:
+      - codigo_busca  → se encontrado, chave bate E situação != 'Rascunho'
+      - 'Verificar'   → encontrado mas chave não bate
+      - '-'           → não encontrado, situação = Rascunho, ou entrada inválida
+    """
+    if df_ccee.empty or pd.isna(codigo_busca) or str(codigo_busca).strip() in ('', '-', 'None'):
+        return '-'
+    try:
+        codigo_busca = str(codigo_busca).strip()
+        encontrado = df_ccee[df_ccee['CODIGO_CONTRATO'] == codigo_busca]
+        if encontrado.empty:
+            return '-'
+        row = encontrado.iloc[0]
+        situacao = str(row.get('SITUACAO_CONTRATO', '')).strip().lower()
+        if situacao == 'rascunho':
+            return '-'
+        if row['_CHAVE'] == chave_esperada:
+            return codigo_busca
+        return 'Verificar'
+    except Exception:
+        return '-'
+
+
+def resolver_contrato_cliqccee(boleta, codigo_mes_anterior, codigo_paradigma,
+                                chave, df_matrix, df_bismut, df_acr, is_bismut):
+    """
+    Replica a fórmula Excel da coluna 'Contrato CliqCCEE':
+
+    1. Se a boleta está em BOLETAS_ACR → usa df_acr (ccear_q)
+    2. Se é Bismut → usa df_bismut
+    3. Caso contrário → usa df_matrix (cceal_firme / cbr)
+
+    Em qualquer caso:
+      - Tenta primeiro pelo 'Contrato CliqCCEE mês anterior' (col S)
+      - Se retornar 'Verificar', faz fallback pelo 'CliqCCEE Paradigma' (col O)
+    """
+    try:
+        boleta_int = int(float(str(boleta).strip()))
+    except (ValueError, TypeError):
+        boleta_int = -1
+
+    if boleta_int in BOLETAS_ACR:
+        df = df_acr
+    elif is_bismut:
+        df = df_bismut
+    else:
+        df = df_matrix
+
+    resultado = buscar_contrato_cliqccee(codigo_mes_anterior, chave, df)
+    if resultado == 'Verificar':
+        resultado = buscar_contrato_cliqccee(codigo_paradigma, chave, df)
+
+    return resultado
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Book Energia", layout="wide")
 
 pagina = st.sidebar.radio(
@@ -52,6 +148,30 @@ zip_bismut = st.file_uploader(
     type=["zip"]
 )
 
+# Upload dos CSVs da CCEE
+st.markdown("---")
+st.markdown("### CSVs CCEE (para coluna Contrato CliqCCEE)")
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    csv_matrix = st.file_uploader(
+        "CSV CCEE Matrix (cceal_firme / cbr)",
+        type=["csv"],
+        help="Arquivo cceal_firme ou cbr_mercado_proprio da Matrix"
+    )
+with col2:
+    csv_bismut = st.file_uploader(
+        "CSV CCEE Bismut (cceal_firme)",
+        type=["csv"],
+        help="Arquivo cceal_firme da Bismut"
+    )
+with col3:
+    csv_acr = st.file_uploader(
+        "CSV CCEE ACR (ccear_q)",
+        type=["csv"],
+        help="Arquivo ccear_q — usado pelas boletas ACR da lista fixa"
+    )
+
 if arquivo is not None:
 
     try:
@@ -59,31 +179,22 @@ if arquivo is not None:
         df = pd.read_excel(arquivo, header=8)
 
         horas_mes = {
-            1: 744,
-            2: 672,
-            3: 744,
-            4: 720,
-            5: 744,
-            6: 720,
-            7: 744,
-            8: 744,
-            9: 720,
-            10: 744,
-            11: 720,
-            12: 744
+            1: 744, 2: 672, 3: 744, 4: 720, 5: 744, 6: 720,
+            7: 744, 8: 744, 9: 720, 10: 744, 11: 720, 12: 744
         }
 
         if arquivo_mes_anterior is not None:
             df_mes_anterior = pd.read_excel(arquivo_mes_anterior)
-
             mapa_mes_anterior = dict(
-                zip(
-                    df_mes_anterior["BOLETA"],
-                    df_mes_anterior["Codigo_CCEE"]
-                )
+                zip(df_mes_anterior["BOLETA"], df_mes_anterior["Codigo_CCEE"])
             )
         else:
             mapa_mes_anterior = {}
+
+        # Carrega os três CSVs CCEE
+        df_ccee_matrix = carregar_csv_ccee(csv_matrix)
+        df_ccee_bismut = carregar_csv_ccee(csv_bismut)
+        df_ccee_acr    = carregar_csv_ccee(csv_acr)
 
         mapa_energia = {
             "Incentivada 50%": "Incentivada-I5",
@@ -112,62 +223,84 @@ if arquivo is not None:
         df["Suprimento_termino"] = pd.to_datetime(df["Suprimento_termino"], errors="coerce")
 
         dias_periodo = (df["Suprimento_termino"] - df["Suprimento_inicio"]).dt.days + 1
-
         cp_lp = dias_periodo.apply(lambda x: "CP" if x <= 31 else "LP")
-
         horas_por_linha = df["Mes"].map(horas_mes)
-
-        volume_mwm = (
-            df["QuantAtualizada"] / horas_por_linha
-        ).round(6)
+        volume_mwm = (df["QuantAtualizada"] / horas_por_linha).round(6)
 
         base = pd.DataFrame()
 
-        base["BOLETA"] = df["Codigo_WBC"]
-        base["Operação"] = df["Movimentacao"]
-        base["Tipo de Energia"] = df["Fonte_Contrato"].map(mapa_energia).fillna(df["Fonte_Contrato"])
-        base["Parte"] = df["Parte_razao_social"]
-        base["Contraparte"] = df["Sigla_CCEE_Contraparte"]
-        base["CP/LP"] = cp_lp
-        base["CNPJ CONTRAPARTE"] = df["Contraparte_CNPJ"].apply(formatar_cnpj)
-        base["Submercado"] = df["Submercado"].astype(str).str.strip().map(mapa_submercado).fillna(df["Submercado"])
-        base["Volume (MWh)"] = df["QuantAtualizada"].round(3)
-        base["Volume MWm"] = volume_mwm.round(6)
-        base["CliqCCEE Paradigma"] = df["Codigo_CCEE"]
-        base["Modulação WBC"] = df["Tipo_de_modulacao"].astype(str).str.strip().map(mapa_modulacao).fillna(df["Tipo_de_modulacao"])
-        base["Modulação Mínima"] = df["FlexLimite_modulacaoMin"].fillna("-")
-        base["Modulação Máxima"] = df["FlexLimite_modulacaoMax"].fillna("-")
+        base["BOLETA"]                       = df["Codigo_WBC"]
+        base["Operação"]                     = df["Movimentacao"]
+        base["Tipo de Energia"]              = df["Fonte_Contrato"].map(mapa_energia).fillna(df["Fonte_Contrato"])
+        base["Parte"]                        = df["Parte_razao_social"]
+        base["Contraparte"]                  = df["Sigla_CCEE_Contraparte"]
+        base["CP/LP"]                        = cp_lp
+        base["CNPJ CONTRAPARTE"]             = df["Contraparte_CNPJ"].apply(formatar_cnpj)
+        base["Submercado"]                   = df["Submercado"].astype(str).str.strip().map(mapa_submercado).fillna(df["Submercado"])
+        base["Volume (MWh)"]                 = df["QuantAtualizada"].round(3)
+        base["Volume MWm"]                   = volume_mwm.round(6)
+        base["CliqCCEE Paradigma"]           = df["Codigo_CCEE"]
+        base["Modulação WBC"]                = df["Tipo_de_modulacao"].astype(str).str.strip().map(mapa_modulacao).fillna(df["Tipo_de_modulacao"])
+        base["Modulação Mínima"]             = df["FlexLimite_modulacaoMin"].fillna("-")
+        base["Modulação Máxima"]             = df["FlexLimite_modulacaoMax"].fillna("-")
+        base["Contrato CliqCCEE mês anterior"] = base["BOLETA"].map(mapa_mes_anterior).fillna("-")
+        base["Vendedor"]                     = df["Sigla_CCEE_vendedor"]
+        base["Comprador"]                    = df["Sigla_CCEE_comprador"]
 
-        base["Contrato CliqCCEE mês anterior"] = (
-            base["BOLETA"]
-            .map(mapa_mes_anterior)
-            .fillna("-")
+        # ── Coluna "Contrato CliqCCEE" ─────────────────────────────────────────
+        BISMUT_NOME = "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A."
+
+        csvs_disponiveis = (
+            not df_ccee_matrix.empty
+            or not df_ccee_bismut.empty
+            or not df_ccee_acr.empty
         )
 
-        
-        # V15 - Contrato CliqCCEE
-        base["Contrato CliqCCEE"] = base["Contrato CliqCCEE mês anterior"]
+        if csvs_disponiveis:
+            def calcular_contrato_cliqccee(row):
+                is_bismut = str(row["Parte"]).strip().upper() == BISMUT_NOME.upper()
+                chave = (
+                    str(row["Vendedor"]).strip()
+                    + str(row["Comprador"]).strip()
+                    + str(row["Submercado"]).strip()
+                )
+                return resolver_contrato_cliqccee(
+                    boleta                = row["BOLETA"],
+                    codigo_mes_anterior   = row["Contrato CliqCCEE mês anterior"],
+                    codigo_paradigma      = row["CliqCCEE Paradigma"],
+                    chave                 = chave,
+                    df_matrix             = df_ccee_matrix,
+                    df_bismut             = df_ccee_bismut,
+                    df_acr                = df_ccee_acr,
+                    is_bismut             = is_bismut,
+                )
 
-base["Vendedor"] = df["Sigla_CCEE_vendedor"]
-        base["Comprador"] = df["Sigla_CCEE_comprador"]
+            base["Contrato CliqCCEE"] = base.apply(calcular_contrato_cliqccee, axis=1)
+        else:
+            base["Contrato CliqCCEE"] = "-"
+            if pagina == "Base Conferência":
+                st.info(
+                    "ℹ️ Faça upload dos CSVs CCEE acima para preencher a coluna 'Contrato CliqCCEE'."
+                )
+        # ───────────────────────────────────────────────────────────────────────
 
         compras_net = (
             base[base["Operação"] == "Compra"]
-            .groupby(["Parte","Contraparte","Submercado","Tipo de Energia"], as_index=False)["Volume (MWh)"]
+            .groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume (MWh)"]
             .sum()
-            .rename(columns={"Volume (MWh)":"Compra (MWh)"})
+            .rename(columns={"Volume (MWh)": "Compra (MWh)"})
         )
 
         vendas_net = (
             base[base["Operação"] == "Venda"]
-            .groupby(["Parte","Contraparte","Submercado","Tipo de Energia"], as_index=False)["Volume (MWh)"]
+            .groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume (MWh)"]
             .sum()
-            .rename(columns={"Volume (MWh)":"Venda (MWh)"})
+            .rename(columns={"Volume (MWh)": "Venda (MWh)"})
         )
 
         nets = compras_net.merge(
             vendas_net,
-            on=["Parte","Contraparte","Submercado","Tipo de Energia"],
+            on=["Parte", "Contraparte", "Submercado", "Tipo de Energia"],
             how="inner"
         )
 
@@ -177,7 +310,7 @@ base["Vendedor"] = df["Sigla_CCEE_vendedor"]
 
             base_exibicao = base.copy()
             base_exibicao["Volume (MWh)"] = base_exibicao["Volume (MWh)"].map(lambda x: f"{x:.3f}")
-            base_exibicao["Volume MWm"] = base_exibicao["Volume MWm"].map(lambda x: f"{x:.6f}")
+            base_exibicao["Volume MWm"]   = base_exibicao["Volume MWm"].map(lambda x: f"{x:.6f}")
 
             st.dataframe(base_exibicao, use_container_width=True, hide_index=True)
 
@@ -191,7 +324,7 @@ base["Vendedor"] = df["Sigla_CCEE_vendedor"]
                 file_name="Base_Conferencia.xlsx"
             )
 
-        else:
+        elif pagina == "Encontro Energético":
 
             st.subheader("🤝 Encontro Energético")
 
@@ -214,29 +347,27 @@ base["Vendedor"] = df["Sigla_CCEE_vendedor"]
             ]
 
             compras_calc = encontro[encontro["Operação"] == "Compra"]
-            vendas_calc = encontro[encontro["Operação"] == "Venda"]
+            vendas_calc  = encontro[encontro["Operação"] == "Venda"]
 
             compras = compras_calc.copy()
-            vendas = vendas_calc.copy()
+            vendas  = vendas_calc.copy()
 
             compras["Volume (MWh)"] = compras["Volume (MWh)"].map(lambda x: f"{x:.3f}")
-            compras["Volume MWm"] = compras["Volume MWm"].map(lambda x: f"{x:.6f}")
-
-            vendas["Volume (MWh)"] = vendas["Volume (MWh)"].map(lambda x: f"{x:.3f}")
-            vendas["Volume MWm"] = vendas["Volume MWm"].map(lambda x: f"{x:.6f}")
+            compras["Volume MWm"]   = compras["Volume MWm"].map(lambda x: f"{x:.6f}")
+            vendas["Volume (MWh)"]  = vendas["Volume (MWh)"].map(lambda x: f"{x:.3f}")
+            vendas["Volume MWm"]    = vendas["Volume MWm"].map(lambda x: f"{x:.6f}")
 
             st.markdown("## COMPRAS")
-            st.dataframe(compras[["BOLETA","Volume (MWh)","Volume MWm"]], hide_index=True, use_container_width=True)
+            st.dataframe(compras[["BOLETA", "Volume (MWh)", "Volume MWm"]], hide_index=True, use_container_width=True)
 
             st.markdown("## VENDAS")
-            st.dataframe(vendas[["BOLETA","Volume (MWh)","Volume MWm"]], hide_index=True, use_container_width=True)
+            st.dataframe(vendas[["BOLETA", "Volume (MWh)", "Volume MWm"]], hide_index=True, use_container_width=True)
 
-            total_compra = compras_calc["Volume (MWh)"].sum()
-            total_venda = vendas_calc["Volume (MWh)"].sum()
-            saldo = total_compra - total_venda
-
+            total_compra     = compras_calc["Volume (MWh)"].sum()
+            total_venda      = vendas_calc["Volume (MWh)"].sum()
+            saldo            = total_compra - total_venda
             total_compra_mwm = compras_calc["Volume MWm"].sum()
-            total_venda_mwm = vendas_calc["Volume MWm"].sum()
+            total_venda_mwm  = vendas_calc["Volume MWm"].sum()
 
             mes_referencia = int(df["Mes"].dropna().iloc[0])
             saldo_mwm = saldo / horas_mes.get(mes_referencia, 744)
@@ -244,19 +375,17 @@ base["Vendedor"] = df["Sigla_CCEE_vendedor"]
             ajuste = contraparte if saldo > 0 else parte if saldo < 0 else "ZERADO"
 
             resumo = pd.DataFrame({
-                "Tipo":["Compras","Vendas","Saldo"],
-                "MWh":[f"{total_compra:.3f}", f"{total_venda:.3f}", f"{saldo:.3f}"],
-                "MWm":[f"{total_compra_mwm:.6f}", f"{total_venda_mwm:.6f}", f"{saldo_mwm:.6f}"]
+                "Tipo": ["Compras", "Vendas", "Saldo"],
+                "MWh":  [f"{total_compra:.3f}", f"{total_venda:.3f}", f"{saldo:.3f}"],
+                "MWm":  [f"{total_compra_mwm:.6f}", f"{total_venda_mwm:.6f}", f"{saldo_mwm:.6f}"]
             })
 
             st.markdown("## RESUMO")
             st.dataframe(resumo, hide_index=True, use_container_width=True)
 
             c1, c2 = st.columns(2)
-
             with c1:
                 st.metric("Quem Ajusta", ajuste)
-
             with c2:
                 st.metric("Volume a Ajustar (MWm)", f"{abs(saldo_mwm):.6f}")
 
