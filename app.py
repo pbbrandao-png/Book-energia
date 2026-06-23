@@ -345,7 +345,7 @@ if arquivo is not None:
             col_flag1, col_flag2 = st.columns(2)
             with col_flag1:
                 flag_mesmo_titular = st.toggle(
-                    "🟡 Destacar Parte = Contraparte (mesmo titular)",
+                    "🟡 Ocultar IntraPortifólio",
                     value=True
                 )
             with col_flag2:
