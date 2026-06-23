@@ -234,6 +234,7 @@ if arquivo is not None:
         base["Operação"]                       = df["Movimentacao"]
         base["Tipo de Energia"]                = df["Fonte_Contrato"].map(mapa_energia).fillna(df["Fonte_Contrato"])
         base["Parte"]                          = df["Parte_razao_social"]
+        base["Contraparte Razão Social"]       = df["Contraparte_razao_social"]
         base["Contraparte"]                    = df["Sigla_CCEE_Contraparte"]
         base["CP/LP"]                          = cp_lp
         base["CNPJ CONTRAPARTE"]               = df["Contraparte_CNPJ"].apply(formatar_cnpj)
