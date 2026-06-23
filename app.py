@@ -64,6 +64,9 @@ def extrair_csvs_zip(zip_file):
                     continue
                 if not nome_lower.endswith('.csv'):
                     continue
+                # arquivos _parcela não têm as colunas necessárias
+                if 'parcela' in nome_lower:
+                    continue
                 dados = zf.read(nome)
                 if 'ccear_q' in nome_lower:
                     result['ccear_q'] = ler_csv_ccee(dados)
