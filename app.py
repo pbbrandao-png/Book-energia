@@ -1,11 +1,12 @@
 # APP_BOOK_ENERGIA_V16
-# Coluna "Contrato CliqCCEE" via lookup nos CSVs da CCEE
-# Boletas ACR (lista fixa) → buscam no CSV ccear_q
-# Matrix (não-Bismut, não-ACR) → buscam no CSV cceal/cbr Matrix
-# Bismut → buscam no CSV cceal Bismut
+# Coluna "Contrato CliqCCEE" via CSVs extraídos dos ZIPs Matrix e Bismut
+# Boletas ACR (lista fixa) → ccear_q (extraído do ZIP Matrix)
+# Matrix (não-Bismut, não-ACR) → cceal_firme + cbr_mercado_proprio (ZIP Matrix)
+# Bismut → cceal_firme (ZIP Bismut)
 
 import streamlit as st
 import pandas as pd
+import zipfile
 from io import BytesIO
 
 # Boletas que devem buscar no CSV ccear_q em vez do cceal_firme
@@ -29,44 +30,64 @@ def formatar_cnpj(valor):
     )
 
 
-def carregar_csv_ccee(arquivo_csv):
+def ler_csv_ccee(bytes_csv):
+    """Lê bytes de um CSV CCEE (sep=TAB, encoding=latin1, pula linha sep=;)."""
+    df = pd.read_csv(BytesIO(bytes_csv), sep='\t', encoding='latin1', skiprows=1, dtype=str)
+    df.columns = df.columns.str.strip()
+    for col in ['CODIGO_CONTRATO', 'SITUACAO_CONTRATO',
+                'SIGLA_PERFIL_VENDEDOR', 'SIGLA_PERFIL_COMPRADOR', 'SUBMERCADO_ENTREGA']:
+        if col in df.columns:
+            df[col] = df[col].str.strip()
+    df['_CHAVE'] = (
+        df['SIGLA_PERFIL_VENDEDOR'].fillna('')
+        + df['SIGLA_PERFIL_COMPRADOR'].fillna('')
+        + df['SUBMERCADO_ENTREGA'].fillna('')
+    )
+    return df
+
+
+def extrair_csvs_zip(zip_file):
     """
-    Carrega um CSV da CCEE (cceal_firme, cbr_mercado_proprio ou ccear_q)
-    e devolve um DataFrame pronto para lookup.
-    Estrutura esperada: sep=TAB, encoding=latin1, 1 linha de cabeçalho a pular (sep=;).
-    Colunas obrigatórias: CODIGO_CONTRATO, SITUACAO_CONTRATO,
-                          SIGLA_PERFIL_VENDEDOR, SIGLA_PERFIL_COMPRADOR, SUBMERCADO_ENTREGA.
+    Extrai do ZIP os DataFrames CCEE relevantes.
+    Retorna dict com chaves: 'cceal', 'cbr', 'ccear_q'
+    (cada um é um DataFrame ou None se não encontrado no ZIP).
     """
-    if arquivo_csv is None:
-        return pd.DataFrame()
+    result = {'cceal': None, 'cbr': None, 'ccear_q': None}
+    if zip_file is None:
+        return result
     try:
-        df = pd.read_csv(arquivo_csv, sep='\t', encoding='latin1', skiprows=1, dtype=str)
-        df.columns = df.columns.str.strip()
-
-        for col in ['CODIGO_CONTRATO', 'SITUACAO_CONTRATO',
-                    'SIGLA_PERFIL_VENDEDOR', 'SIGLA_PERFIL_COMPRADOR', 'SUBMERCADO_ENTREGA']:
-            if col in df.columns:
-                df[col] = df[col].str.strip()
-
-        # Chave de comparação = Vendedor + Comprador + Submercado
-        df['_CHAVE'] = (
-            df['SIGLA_PERFIL_VENDEDOR'].fillna('')
-            + df['SIGLA_PERFIL_COMPRADOR'].fillna('')
-            + df['SUBMERCADO_ENTREGA'].fillna('')
-        )
-        return df
+        with zipfile.ZipFile(zip_file) as zf:
+            for nome in zf.namelist():
+                nome_lower = nome.lower()
+                # ignora diretórios
+                if nome_lower.endswith('/'):
+                    continue
+                if not nome_lower.endswith('.csv'):
+                    continue
+                dados = zf.read(nome)
+                if 'ccear_q' in nome_lower:
+                    result['ccear_q'] = ler_csv_ccee(dados)
+                elif 'cbr_mercado_proprio' in nome_lower or 'cbr_mercado' in nome_lower:
+                    result['cbr'] = ler_csv_ccee(dados)
+                elif 'cceal_firme' in nome_lower or 'cceal' in nome_lower:
+                    result['cceal'] = ler_csv_ccee(dados)
     except Exception as e:
-        st.warning(f"Erro ao carregar CSV CCEE: {e}")
+        st.warning(f"Erro ao ler ZIP: {e}")
+    return result
+
+
+def combinar_dfs(lista):
+    """Concatena DataFrames não-nulos da lista."""
+    validos = [df for df in lista if df is not None and not df.empty]
+    if not validos:
         return pd.DataFrame()
+    return pd.concat(validos, ignore_index=True)
 
 
 def buscar_contrato_cliqccee(codigo_busca, chave_esperada, df_ccee):
     """
     Procura codigo_busca na coluna CODIGO_CONTRATO do df_ccee.
-    Retorna:
-      - codigo_busca  → se encontrado, chave bate E situação != 'Rascunho'
-      - 'Verificar'   → encontrado mas chave não bate
-      - '-'           → não encontrado, situação = Rascunho, ou entrada inválida
+    Retorna o código se bater, 'Verificar' se a chave não conferir, '-' se não achar.
     """
     if df_ccee.empty or pd.isna(codigo_busca) or str(codigo_busca).strip() in ('', '-', 'None'):
         return '-'
@@ -89,15 +110,11 @@ def buscar_contrato_cliqccee(codigo_busca, chave_esperada, df_ccee):
 def resolver_contrato_cliqccee(boleta, codigo_mes_anterior, codigo_paradigma,
                                 chave, df_matrix, df_bismut, df_acr, is_bismut):
     """
-    Replica a fórmula Excel da coluna 'Contrato CliqCCEE':
-
-    1. Se a boleta está em BOLETAS_ACR → usa df_acr (ccear_q)
-    2. Se é Bismut → usa df_bismut
-    3. Caso contrário → usa df_matrix (cceal_firme / cbr)
-
-    Em qualquer caso:
-      - Tenta primeiro pelo 'Contrato CliqCCEE mês anterior' (col S)
-      - Se retornar 'Verificar', faz fallback pelo 'CliqCCEE Paradigma' (col O)
+    Roteamento por tipo de boleta/parte:
+      - Boleta ACR    → df_acr  (ccear_q do ZIP Matrix)
+      - Bismut        → df_bismut (cceal do ZIP Bismut)
+      - Demais        → df_matrix (cceal + cbr do ZIP Matrix)
+    Tenta mês anterior primeiro; se 'Verificar', faz fallback pelo paradigma.
     """
     try:
         boleta_int = int(float(str(boleta).strip()))
@@ -114,7 +131,6 @@ def resolver_contrato_cliqccee(boleta, codigo_mes_anterior, codigo_paradigma,
     resultado = buscar_contrato_cliqccee(codigo_mes_anterior, chave, df)
     if resultado == 'Verificar':
         resultado = buscar_contrato_cliqccee(codigo_paradigma, chave, df)
-
     return resultado
 
 
@@ -148,30 +164,6 @@ zip_bismut = st.file_uploader(
     type=["zip"]
 )
 
-# Upload dos CSVs da CCEE
-st.markdown("---")
-st.markdown("### CSVs CCEE (para coluna Contrato CliqCCEE)")
-
-col1, col2, col3 = st.columns(3)
-with col1:
-    csv_matrix = st.file_uploader(
-        "CSV CCEE Matrix (cceal_firme / cbr)",
-        type=["csv"],
-        help="Arquivo cceal_firme ou cbr_mercado_proprio da Matrix"
-    )
-with col2:
-    csv_bismut = st.file_uploader(
-        "CSV CCEE Bismut (cceal_firme)",
-        type=["csv"],
-        help="Arquivo cceal_firme da Bismut"
-    )
-with col3:
-    csv_acr = st.file_uploader(
-        "CSV CCEE ACR (ccear_q)",
-        type=["csv"],
-        help="Arquivo ccear_q — usado pelas boletas ACR da lista fixa"
-    )
-
 if arquivo is not None:
 
     try:
@@ -191,10 +183,16 @@ if arquivo is not None:
         else:
             mapa_mes_anterior = {}
 
-        # Carrega os três CSVs CCEE
-        df_ccee_matrix = carregar_csv_ccee(csv_matrix)
-        df_ccee_bismut = carregar_csv_ccee(csv_bismut)
-        df_ccee_acr    = carregar_csv_ccee(csv_acr)
+        # Extrai CSVs dos ZIPs
+        csvs_matrix = extrair_csvs_zip(zip_matrix)
+        csvs_bismut = extrair_csvs_zip(zip_bismut)
+
+        # DataFrame Matrix: cceal_firme + cbr_mercado_proprio do ZIP Matrix
+        df_ccee_matrix = combinar_dfs([csvs_matrix['cceal'], csvs_matrix['cbr']])
+        # DataFrame Bismut: cceal_firme do ZIP Bismut
+        df_ccee_bismut = combinar_dfs([csvs_bismut['cceal']])
+        # DataFrame ACR: ccear_q do ZIP Matrix
+        df_ccee_acr = combinar_dfs([csvs_matrix['ccear_q']])
 
         mapa_energia = {
             "Incentivada 50%": "Incentivada-I5",
@@ -229,32 +227,32 @@ if arquivo is not None:
 
         base = pd.DataFrame()
 
-        base["BOLETA"]                       = df["Codigo_WBC"]
-        base["Operação"]                     = df["Movimentacao"]
-        base["Tipo de Energia"]              = df["Fonte_Contrato"].map(mapa_energia).fillna(df["Fonte_Contrato"])
-        base["Parte"]                        = df["Parte_razao_social"]
-        base["Contraparte"]                  = df["Sigla_CCEE_Contraparte"]
-        base["CP/LP"]                        = cp_lp
-        base["CNPJ CONTRAPARTE"]             = df["Contraparte_CNPJ"].apply(formatar_cnpj)
-        base["Submercado"]                   = df["Submercado"].astype(str).str.strip().map(mapa_submercado).fillna(df["Submercado"])
-        base["Volume (MWh)"]                 = df["QuantAtualizada"].round(3)
-        base["Volume MWm"]                   = volume_mwm.round(6)
-        base["CliqCCEE Paradigma"]           = df["Codigo_CCEE"]
-        base["Modulação WBC"]                = df["Tipo_de_modulacao"].astype(str).str.strip().map(mapa_modulacao).fillna(df["Tipo_de_modulacao"])
-        base["Modulação Mínima"]             = df["FlexLimite_modulacaoMin"].fillna("-")
-        base["Modulação Máxima"]             = df["FlexLimite_modulacaoMax"].fillna("-")
+        base["BOLETA"]                         = df["Codigo_WBC"]
+        base["Operação"]                       = df["Movimentacao"]
+        base["Tipo de Energia"]                = df["Fonte_Contrato"].map(mapa_energia).fillna(df["Fonte_Contrato"])
+        base["Parte"]                          = df["Parte_razao_social"]
+        base["Contraparte"]                    = df["Sigla_CCEE_Contraparte"]
+        base["CP/LP"]                          = cp_lp
+        base["CNPJ CONTRAPARTE"]               = df["Contraparte_CNPJ"].apply(formatar_cnpj)
+        base["Submercado"]                     = df["Submercado"].astype(str).str.strip().map(mapa_submercado).fillna(df["Submercado"])
+        base["Volume (MWh)"]                   = df["QuantAtualizada"].round(3)
+        base["Volume MWm"]                     = volume_mwm.round(6)
+        base["CliqCCEE Paradigma"]             = df["Codigo_CCEE"]
+        base["Modulação WBC"]                  = df["Tipo_de_modulacao"].astype(str).str.strip().map(mapa_modulacao).fillna(df["Tipo_de_modulacao"])
+        base["Modulação Mínima"]               = df["FlexLimite_modulacaoMin"].fillna("-")
+        base["Modulação Máxima"]               = df["FlexLimite_modulacaoMax"].fillna("-")
         base["Contrato CliqCCEE mês anterior"] = base["BOLETA"].map(mapa_mes_anterior).fillna("-")
-        base["Vendedor"]                     = df["Sigla_CCEE_vendedor"]
-        base["Comprador"]                    = df["Sigla_CCEE_comprador"]
+        base["Vendedor"]                       = df["Sigla_CCEE_vendedor"]
+        base["Comprador"]                      = df["Sigla_CCEE_comprador"]
 
         # ── Coluna "Contrato CliqCCEE" ─────────────────────────────────────────
         BISMUT_NOME = "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A."
 
-        csvs_disponiveis = (
-            not df_ccee_matrix.empty
-            or not df_ccee_bismut.empty
-            or not df_ccee_acr.empty
-        )
+        csvs_disponiveis = any([
+            not df_ccee_matrix.empty,
+            not df_ccee_bismut.empty,
+            not df_ccee_acr.empty,
+        ])
 
         if csvs_disponiveis:
             def calcular_contrato_cliqccee(row):
@@ -265,23 +263,20 @@ if arquivo is not None:
                     + str(row["Submercado"]).strip()
                 )
                 return resolver_contrato_cliqccee(
-                    boleta                = row["BOLETA"],
-                    codigo_mes_anterior   = row["Contrato CliqCCEE mês anterior"],
-                    codigo_paradigma      = row["CliqCCEE Paradigma"],
-                    chave                 = chave,
-                    df_matrix             = df_ccee_matrix,
-                    df_bismut             = df_ccee_bismut,
-                    df_acr                = df_ccee_acr,
-                    is_bismut             = is_bismut,
+                    boleta              = row["BOLETA"],
+                    codigo_mes_anterior = row["Contrato CliqCCEE mês anterior"],
+                    codigo_paradigma    = row["CliqCCEE Paradigma"],
+                    chave               = chave,
+                    df_matrix           = df_ccee_matrix,
+                    df_bismut           = df_ccee_bismut,
+                    df_acr              = df_ccee_acr,
+                    is_bismut           = is_bismut,
                 )
-
             base["Contrato CliqCCEE"] = base.apply(calcular_contrato_cliqccee, axis=1)
         else:
             base["Contrato CliqCCEE"] = "-"
             if pagina == "Base Conferência":
-                st.info(
-                    "ℹ️ Faça upload dos CSVs CCEE acima para preencher a coluna 'Contrato CliqCCEE'."
-                )
+                st.info("ℹ️ Faça upload dos ZIPs para preencher a coluna 'Contrato CliqCCEE'.")
         # ───────────────────────────────────────────────────────────────────────
 
         compras_net = (
