@@ -357,14 +357,74 @@ if arquivo is not None:
 
             base_exibicao = base.copy()
 
-            # Aplica filtro de zerados antes de formatar
+            st.markdown("### 🔎 Filtros")
+
+            col_f1, col_f2, col_f3 = st.columns(3)
+
+            with col_f1:
+                filtro_operacao = st.multiselect(
+                    "Operação",
+                    options=sorted(base_exibicao["Operação"].dropna().unique()),
+                    default=[]
+                )
+
+            with col_f2:
+                filtro_status = st.multiselect(
+                    "Contrato CliqCCEE",
+                    options=sorted(base_exibicao["Contrato CliqCCEE"].dropna().astype(str).unique()),
+                    default=[]
+                )
+
+            with col_f3:
+                filtro_submercado = st.multiselect(
+                    "Submercado",
+                    options=sorted(base_exibicao["Submercado"].dropna().astype(str).unique()),
+                    default=[]
+                )
+
+            col_f4, col_f5, col_f6 = st.columns(3)
+
+            with col_f4:
+                filtro_parte = st.text_input("Parte")
+
+            with col_f5:
+                filtro_contraparte = st.text_input("Contraparte")
+
+            with col_f6:
+                filtro_boleta = st.text_input("Boleta")
+
+            if filtro_operacao:
+                base_exibicao = base_exibicao[base_exibicao["Operação"].isin(filtro_operacao)]
+
+            if filtro_status:
+                base_exibicao = base_exibicao[base_exibicao["Contrato CliqCCEE"].astype(str).isin(filtro_status)]
+
+            if filtro_submercado:
+                base_exibicao = base_exibicao[base_exibicao["Submercado"].astype(str).isin(filtro_submercado)]
+
+            if filtro_parte:
+                base_exibicao = base_exibicao[
+                    base_exibicao["Parte"].astype(str).str.contains(filtro_parte, case=False, na=False)
+                ]
+
+            if filtro_contraparte:
+                base_exibicao = base_exibicao[
+                    base_exibicao["Contraparte"].astype(str).str.contains(filtro_contraparte, case=False, na=False)
+                ]
+
+            if filtro_boleta:
+                base_exibicao = base_exibicao[
+                    base_exibicao["BOLETA"].astype(str).str.contains(filtro_boleta, case=False, na=False)
+                ]
+
             if flag_ocultar_zerados:
                 base_exibicao = base_exibicao[base_exibicao["Volume (MWh)"] != 0.0]
 
             base_exibicao["Volume (MWh)"] = base_exibicao["Volume (MWh)"].map(lambda x: f"{x:.3f}")
             base_exibicao["Volume MWm"]   = base_exibicao["Volume MWm"].map(lambda x: f"{x:.6f}")
 
-            # Aplica highlight amarelo quando flag ativa
+            st.caption(f"{len(base_exibicao):,} registros encontrados")
+
             if flag_mesmo_titular:
                 styled = base_exibicao.style.apply(highlight_mesmo_titular, axis=1)
                 st.dataframe(styled, use_container_width=True, hide_index=True)
