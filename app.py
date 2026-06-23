@@ -10,12 +10,15 @@ st.set_page_config(page_title="Validador de Contratos CCEE", layout="wide")
 st.title("Validador de Contratos CCEE")
 st.write("Versão atualizada com filtros nativos nas colunas e contadores agregados.")
 
-# --- Upload dos Arquivos ---
+# --- Upload dos Arquivos (Fiel ao seu modelo original) ---
 uploaded_base = st.file_uploader("Suba o Relatório Base (RelPers_858)", type=["xlsx", "csv"])
 uploaded_mes_anterior = st.file_uploader("Suba a planilha do Mês Anterior", type=["xlsx", "csv"])
-uploaded_zips = st.file_uploader("Suba os arquivos ZIP da CCEE (Matrix e Bismut)", type=["zip"], accept_multiple_files=True)
 
-if uploaded_base and uploaded_mes_anterior and uploaded_zips:
+# Uploads separados para Matrix e Bismut conforme sua estrutura original
+uploaded_zip_matrix = st.file_uploader("Suba o arquivo ZIP da CCEE - MATRIX", type=["zip"])
+uploaded_zip_bismut = st.file_uploader("Suba o arquivo ZIP da CCEE - BISMUT", type=["zip"])
+
+if uploaded_base and uploaded_mes_anterior and uploaded_zip_matrix and uploaded_zip_bismut:
     
     # 1. Leitura do Relatório Base
     try:
@@ -40,47 +43,61 @@ if uploaded_base and uploaded_mes_anterior and uploaded_zips:
         st.error(f"Erro ao ler a planilha do mês anterior: {e}")
         st.stop()
 
-    # 3. Processamento dos ZIPs CCEE
+    # 3. Processamento Isolado dos ZIPs da CCEE (Estrutura original restaurada)
     df_ccee_matrix = pd.DataFrame()
     df_ccee_bismut = pd.DataFrame()
     df_ccee_acr = pd.DataFrame()
 
     BOLETAS_ACR = ["134882", "134884", "134886", "134888", "134890", "134892", "134894", "134896", "134898", "134900"]
 
-    for uploaded_zip in uploaded_zips:
-        with zipfile.ZipFile(io.BytesIO(uploaded_zip.read())) as z:
-            for file_name in z.namelist():
-                if "parcela" in file_name.lower() or not file_name.endswith('.csv'):
-                    continue
-                
-                try:
-                    with z.open(file_name) as f:
-                        content = f.read().decode('utf-8', errors='ignore')
-                        # Remove a linha de separador comum da CCEE (sep=)
-                        content_clean = re.sub(r'^sep=.*\n', '', content)
-                        df_tmp = pd.read_csv(io.StringIO(content_clean), sep='\t')
+    # --- PROCESSAMENTO MATRIX ---
+    with zipfile.ZipFile(io.BytesIO(uploaded_zip_matrix.read())) as z:
+        for file_name in z.namelist():
+            if "parcela" in file_name.lower() or not file_name.endswith('.csv'):
+                continue
+            try:
+                with z.open(file_name) as f:
+                    content = f.read().decode('utf-8', errors='ignore')
+                    content_clean = re.sub(r'^sep=.*\n', '', content)
+                    df_tmp = pd.read_csv(io.StringIO(content_clean), sep='\t')
+                    
+                    if df_tmp.empty:
+                        continue
                         
-                        if df_tmp.empty:
-                            continue
-                            
-                        # Padronização de colunas essenciais
-                        if 'CODIGO_CONTRATO' in df_tmp.columns:
-                            df_tmp['CODIGO_CONTRATO'] = df_tmp['CODIGO_CONTRATO'].astype(str).str.strip()
+                    if 'CODIGO_CONTRATO' in df_tmp.columns:
+                        df_tmp['CODIGO_CONTRATO'] = df_tmp['CODIGO_CONTRATO'].astype(str).str.strip()
+                    
+                    if "ccear_q" in file_name.lower():
+                        df_ccee_acr = pd.concat([df_ccee_acr, df_tmp], ignore_index=True)
+                    else:
+                        df_ccee_matrix = pd.concat([df_ccee_matrix, df_tmp], ignore_index=True)
+            except Exception as e:
+                st.warning(f"Aviso ao processar arquivo Matrix {file_name}: {e}")
+
+    # --- PROCESSAMENTO BISMUT ---
+    with zipfile.ZipFile(io.BytesIO(uploaded_zip_bismut.read())) as z:
+        for file_name in z.namelist():
+            if "parcela" in file_name.lower() or not file_name.endswith('.csv'):
+                continue
+            try:
+                with z.open(file_name) as f:
+                    content = f.read().decode('utf-8', errors='ignore')
+                    content_clean = re.sub(r'^sep=.*\n', '', content)
+                    df_tmp = pd.read_csv(io.StringIO(content_clean), sep='\t')
+                    
+                    if df_tmp.empty:
+                        continue
                         
-                        # Roteamento dos arquivos baseado nos nomes padrões da CCEE
-                        if "ccear_q" in file_name.lower():
-                            df_ccee_acr = pd.concat([df_ccee_acr, df_tmp], ignore_index=True)
-                        elif "124274" in file_name:  # Código identificador Newave Bismut
-                            df_ccee_bismut = pd.concat([df_ccee_bismut, df_tmp], ignore_index=True)
-                        elif "124261" in file_name:  # Código identificador Comercializadora Matrix
-                            df_ccee_matrix = pd.concat([df_ccee_matrix, df_tmp], ignore_index=True)
-                except Exception as e:
-                    st.warning(f"Aviso ao processar {file_name}: {e}")
+                    if 'CODIGO_CONTRATO' in df_tmp.columns:
+                        df_tmp['CODIGO_CONTRATO'] = df_tmp['CODIGO_CONTRATO'].astype(str).str.strip()
+                    
+                    df_ccee_bismut = pd.concat([df_ccee_bismut, df_tmp], ignore_index=True)
+            except Exception as e:
+                st.warning(f"Aviso ao processar arquivo Bismut {file_name}: {e}")
 
     # --- Construção da Estrutura Final ---
     df_final = pd.DataFrame()
     
-    # Mapeamento e extração de colunas da Base
     df_final['BOLETA'] = df_base['Codigo_WBC'].astype(str).str.strip()
     df_final['Operação'] = df_base['Movimentacao'].astype(str).str.strip()
     df_final['Tipo de Energia'] = df_base['Fonte_Contrato'].astype(str).str.strip()
@@ -88,17 +105,15 @@ if uploaded_base and uploaded_mes_anterior and uploaded_zips:
     df_final['Contraparte Razão Social'] = df_base['Contraparte_razao_social'].astype(str).str.strip()
     df_final['CliqCCEE Paradigma'] = df_base['Codigo_CCEE'].astype(str).str.strip()
     
-    # Aplicação da regra de correção de energia na Coluna 3 (Tipo de Energia) caso a Parte seja UFV JACARANDA 1
+    # Regra de correção direcionada para coluna de Tipo de Energia baseada na Parte
     df_final.loc[df_final['Parte'] == "UFV JACARANDA 1", 'Tipo de Energia'] = "Incentivada-I5"
 
-    # Preenche coluna de histórico do mês anterior
     df_final['Contrato CliqCCEE mês anterior'] = df_final['BOLETA'].map(dict_mes_ant).fillna('-')
 
     # --- Lógica de Busca e Validação CCEE ---
     status_list = []
     contrato_ccee_list = []
 
-    # Preparação das chaves de cruzamento CCEE (Retirando espaços extras)
     for df_ccee in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
         if not df_ccee.empty:
             for col in ['SIGLA_PERFIL_VENDEDOR', 'SIGLA_PERFIL_COMPRADOR', 'SUBMERCADO_ENTREGA']:
@@ -112,9 +127,7 @@ if uploaded_base and uploaded_mes_anterior and uploaded_zips:
         status_resolvido = False
         contrato_encontrado = "-"
 
-        # Regra 1: Validação de Boletas Fixas no CCEAR (ACR)
         if boleta in BOLETAS_ACR and not df_ccee_acr.empty:
-            # Filtra correspondência aproximada ou direta
             match = df_ccee_acr[df_ccee_acr['CODIGO_CONTRATO'] == cliq_paradigma]
             if not match.empty:
                 contrato_encontrado = match.iloc[0]['CODIGO_CONTRATO']
@@ -122,7 +135,7 @@ if uploaded_base and uploaded_mes_anterior and uploaded_zips:
                 contrato_ccee_list.append(contrato_encontrado)
                 continue
 
-        # Seleção do lote da CCEE com base na comercializadora/parte
+        # Roteamento original mantido estritamente por Parte
         if parte == "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A.":
             df_trabalho = df_ccee_bismut
         else:
@@ -133,7 +146,6 @@ if uploaded_base and uploaded_mes_anterior and uploaded_zips:
             contrato_ccee_list.append("-")
             continue
 
-        # Regra 2: Cruzamento por código direto (Paradigma ou Mês Anterior)
         for alvo in [cliq_paradigma, row['Contrato CliqCCEE mês anterior']]:
             if alvo and alvo != '-':
                 match = df_trabalho[df_trabalho['CODIGO_CONTRATO'] == alvo]
@@ -152,7 +164,7 @@ if uploaded_base and uploaded_mes_anterior and uploaded_zips:
     df_final['Contrato CliqCCEE Corrente'] = contrato_ccee_list
     df_final['Status'] = status_list
 
-    # --- Indicadores Visuais (Cards/Balões no topo) ---
+    # --- Indicadores Visuais Pedidos ---
     total_contratos = len(df_final)
     total_compras = len(df_final[df_final['Operação'].str.upper() == 'COMPRA'])
     total_vendas = len(df_final[df_final['Operação'].str.upper() == 'VENDA'])
@@ -164,11 +176,10 @@ if uploaded_base and uploaded_mes_anterior and uploaded_zips:
 
     st.markdown("---")
 
-    # --- Visualização com Filtro Nativo (Opção 2) ---
+    # --- Visualização Interativa por Coluna (Opção 2 solicitada) ---
     st.subheader("Visualização e Filtro dos Dados")
-    st.info("💡 Clique nos cabeçalhos das colunas para ordenar ou use os ícones de lupa/filtro para refinar as linhas.")
+    st.info("💡 Use os ícones de lupa/filtro no cabeçalho das colunas para refinar os dados visualizados.")
     
-    # O st.dataframe exibe a tabela e permite filtros dinâmicos na tela por padrão
     st.dataframe(
         df_final, 
         use_container_width=True,
