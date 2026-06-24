@@ -251,7 +251,7 @@ st.set_page_config(page_title="Book Energia", layout="wide")
 
 pagina = st.sidebar.radio(
     "Menu",
-    ["Base Conferência", "Encontro Energético", "Arquivos CCEE", "Contratos sem Match"]
+    ["Base Conferência", "Encontro Energético", "Arquivos CCEE"]
 )
 
 st.title("📊 Book Energia")
@@ -545,6 +545,46 @@ if arquivo is not None:
                 file_name="Base_Conferencia.xlsx"
             )
 
+            # ── Contratos sem Match (inline, abaixo da tabela principal) ──────
+            if csvs_disponiveis:
+                st.markdown("---")
+                st.subheader("Contratos sem Match")
+
+                resultados = []
+                for _, row in base.iterrows():
+                    # Ignorar contratos zerados
+                    if float(row["Volume (MWh)"]) == 0.0:
+                        continue
+                    justificativa = verificar_contrato_sem_match(
+                        row,
+                        df_matrix=df_ccee_matrix,
+                        df_bismut=df_ccee_bismut,
+                        df_acr=df_ccee_acr,
+                    )
+                    if justificativa is not None:
+                        resultados.append({
+                            "Boleta":        row["BOLETA"],
+                            "Vendedor":      row["Vendedor"],
+                            "Comprador":     row["Comprador"],
+                            "Justificativa": justificativa,
+                        })
+
+                df_sem_match = pd.DataFrame(resultados, columns=["Boleta", "Vendedor", "Comprador", "Justificativa"])
+
+                st.caption(f"{len(df_sem_match):,} contrato(s) sem match encontrado(s)")
+                st.dataframe(df_sem_match, use_container_width=True, hide_index=True)
+
+                output_sm = BytesIO()
+                with pd.ExcelWriter(output_sm, engine="openpyxl") as writer:
+                    df_sem_match.to_excel(writer, sheet_name="Contratos sem Match", index=False)
+
+                st.download_button(
+                    "📥 Download Contratos sem Match",
+                    data=output_sm.getvalue(),
+                    file_name="Contratos_sem_Match.xlsx"
+                )
+            # ───────────────────────────────────────────────────────────────────
+
         elif pagina == "Encontro Energético":
 
             st.subheader("🤝 Encontro Energético")
@@ -610,44 +650,6 @@ if arquivo is not None:
             with c2:
                 st.metric("Volume a Ajustar (MWm)", f"{abs(saldo_mwm):.6f}")
 
-        elif pagina == "Contratos sem Match":
-
-            st.subheader("Contratos sem Match")
-
-            if not csvs_disponiveis:
-                st.warning("⚠️ Faça upload dos ZIPs para identificar contratos sem match.")
-            else:
-                resultados = []
-                for _, row in base.iterrows():
-                    justificativa = verificar_contrato_sem_match(
-                        row,
-                        df_matrix=df_ccee_matrix,
-                        df_bismut=df_ccee_bismut,
-                        df_acr=df_ccee_acr,
-                    )
-                    if justificativa is not None:
-                        resultados.append({
-                            "Boleta":        row["BOLETA"],
-                            "Vendedor":      row["Vendedor"],
-                            "Comprador":     row["Comprador"],
-                            "Justificativa": justificativa,
-                        })
-
-                df_sem_match = pd.DataFrame(resultados, columns=["Boleta", "Vendedor", "Comprador", "Justificativa"])
-
-                st.caption(f"{len(df_sem_match):,} contrato(s) sem match encontrado(s)")
-
-                st.dataframe(df_sem_match, use_container_width=True, hide_index=True)
-
-                output_sm = BytesIO()
-                with pd.ExcelWriter(output_sm, engine="openpyxl") as writer:
-                    df_sem_match.to_excel(writer, sheet_name="Contratos sem Match", index=False)
-
-                st.download_button(
-                    "📥 Download Contratos sem Match",
-                    data=output_sm.getvalue(),
-                    file_name="Contratos_sem_Match.xlsx"
-                )
 
     except Exception as erro:
         st.error("Erro ao processar a planilha")
