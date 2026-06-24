@@ -238,6 +238,7 @@ def verificar_contrato_sem_match(row, df_matrix, df_bismut, df_acr):
 def highlight_mesmo_titular(row):
     """
     Pinta a linha de amarelo quando Parte == Contraparte Razão Social.
+    E azul claro se foi editado manualmente.
     """
     if "Editado Manualmente" in row.index and row["Editado Manualmente"] is True:
         return ["background-color: #D6EAF8"] * len(row)
@@ -268,7 +269,7 @@ arquivo_mes_anterior = st.file_uploader(
     type=["xlsx"]
 )
 
-# NOVO FILE UPLOADER PARA PLANILHA DE AJUSTES MANUAIS
+# FILE UPLOADER PARA PLANILHA DE AJUSTES MANUAIS
 arquivo_ajuste_manual = st.file_uploader(
     "Selecione a planilha de Ajuste Manual",
     type=["xlsx"]
@@ -303,13 +304,17 @@ if arquivo is not None:
         else:
             mapa_mes_anterior = {}
 
-        # LEITURA DA NOVA PLANILHA DE AJUSTES MANUAIS IMPORTADA
+        # LEITURA DA PLANILHA DE AJUSTES MANUAIS UTILIZANDO A COLUNA BOLETA COMO CHAVE
         mapa_ajuste_manual_paradigma = {}
         mapa_ajuste_manual_contraparte = {}
         if arquivo_ajuste_manual is not None:
             try:
                 df_aj_manual = pd.read_excel(arquivo_ajuste_manual)
                 if "BOLETA" in df_aj_manual.columns:
+                    # Remove NaNs e limpa espaços nos indexes/valores das boletas para o de/para funcionar perfeitamente
+                    df_aj_manual = df_aj_manual.dropna(subset=["BOLETA"])
+                    df_aj_manual["BOLETA"] = df_aj_manual["BOLETA"].astype(str).str.strip().str.replace(".0", "", regex=False)
+                    
                     if "CliqCCEE Paradigma" in df_aj_manual.columns:
                         mapa_ajuste_manual_paradigma = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["CliqCCEE Paradigma"]))
                     if "Contraparte" in df_aj_manual.columns:
@@ -384,15 +389,18 @@ if arquivo is not None:
 
         base["Editado Manualmente"] = False
 
-        # APLICAÇÃO DOS DADOS DA PLANILHA IMPORTADA DE AJUSTE MANUAL
+        # MAPEAMENTO DOS AJUSTES MANUAIS BASEADO NO NÚMERO DA BOLETA
         for i, b_val in enumerate(base["BOLETA"]):
+            b_str = str(b_val).strip().replace(".0", "")
             teve_ajuste_importado = False
-            if b_val in mapa_ajuste_manual_paradigma:
-                base.loc[i, "CliqCCEE Paradigma"] = str(mapa_ajuste_manual_paradigma[b_val])
+            
+            if b_str in mapa_ajuste_manual_paradigma:
+                base.loc[i, "CliqCCEE Paradigma"] = str(mapa_ajuste_manual_paradigma[b_str])
                 teve_ajuste_importado = True
-            if b_val in mapa_ajuste_manual_contraparte:
-                base.loc[i, "Contraparte"] = str(mapa_ajuste_manual_contraparte[b_val])
+            if b_str in mapa_ajuste_manual_contraparte:
+                base.loc[i, "Contraparte"] = str(mapa_ajuste_manual_contraparte[b_str])
                 teve_ajuste_importado = True
+                
             if teve_ajuste_importado:
                 base.loc[i, "Editado Manualmente"] = True
 
