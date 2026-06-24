@@ -268,6 +268,12 @@ arquivo_mes_anterior = st.file_uploader(
     type=["xlsx"]
 )
 
+# NOVO FILE UPLOADER PARA PLANILHA DE AJUSTES MANUAIS
+arquivo_ajuste_manual = st.file_uploader(
+    "Selecione a planilha de Ajuste Manual",
+    type=["xlsx"]
+)
+
 zip_matrix = st.file_uploader(
     "Selecione o ZIP Matrix",
     type=["zip"]
@@ -296,6 +302,20 @@ if arquivo is not None:
             )
         else:
             mapa_mes_anterior = {}
+
+        # LEITURA DA NOVA PLANILHA DE AJUSTES MANUAIS IMPORTADA
+        mapa_ajuste_manual_paradigma = {}
+        mapa_ajuste_manual_contraparte = {}
+        if arquivo_ajuste_manual is not None:
+            try:
+                df_aj_manual = pd.read_excel(arquivo_ajuste_manual)
+                if "BOLETA" in df_aj_manual.columns:
+                    if "CliqCCEE Paradigma" in df_aj_manual.columns:
+                        mapa_ajuste_manual_paradigma = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["CliqCCEE Paradigma"]))
+                    if "Contraparte" in df_aj_manual.columns:
+                        mapa_ajuste_manual_contraparte = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["Contraparte"]))
+            except Exception as e_aj:
+                st.error(f"Erro ao ler planilha de Ajuste Manual: {e_aj}")
 
         # Extrai CSVs dos ZIPs
         csvs_matrix = extrair_csvs_zip(zip_matrix)
@@ -362,6 +382,20 @@ if arquivo is not None:
         base["Vendedor"]                       = df["Sigla_CCEE_vendedor"].fillna("-").astype(str)
         base["Comprador"]                      = df["Sigla_CCEE_comprador"].fillna("-").astype(str)
 
+        base["Editado Manualmente"] = False
+
+        # APLICAÇÃO DOS DADOS DA PLANILHA IMPORTADA DE AJUSTE MANUAL
+        for i, b_val in enumerate(base["BOLETA"]):
+            teve_ajuste_importado = False
+            if b_val in mapa_ajuste_manual_paradigma:
+                base.loc[i, "CliqCCEE Paradigma"] = str(mapa_ajuste_manual_paradigma[b_val])
+                teve_ajuste_importado = True
+            if b_val in mapa_ajuste_manual_contraparte:
+                base.loc[i, "Contraparte"] = str(mapa_ajuste_manual_contraparte[b_val])
+                teve_ajuste_importado = True
+            if teve_ajuste_importado:
+                base.loc[i, "Editado Manualmente"] = True
+
         # ── Flag: zera volumes when Parte == Contraparte Razão Social ────────
         mask_mesmo_titular = (
             base["Parte"].astype(str).str.strip().str.upper()
@@ -404,8 +438,6 @@ if arquivo is not None:
             if pagina == "Base Conferência":
                 st.info("ℹ️ Faça upload dos ZIPs para preencher a coluna 'Contrato CliqCCEE'.")
         # ───────────────────────────────────────────────────────────────────────
-
-        base["Editado Manualmente"] = False
 
         if "base_editada" not in st.session_state:
             st.session_state["base_editada"] = base.copy()
