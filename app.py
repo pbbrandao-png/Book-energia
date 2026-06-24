@@ -238,7 +238,10 @@ def verificar_contrato_sem_match(row, df_matrix, df_bismut, df_acr):
 def highlight_mesmo_titular(row):
     """
     Pinta a linha de amarelo quando Parte == Contraparte Razão Social.
+    Prioriza azul claro se Editado Manualmente for True.
     """
+    if row.get("Editado Manualmente") == True:
+        return ["background-color: #D6EAF8"] * len(row)
     parte = str(row.get("Parte", "")).strip().upper()
     contraparte_rs = str(row.get("Contraparte Razão Social", "")).strip().upper()
     if parte and contraparte_rs and parte == contraparte_rs:
@@ -337,71 +340,83 @@ if arquivo is not None:
         horas_por_linha = df["Mes"].map(horas_mes)
         volume_mwm = (df["QuantAtualizada"] / horas_por_linha).round(6)
 
-        base = pd.DataFrame()
+        if "master_base" not in st.session_state or st.session_state.get("current_file") != arquivo.name:
+            base = pd.DataFrame()
 
-        base["BOLETA"]                         = df["Codigo_WBC"]
-        base["Operação"]                       = df["Movimentacao"]
-        base["Tipo de Energia"]                = df["Fonte_Contrato"].map(mapa_energia).fillna(df["Fonte_Contrato"])
-        base["Parte"]                          = df["Parte_razao_social"]
-        # ── NOVO: Contraparte Razão Social logo após Parte ─────────────────────
-        base["Contraparte Razão Social"]       = df["Contraparte_razao_social"] if "Contraparte_razao_social" in df.columns else "-"
-        # ───────────────────────────────────────────────────────────────────────
-        base["Contraparte"]                    = df["Sigla_CCEE_Contraparte"]
-        base["CP/LP"]                          = cp_lp
-        base["CNPJ CONTRAPARTE"]               = df["Contraparte_CNPJ"].apply(formatar_cnpj)
-        base["Submercado"]                     = df["Submercado"].astype(str).str.strip().map(mapa_submercado).fillna(df["Submercado"])
-        base["Volume (MWh)"]                   = df["QuantAtualizada"].round(3)
-        base["Volume MWm"]                     = volume_mwm.round(6)
-        base["CliqCCEE Paradigma"]             = df["Codigo_CCEE"]
-        base["Modulação WBC"]                  = df["Tipo_de_modulacao"].astype(str).str.strip().map(mapa_modulacao).fillna(df["Tipo_de_modulacao"])
-        base["Modulação Mínima"]               = df["FlexLimite_modulacaoMin"].fillna("-")
-        base["Modulação Máxima"]               = df["FlexLimite_modulacaoMax"].fillna("-")
-        base["Contrato CliqCCEE mês anterior"] = base["BOLETA"].map(mapa_mes_anterior).fillna("-")
-        base["Vendedor"]                       = df["Sigla_CCEE_vendedor"]
-        base["Comprador"]                      = df["Sigla_CCEE_comprador"]
+            base["BOLETA"]                         = df["Codigo_WBC"]
+            base["Operação"]                       = df["Movimentacao"]
+            base["Tipo de Energia"]                = df["Fonte_Contrato"].map(mapa_energia).fillna(df["Fonte_Contrato"])
+            base["Parte"]                          = df["Parte_razao_social"]
+            # ── NOVO: Contraparte Razão Social logo após Parte ─────────────────────
+            base["Contraparte Razão Social"]       = df["Contraparte_razao_social"] if "Contraparte_razao_social" in df.columns else "-"
+            # ───────────────────────────────────────────────────────────────────────
+            base["Contraparte"]                    = df["Sigla_CCEE_Contraparte"]
+            base["CP/LP"]                          = cp_lp
+            base["CNPJ CONTRAPARTE"]               = df["Contraparte_CNPJ"].apply(formatar_cnpj)
+            base["Submercado"]                     = df["Submercado"].astype(str).str.strip().map(mapa_submercado).fillna(df["Submercado"])
+            base["Volume (MWh)"]                   = df["QuantAtualizada"].round(3)
+            base["Volume MWm"]                     = volume_mwm.round(6)
+            base["CliqCCEE Paradigma"]             = df["Codigo_CCEE"]
+            base["Modulação WBC"]                  = df["Tipo_de_modulacao"].astype(str).str.strip().map(mapa_modulacao).fillna(df["Tipo_de_modulacao"])
+            base["Modulação Mínima"]               = df["FlexLimite_modulacaoMin"].fillna("-")
+            base["Modulação Máxima"]               = df["FlexLimite_modulacaoMax"].fillna("-")
+            base["Contrato CliqCCEE mês anterior"] = base["BOLETA"].map(mapa_mes_anterior).fillna("-")
+            base["Vendedor"]                       = df["Sigla_CCEE_vendedor"]
+            base["Comprador"]                      = df["Sigla_CCEE_comprador"]
 
-        # ── Flag: zera volumes quando Parte == Contraparte Razão Social ────────
-        mask_mesmo_titular = (
-            base["Parte"].astype(str).str.strip().str.upper()
-            == base["Contraparte Razão Social"].astype(str).str.strip().str.upper()
-        )
-        base.loc[mask_mesmo_titular, "Volume (MWh)"] = 0.0
-        base.loc[mask_mesmo_titular, "Volume MWm"]   = 0.0
-        # ───────────────────────────────────────────────────────────────────────
+            # ── Flag: zera volumes quando Parte == Contraparte Razão Social ────────
+            mask_mesmo_titular = (
+                base["Parte"].astype(str).str.strip().str.upper()
+                == base["Contraparte Razão Social"].astype(str).str.strip().str.upper()
+            )
+            base.loc[mask_mesmo_titular, "Volume (MWh)"] = 0.0
+            base.loc[mask_mesmo_titular, "Volume MWm"]   = 0.0
+            # ───────────────────────────────────────────────────────────────────────
 
-        # ── Coluna "Contrato CliqCCEE" ─────────────────────────────────────────
-        BISMUT_NOME = "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A."
+            # ── Coluna "Contrato CliqCCEE" ─────────────────────────────────────────
+            BISMUT_NOME = "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A."
+
+            csvs_disponiveis = any([
+                not df_ccee_matrix.empty,
+                not df_ccee_bismut.empty,
+                not df_ccee_acr.empty,
+            ])
+
+            if csvs_disponiveis:
+                def calcular_contrato_cliqccee(row):
+                    is_bismut = str(row["Parte"]).strip().upper() == BISMUT_NOME.upper()
+                    chave = (
+                        str(row["Vendedor"]).strip()
+                        + str(row["Comprador"]).strip()
+                        + str(row["Submercado"]).strip()
+                    )
+                    return resolver_contrato_cliqccee(
+                        boleta              = row["BOLETA"],
+                        codigo_mes_anterior = row["Contrato CliqCCEE mês anterior"],
+                        codigo_paradigma    = row["CliqCCEE Paradigma"],
+                        chave               = chave,
+                        df_matrix           = df_ccee_matrix,
+                        df_bismut           = df_ccee_bismut,
+                        df_acr              = df_ccee_acr,
+                        is_bismut           = is_bismut,
+                    )
+                base["Contrato CliqCCEE"] = base.apply(calcular_contrato_cliqccee, axis=1)
+            else:
+                base["Contrato CliqCCEE"] = "-"
+                if pagina == "Base Conferência":
+                    st.info("ℹ️ Faça upload dos ZIPs para preencher a coluna 'Contrato CliqCCEE'.")
+            # ───────────────────────────────────────────────────────────────────────
+            base["Editado Manualmente"] = False
+            st.session_state["master_base"] = base
+            st.session_state["current_file"] = arquivo.name
+        else:
+            base = st.session_state["master_base"]
 
         csvs_disponiveis = any([
             not df_ccee_matrix.empty,
             not df_ccee_bismut.empty,
             not df_ccee_acr.empty,
         ])
-
-        if csvs_disponiveis:
-            def calcular_contrato_cliqccee(row):
-                is_bismut = str(row["Parte"]).strip().upper() == BISMUT_NOME.upper()
-                chave = (
-                    str(row["Vendedor"]).strip()
-                    + str(row["Comprador"]).strip()
-                    + str(row["Submercado"]).strip()
-                )
-                return resolver_contrato_cliqccee(
-                    boleta              = row["BOLETA"],
-                    codigo_mes_anterior = row["Contrato CliqCCEE mês anterior"],
-                    codigo_paradigma    = row["CliqCCEE Paradigma"],
-                    chave               = chave,
-                    df_matrix           = df_ccee_matrix,
-                    df_bismut           = df_ccee_bismut,
-                    df_acr              = df_ccee_acr,
-                    is_bismut           = is_bismut,
-                )
-            base["Contrato CliqCCEE"] = base.apply(calcular_contrato_cliqccee, axis=1)
-        else:
-            base["Contrato CliqCCEE"] = "-"
-            if pagina == "Base Conferência":
-                st.info("ℹ️ Faça upload dos ZIPs para preencher a coluna 'Contrato CliqCCEE'.")
-        # ───────────────────────────────────────────────────────────────────────
 
         compras_net = (
             base[base["Operação"] == "Compra"]
@@ -524,11 +539,32 @@ if arquivo is not None:
 
             st.caption(f"{len(base_exibicao):,} registros encontrados")
 
-            if flag_mesmo_titular:
-                styled = base_exibicao.style.apply(highlight_mesmo_titular, axis=1)
-                st.dataframe(styled, use_container_width=True, hide_index=True)
-            else:
-                st.dataframe(base_exibicao, use_container_width=True, hide_index=True)
+            todas_colunas = list(base_exibicao.columns)
+            colunas_editaveis = ["Vendedor", "Comprador", "CliqCCEE Paradigma", "Contrato CliqCCEE mês anterior", "Contrato CliqCCEE"]
+            colunas_desabilitadas = [c for c in todas_colunas if c not in colunas_editaveis]
+
+            styled = base_exibicao.style.apply(highlight_mesmo_titular, axis=1)
+
+            edited_df = st.data_editor(
+                styled if flag_mesmo_titular or base_exibicao["Editado Manualmente"].any() else base_exibicao,
+                use_container_width=True,
+                hide_index=True,
+                disabled=colunas_desabilitadas
+            )
+
+            changes_detected = False
+            for idx in base_exibicao.index:
+                if idx in edited_df.index:
+                    for col in colunas_editaveis:
+                        val_orig = base_exibicao.at[idx, col]
+                        val_new = edited_df.at[idx, col]
+                        if str(val_orig) != str(val_new):
+                            st.session_state["master_base"].at[idx, col] = val_new
+                            st.session_state["master_base"].at[idx, "Editado Manualmente"] = True
+                            changes_detected = True
+
+            if changes_detected:
+                st.rerun()
 
             # Download sempre com dados numéricos originais (sem formatação de string)
             base_download = base.copy()
@@ -593,7 +629,7 @@ if arquivo is not None:
             df_parte = nets[nets["Parte"] == parte]
 
             contraparte = st.selectbox("Contraparte", sorted(df_parte["Contraparte"].dropna().unique()))
-            df_contraparte = df_parte[df_parte["Contraparte"] == contraparte]
+            df_contraparte = df_parte[df_contraparte["Contraparte"] == contraparte]
 
             submercado = st.selectbox("Submercado", sorted(df_contraparte["Submercado"].dropna().unique()))
             df_sub = df_contraparte[df_contraparte["Submercado"] == submercado]
