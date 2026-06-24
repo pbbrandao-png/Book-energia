@@ -362,7 +362,7 @@ if arquivo is not None:
         base["Vendedor"]                       = df["Sigla_CCEE_vendedor"]
         base["Comprador"]                      = df["Sigla_CCEE_comprador"]
 
-        # ── Flag: zera volumes quando Parte == Contraparte Razão Social ────────
+        # ── Flag: zera volumes when Parte == Contraparte Razão Social ────────
         mask_mesmo_titular = (
             base["Parte"].astype(str).str.strip().str.upper()
             == base["Contraparte Razão Social"].astype(str).str.strip().str.upper()
@@ -552,28 +552,28 @@ if arquivo is not None:
 
             st.caption(f"{len(base_exibicao):,} registros encontrados")
 
-             col_config = {
-                 "BOLETA": st.column_config.Column(disabled=True),
-                 "Operação": st.column_config.Column(disabled=True),
-                 "Tipo de Energia": st.column_config.Column(disabled=True),
-                 "Parte": st.column_config.Column(disabled=True),
-                 "Contraparte Razão Social": st.column_config.Column(disabled=True),
-                 "Contraparte": st.column_config.Column(disabled=True),
-                 "CP/LP": st.column_config.Column(disabled=True),
-                 "CNPJ CONTRAPARTE": st.column_config.Column(disabled=True),
-                 "Submercado": st.column_config.Column(disabled=True),
-                 "Volume (MWh)": st.column_config.Column(disabled=True),
-                 "Volume MWm": st.column_config.Column(disabled=True),
-                 "CliqCCEE Paradigma": st.column_config.TextColumn(disabled=False),
-                 "Modulação WBC": st.column_config.Column(disabled=True),
-                 "Modulação Mínima": st.column_config.Column(disabled=True),
-                 "Modulação Máxima": st.column_config.Column(disabled=True),
-                 "Contrato CliqCCEE mês anterior": st.column_config.TextColumn(disabled=False),
-                 "Vendedor": st.column_config.TextColumn(disabled=False),
-                 "Comprador": st.column_config.TextColumn(disabled=False),
-                 "Contrato CliqCCEE": st.column_config.TextColumn(disabled=False),
-                 "Editado Manualmente": st.column_config.Column(disabled=True),
-             }
+            col_config = {
+                "BOLETA": st.column_config.Column(disabled=True),
+                "Operação": st.column_config.Column(disabled=True),
+                "Tipo de Energia": st.column_config.Column(disabled=True),
+                "Parte": st.column_config.Column(disabled=True),
+                "Contraparte Razão Social": st.column_config.Column(disabled=True),
+                "Contraparte": st.column_config.Column(disabled=True),
+                "CP/LP": st.column_config.Column(disabled=True),
+                "CNPJ CONTRAPARTE": st.column_config.Column(disabled=True),
+                "Submercado": st.column_config.Column(disabled=True),
+                "Volume (MWh)": st.column_config.Column(disabled=True),
+                "Volume MWm": st.column_config.Column(disabled=True),
+                "CliqCCEE Paradigma": st.column_config.TextColumn(disabled=False),
+                "Modulação WBC": st.column_config.Column(disabled=True),
+                "Modulação Mínima": st.column_config.Column(disabled=True),
+                "Modulação Máxima": st.column_config.Column(disabled=True),
+                "Contrato CliqCCEE mês anterior": st.column_config.TextColumn(disabled=False),
+                "Vendedor": st.column_config.TextColumn(disabled=False),
+                "Comprador": st.column_config.TextColumn(disabled=False),
+                "Contrato CliqCCEE": st.column_config.TextColumn(disabled=False),
+                "Editado Manualmente": st.column_config.Column(disabled=True),
+            }
 
             if flag_mesmo_titular:
                 styled = base_exibicao.style.apply(highlight_mesmo_titular, axis=1)
