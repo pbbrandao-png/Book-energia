@@ -410,16 +410,20 @@ if arquivo is not None:
         if "base_editada" not in st.session_state:
             st.session_state["base_editada"] = base.copy()
         else:
-            # Garantir que se a planilha ou zips mudarem, linhas novas sejam sincronizadas, mantendo edições antigas indexadas por BOLETA
             df_atual = base.copy()
             df_salvo = st.session_state["base_editada"]
             df_salvo = df_salvo[df_salvo["Editado Manualmente"] == True]
             if not df_salvo.empty:
                 df_atual.set_index("BOLETA", inplace=True)
                 df_salvo.set_index("BOLETA", inplace=True)
+                
+                # Garantir que a coluna Editado Manualmente não sofra casting incorreto para string do pandas
+                df_atual["Editado Manualmente"] = df_atual["Editado Manualmente"].astype(bool)
+                df_salvo["Editado Manualmente"] = df_salvo["Editado Manualmente"].astype(bool)
+                
                 df_atual.update(df_salvo)
                 df_atual.reset_index(inplace=True)
-                # Recalcular contratos que foram afetados por mudanças em outras colunas mas NÃO foram editados diretamente no contrato cliqccee
+                
                 if csvs_disponiveis:
                     linhas_para_recalcular = df_atual["Editado Manualmente"] & (~df_atual["BOLETA"].isin(st.session_state.get("contratos_editados_diretamente", [])))
                     if linhas_para_recalcular.any():
@@ -608,7 +612,6 @@ if arquivo is not None:
                 st.session_state["base_editada"] = base.copy()
                 st.rerun()
 
-            # Download sempre com dados numéricos originais (sem formatação de string)
             base_download = base.copy()
             if flag_ocultar_zerados:
                 base_download = base_download[base_download["Volume (MWh)"] != 0.0]
@@ -623,14 +626,12 @@ if arquivo is not None:
                 file_name="Base_Conferencia.xlsx"
             )
 
-            # ── Contratos sem Match (inline, abaixo da tabela principal) ──────
             if csvs_disponiveis:
                 st.markdown("---")
                 st.subheader("Contratos sem Match")
 
                 resultados = []
                 for _, row in base.iterrows():
-                    # Ignorar contratos zerados
                     if float(row["Volume (MWh)"]) == 0.0:
                         continue
                     justificativa = verificar_contrato_sem_match(
@@ -661,7 +662,6 @@ if arquivo is not None:
                     data=output_sm.getvalue(),
                     file_name="Contratos_sem_Match.xlsx"
                 )
-            # ───────────────────────────────────────────────────────────────────
 
         elif pagina == "Encontro Energético":
 
