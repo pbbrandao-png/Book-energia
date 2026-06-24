@@ -5,7 +5,7 @@
 # Bismut → cceal_firme (ZIP Bismut)
 # V17: + Contraparte Razão Social | highlight amarelo Parte==Contraparte | flag ocultar zerados
 # V19: + Ajuste Manual via Planilha | Separação de Erros de Divergência e Sem Match Nenhum nos CSVs
-# V20: + Otimização massiva de performance usando indexação de dicionários (Fast Lookup)
+# V20: + Otimização massiva de performance + Regra de ignorar Intraportfólio/Zerados nas tabelas de erro
 
 import streamlit as st
 import pandas as pd
@@ -380,15 +380,19 @@ if arquivo is not None:
 
                 # Varre a lista processando de maneira imediata com os dicionários em memória
                 for _, row in base.iterrows():
-                    if float(row["Volume (MWh)"]) == 0.0:
-                        continue
+                    parte_limpa = str(row["Parte"]).strip().upper()
+                    contraparte_limpa = str(row["Contraparte Razão Social"]).strip().upper()
                     
+                    # Regra de ouro: Se for Intraportfólio (titular igual) ou o volume for 0, não precisa de match!
+                    if parte_limpa == contraparte_limpa or float(row["Volume (MWh)"]) == 0.0:
+                        continue
+
                     try: b_int = int(float(str(row["BOLETA"]).strip()))
                     except: b_int = -1
 
                     if b_int in BOLETAS_ACR:
                         d_ch, d_v, d_c, d_s, s_ext = idx_a_chave, idx_a_v, idx_a_c, idx_a_s, set_a_ext
-                    elif str(row["Parte"]).strip().upper() == BISMUT_NOME_UPPER:
+                    elif parte_limpa == BISMUT_NOME_UPPER:
                         d_ch, d_v, d_c, d_s, s_ext = idx_b_chave, idx_b_v, idx_b_c, idx_b_s, set_b_ext
                     else:
                         d_ch, d_v, d_c, d_s, s_ext = idx_m_chave, idx_m_v, idx_m_c, idx_m_s, set_m_ext
