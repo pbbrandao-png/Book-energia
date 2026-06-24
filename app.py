@@ -1,9 +1,10 @@
-# APP_BOOK_ENERGIA_V17
+# APP_BOOK_ENERGIA_V18
 # Coluna "Contrato CliqCCEE" via CSVs extraídos dos ZIPs Matrix e Bismut
 # Boletas ACR (lista fixa) → ccear_q (extraído do ZIP Matrix)
 # Matrix (não-Bismut, não-ACR) → cceal_firme + cbr_mercado_proprio (ZIP Matrix)
 # Bismut → cceal_firme (ZIP Bismut)
 # V17: + Contraparte Razão Social | highlight amarelo Parte==Contraparte | flag ocultar zerados
+# V18: + Seção "Contratos sem Match"
 
 import streamlit as st
 import pandas as pd
@@ -136,6 +137,104 @@ def resolver_contrato_cliqccee(boleta, codigo_mes_anterior, codigo_paradigma,
     return resultado
 
 
+def _selecionar_df_para_boleta(boleta, is_bismut, df_matrix, df_bismut, df_acr):
+    """Retorna o DataFrame correto para a boleta, seguindo o mesmo roteamento de resolver_contrato_cliqccee."""
+    try:
+        boleta_int = int(float(str(boleta).strip()))
+    except (ValueError, TypeError):
+        boleta_int = -1
+
+    if boleta_int in BOLETAS_ACR:
+        return df_acr
+    elif is_bismut:
+        return df_bismut
+    else:
+        return df_matrix
+
+
+def _buscar_linha_contrato(codigo, df_ccee):
+    """
+    Retorna a primeira linha não-RASCUNHO encontrada para o código, ou None.
+    """
+    if df_ccee.empty or pd.isna(codigo) or str(codigo).strip() in ('', '-', 'None'):
+        return None
+    codigo = str(codigo).strip()
+    encontrado = df_ccee[df_ccee['CODIGO_CONTRATO'] == codigo]
+    if encontrado.empty:
+        return None
+    for _, row in encontrado.iterrows():
+        situacao = str(row.get('SITUACAO_CONTRATO', '')).strip().lower()
+        if situacao != 'rascunho':
+            return row
+    return None
+
+
+def verificar_contrato_sem_match(row, df_matrix, df_bismut, df_acr):
+    """
+    Verifica se a boleta possui correspondência válida no CSV.
+    Retorna None se o contrato é válido, ou uma string de justificativa se há inconsistência.
+    """
+    BISMUT_NOME = "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A."
+    is_bismut = str(row["Parte"]).strip().upper() == BISMUT_NOME.upper()
+
+    codigos = [
+        row.get("Contrato CliqCCEE", ""),
+        row.get("Contrato CliqCCEE mês anterior", ""),
+        row.get("CliqCCEE Paradigma", ""),
+    ]
+
+    # Ao menos um código deve estar preenchido para que a boleta seja avaliada
+    tem_codigo = any(
+        str(c).strip() not in ('', '-', 'None', 'nan')
+        for c in codigos
+    )
+    if not tem_codigo:
+        return None
+
+    df = _selecionar_df_para_boleta(row["BOLETA"], is_bismut, df_matrix, df_bismut, df_acr)
+
+    vendedor_boleta   = str(row["Vendedor"]).strip()
+    comprador_boleta  = str(row["Comprador"]).strip()
+    submercado_boleta = str(row["Submercado"]).strip()
+
+    linha_encontrada = None
+    for codigo in codigos:
+        linha = _buscar_linha_contrato(codigo, df)
+        if linha is not None:
+            linha_encontrada = linha
+            break
+
+    if linha_encontrada is None:
+        return "Contrato inexistente"
+
+    # Contrato encontrado — verificar divergências
+    vendedor_csv   = str(linha_encontrada.get('SIGLA_PERFIL_VENDEDOR', '')).strip()
+    comprador_csv  = str(linha_encontrada.get('SIGLA_PERFIL_COMPRADOR', '')).strip()
+    submercado_csv = str(linha_encontrada.get('SUBMERCADO_ENTREGA', '')).strip()
+
+    div_vendedor   = vendedor_boleta   != vendedor_csv
+    div_comprador  = comprador_boleta  != comprador_csv
+    div_submercado = submercado_boleta != submercado_csv
+
+    if not div_vendedor and not div_comprador and not div_submercado:
+        return None  # match perfeito
+
+    partes = []
+    if div_vendedor:
+        partes.append("Vendedor")
+    if div_comprador:
+        partes.append("Comprador")
+    if div_submercado:
+        partes.append(f"Submercado (Boleta={submercado_boleta} | CSV={submercado_csv})")
+
+    if len(partes) == 1:
+        return f"Divergência de {partes[0]}"
+    elif len(partes) == 2:
+        return f"Divergência de {partes[0]} e {partes[1]}"
+    else:
+        return f"Divergência de {partes[0]}, {partes[1]} e {partes[2]}"
+
+
 def highlight_mesmo_titular(row):
     """
     Pinta a linha de amarelo quando Parte == Contraparte Razão Social.
@@ -152,7 +251,7 @@ st.set_page_config(page_title="Book Energia", layout="wide")
 
 pagina = st.sidebar.radio(
     "Menu",
-    ["Base Conferência", "Encontro Energético", "Arquivos CCEE"]
+    ["Base Conferência", "Encontro Energético", "Arquivos CCEE", "Contratos sem Match"]
 )
 
 st.title("📊 Book Energia")
@@ -510,6 +609,45 @@ if arquivo is not None:
                 st.metric("Quem Ajusta", ajuste)
             with c2:
                 st.metric("Volume a Ajustar (MWm)", f"{abs(saldo_mwm):.6f}")
+
+        elif pagina == "Contratos sem Match":
+
+            st.subheader("Contratos sem Match")
+
+            if not csvs_disponiveis:
+                st.warning("⚠️ Faça upload dos ZIPs para identificar contratos sem match.")
+            else:
+                resultados = []
+                for _, row in base.iterrows():
+                    justificativa = verificar_contrato_sem_match(
+                        row,
+                        df_matrix=df_ccee_matrix,
+                        df_bismut=df_ccee_bismut,
+                        df_acr=df_ccee_acr,
+                    )
+                    if justificativa is not None:
+                        resultados.append({
+                            "Boleta":        row["BOLETA"],
+                            "Vendedor":      row["Vendedor"],
+                            "Comprador":     row["Comprador"],
+                            "Justificativa": justificativa,
+                        })
+
+                df_sem_match = pd.DataFrame(resultados, columns=["Boleta", "Vendedor", "Comprador", "Justificativa"])
+
+                st.caption(f"{len(df_sem_match):,} contrato(s) sem match encontrado(s)")
+
+                st.dataframe(df_sem_match, use_container_width=True, hide_index=True)
+
+                output_sm = BytesIO()
+                with pd.ExcelWriter(output_sm, engine="openpyxl") as writer:
+                    df_sem_match.to_excel(writer, sheet_name="Contratos sem Match", index=False)
+
+                st.download_button(
+                    "📥 Download Contratos sem Match",
+                    data=output_sm.getvalue(),
+                    file_name="Contratos_sem_Match.xlsx"
+                )
 
     except Exception as erro:
         st.error("Erro ao processar a planilha")
