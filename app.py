@@ -348,7 +348,7 @@ if arquivo is not None:
         # ── NOVO: Contraparte Razão Social logo após Parte ─────────────────────
         base["Contraparte Razão Social"]       = df["Contraparte_razao_social"] if "Contraparte_razao_social" in df.columns else "-"
         # ───────────────────────────────────────────────────────────────────────
-        base["Contraparte"]                    = df["Sigla_CCEE_Contraparte"]
+        base["Contraparte"]                    = df["Sigla_CCEE_Contraparte"].fillna("-").astype(str)
         base["CP/LP"]                          = cp_lp
         base["CNPJ CONTRAPARTE"]               = df["Contraparte_CNPJ"].apply(formatar_cnpj)
         base["Submercado"]                     = df["Submercado"].astype(str).str.strip().map(mapa_submercado).fillna(df["Submercado"])
@@ -558,7 +558,7 @@ if arquivo is not None:
                 "Tipo de Energia": st.column_config.Column(disabled=True),
                 "Parte": st.column_config.Column(disabled=True),
                 "Contraparte Razão Social": st.column_config.Column(disabled=True),
-                "Contraparte": st.column_config.Column(disabled=True),
+                "Contraparte": st.column_config.TextColumn(disabled=False),
                 "CP/LP": st.column_config.Column(disabled=True),
                 "CNPJ CONTRAPARTE": st.column_config.Column(disabled=True),
                 "Submercado": st.column_config.Column(disabled=True),
@@ -568,10 +568,10 @@ if arquivo is not None:
                 "Modulação WBC": st.column_config.Column(disabled=True),
                 "Modulação Mínima": st.column_config.Column(disabled=True),
                 "Modulação Máxima": st.column_config.Column(disabled=True),
-                "Contrato CliqCCEE mês anterior": st.column_config.TextColumn(disabled=False),
-                "Vendedor": st.column_config.TextColumn(disabled=False),
-                "Comprador": st.column_config.TextColumn(disabled=False),
-                "Contrato CliqCCEE": st.column_config.TextColumn(disabled=False),
+                "Contrato CliqCCEE mês anterior": st.column_config.Column(disabled=True),
+                "Vendedor": st.column_config.Column(disabled=True),
+                "Comprador": st.column_config.Column(disabled=True),
+                "Contrato CliqCCEE": st.column_config.Column(disabled=True),
                 "Editado Manualmente": st.column_config.Column(disabled=True),
             }
 
