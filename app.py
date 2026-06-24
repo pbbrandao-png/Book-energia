@@ -354,13 +354,13 @@ if arquivo is not None:
         base["Submercado"]                     = df["Submercado"].astype(str).str.strip().map(mapa_submercado).fillna(df["Submercado"])
         base["Volume (MWh)"]                   = df["QuantAtualizada"].round(3)
         base["Volume MWm"]                     = volume_mwm.round(6)
-        base["CliqCCEE Paradigma"]             = df["Codigo_CCEE"]
+        base["CliqCCEE Paradigma"]             = df["Codigo_CCEE"].fillna("-").astype(str)
         base["Modulação WBC"]                  = df["Tipo_de_modulacao"].astype(str).str.strip().map(mapa_modulacao).fillna(df["Tipo_de_modulacao"])
         base["Modulação Mínima"]               = df["FlexLimite_modulacaoMin"].fillna("-")
         base["Modulação Máxima"]               = df["FlexLimite_modulacaoMax"].fillna("-")
-        base["Contrato CliqCCEE mês anterior"] = base["BOLETA"].map(mapa_mes_anterior).fillna("-")
-        base["Vendedor"]                       = df["Sigla_CCEE_vendedor"]
-        base["Comprador"]                      = df["Sigla_CCEE_comprador"]
+        base["Contrato CliqCCEE mês anterior"] = base["BOLETA"].map(mapa_mes_anterior).fillna("-").astype(str)
+        base["Vendedor"]                       = df["Sigla_CCEE_vendedor"].fillna("-").astype(str)
+        base["Comprador"]                      = df["Sigla_CCEE_comprador"].fillna("-").astype(str)
 
         # ── Flag: zera volumes quando Parte == Contraparte Razão Social ────────
         mask_mesmo_titular = (
@@ -398,7 +398,7 @@ if arquivo is not None:
                     df_acr              = df_ccee_acr,
                     is_bismut           = is_bismut,
                 )
-            base["Contrato CliqCCEE"] = base.apply(calcular_contrato_cliqccee, axis=1)
+            base["Contrato CliqCCEE"] = base.apply(calcular_contrato_cliqccee, axis=1).astype(str)
         else:
             base["Contrato CliqCCEE"] = "-"
             if pagina == "Base Conferência":
@@ -423,7 +423,7 @@ if arquivo is not None:
                 if csvs_disponiveis:
                     linhas_para_recalcular = df_atual["Editado Manualmente"] & (~df_atual["BOLETA"].isin(st.session_state.get("contratos_editados_diretamente", [])))
                     if linhas_para_recalcular.any():
-                        df_atual.loc[linhas_para_recalcular, "Contrato CliqCCEE"] = df_atual[linhas_para_recalcular].apply(calcular_contrato_cliqccee, axis=1)
+                        df_atual.loc[linhas_para_recalcular, "Contrato CliqCCEE"] = df_atual[linhas_para_recalcular].apply(calcular_contrato_cliqccee, axis=1).astype(str)
                 base = df_atual
             else:
                 base = df_atual
@@ -552,28 +552,28 @@ if arquivo is not None:
 
             st.caption(f"{len(base_exibicao):,} registros encontrados")
 
-             col_config = {
-                 "BOLETA": st.column_config.Column(disabled=True),
-                 "Operação": st.column_config.Column(disabled=True),
-                 "Tipo de Energia": st.column_config.Column(disabled=True),
-                 "Parte": st.column_config.Column(disabled=True),
-                 "Contraparte Razão Social": st.column_config.Column(disabled=True),
-                 "Contraparte": st.column_config.Column(disabled=True),
-                 "CP/LP": st.column_config.Column(disabled=True),
-                 "CNPJ CONTRAPARTE": st.column_config.Column(disabled=True),
-                 "Submercado": st.column_config.Column(disabled=True),
-                 "Volume (MWh)": st.column_config.Column(disabled=True),
-                 "Volume MWm": st.column_config.Column(disabled=True),
-                 "CliqCCEE Paradigma": st.column_config.TextColumn(disabled=False),
-                 "Modulação WBC": st.column_config.Column(disabled=True),
-                 "Modulação Mínima": st.column_config.Column(disabled=True),
-                 "Modulação Máxima": st.column_config.Column(disabled=True),
-                 "Contrato CliqCCEE mês anterior": st.column_config.TextColumn(disabled=False),
-                 "Vendedor": st.column_config.TextColumn(disabled=False),
-                 "Comprador": st.column_config.TextColumn(disabled=False),
-                 "Contrato CliqCCEE": st.column_config.TextColumn(disabled=False),
-                 "Editado Manualmente": st.column_config.Column(disabled=True),
-             }
+            col_config = {
+                "BOLETA": st.column_config.Column(disabled=True),
+                "Operação": st.column_config.Column(disabled=True),
+                "Tipo de Energia": st.column_config.Column(disabled=True),
+                "Parte": st.column_config.Column(disabled=True),
+                "Contraparte Razão Social": st.column_config.Column(disabled=True),
+                "Contraparte": st.column_config.Column(disabled=True),
+                "CP/LP": st.column_config.Column(disabled=True),
+                "CNPJ CONTRAPARTE": st.column_config.Column(disabled=True),
+                "Submercado": st.column_config.Column(disabled=True),
+                "Volume (MWh)": st.column_config.Column(disabled=True),
+                "Volume MWm": st.column_config.Column(disabled=True),
+                "CliqCCEE Paradigma": st.column_config.TextColumn(disabled=False),
+                "Modulação WBC": st.column_config.Column(disabled=True),
+                "Modulação Mínima": st.column_config.Column(disabled=True),
+                "Modulação Máxima": st.column_config.Column(disabled=True),
+                "Contrato CliqCCEE mês anterior": st.column_config.TextColumn(disabled=False),
+                "Vendedor": st.column_config.TextColumn(disabled=False),
+                "Comprador": st.column_config.TextColumn(disabled=False),
+                "Contrato CliqCCEE": st.column_config.TextColumn(disabled=False),
+                "Editado Manualmente": st.column_config.Column(disabled=True),
+            }
 
             if flag_mesmo_titular:
                 styled = base_exibicao.style.apply(highlight_mesmo_titular, axis=1)
@@ -595,7 +595,7 @@ if arquivo is not None:
                     
                     base.loc[idx_real, "Editado Manualmente"] = True
                     for col, val in alteracoes.items():
-                        base.loc[idx_real, col] = val
+                        base.loc[idx_real, col] = str(val)
                         if col == "Contrato CliqCCEE":
                             if boleta_alvo not in st.session_state["contratos_editados_diretamente"]:
                                 st.session_state["contratos_editados_diretamente"].append(boleta_alvo)
@@ -603,7 +603,7 @@ if arquivo is not None:
                     if csvs_disponiveis and "Contrato CliqCCEE" not in alteracoes:
                         if boleta_alvo not in st.session_state["contratos_editados_diretamente"]:
                             novo_contrato = calcular_contrato_cliqccee(base.loc[idx_real])
-                            base.loc[idx_real, "Contrato CliqCCEE"] = novo_contrato
+                            base.loc[idx_real, "Contrato CliqCCEE"] = str(novo_contrato)
                 
                 st.session_state["base_editada"] = base.copy()
                 st.rerun()
