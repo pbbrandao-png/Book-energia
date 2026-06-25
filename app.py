@@ -42,7 +42,7 @@ def ler_csv_ccee(bytes_csv):
     if 'SITUACAO_CONTRATO' in df.columns:
         df = df[df['SITUACAO_CONTRATO'].str.strip().str.lower() != 'rascunho']
         
-    for col in ['CODIGO_CONTRATO', 'SIGLA_PERFIL_VENDEDOR', 'SIGLA_PERFIL_COMPRADOR', 'SUBMERCADO_ENTREGA']:
+    for col in ['CODIGO_CONTRATO', 'SIGLA_PERFIL_VENDEDOR', 'SIGLA_PERFIL_COMPRADOR', 'SUBMERCADO_ENTREGA', 'MWmedio']:
         if col in df.columns:
             df[col] = df[col].str.strip()
             
@@ -279,6 +279,83 @@ if arquivo is not None:
 
         base = st.session_state["base_editada"]
 
+        # ── COLUNA: Volume Book ──────────────────────────────────────────────────
+        # SOMA.SE.S: soma Volume MWm por Contrato CliqCCEE, ignorando "-" e vazios
+        _vol_mwm_num = pd.to_numeric(base["Volume MWm"], errors="coerce")
+        _mask_valido_book = _vol_mwm_num.notna() & (base["Volume MWm"].astype(str).str.strip() != "-")
+        _df_book = base[["Contrato CliqCCEE"]].copy()
+        _df_book["_vol_num"] = _vol_mwm_num.where(_mask_valido_book, 0.0)
+        _soma_book = _df_book.groupby("Contrato CliqCCEE")["_vol_num"].transform("sum")
+        base["Volume Book"] = _soma_book
+
+        # ── COLUNA: Volume CCEE ──────────────────────────────────────────────────
+        # Soma MWmedio dos CSVs agrupado por CODIGO_CONTRATO
+        if csvs_disponiveis:
+            _lista_dfs_ccee_vol = []
+            for _df_src in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
+                if _df_src is not None and not _df_src.empty and "CODIGO_CONTRATO" in _df_src.columns and "MWmedio" in _df_src.columns:
+                    _tmp = _df_src[["CODIGO_CONTRATO", "MWmedio"]].copy()
+                    _tmp["MWmedio"] = _tmp["MWmedio"].astype(str).str.strip().str.replace(",", ".", regex=False)
+                    _tmp["MWmedio"] = pd.to_numeric(_tmp["MWmedio"], errors="coerce").fillna(0.0)
+                    _lista_dfs_ccee_vol.append(_tmp)
+            if _lista_dfs_ccee_vol:
+                _df_ccee_vol = pd.concat(_lista_dfs_ccee_vol, ignore_index=True)
+                _vol_ccee_por_contrato = _df_ccee_vol.groupby("CODIGO_CONTRATO")["MWmedio"].sum()
+                base["Volume CCEE"] = base["Contrato CliqCCEE"].map(_vol_ccee_por_contrato).fillna(0.0)
+            else:
+                base["Volume CCEE"] = 0.0
+        else:
+            base["Volume CCEE"] = 0.0
+
+        # ── COLUNA: Check Volume ─────────────────────────────────────────────────
+        _tol = 1e-6
+        _vb = pd.to_numeric(base["Volume Book"], errors="coerce").fillna(0.0)
+        _vc = pd.to_numeric(base["Volume CCEE"], errors="coerce").fillna(0.0)
+        _diff_vol = _vb - _vc
+        base["Check Volume"] = "OK"
+        base.loc[_diff_vol > _tol, "Check Volume"] = "Book maior"
+        base.loc[_diff_vol < -_tol, "Check Volume"] = "CCEE maior"
+
+        # ── COLUNA: Volume Global ────────────────────────────────────────────────
+        # Soma Volume MWm por Vendedor + Comprador + Submercado
+        _df_global = base[["Vendedor", "Comprador", "Submercado"]].copy()
+        _df_global["_vol_num"] = _vol_mwm_num.where(_mask_valido_book, 0.0)
+        _soma_global = _df_global.groupby(["Vendedor", "Comprador", "Submercado"])["_vol_num"].transform("sum")
+        base["Volume Global"] = _soma_global
+
+        # ── COLUNA: Volume Global CCEE ───────────────────────────────────────────
+        # Agrupa CSVs CCEE por Vendedor (SIGLA_PERFIL_VENDEDOR) + Comprador (SIGLA_PERFIL_COMPRADOR) + Submercado (SUBMERCADO_ENTREGA)
+        if csvs_disponiveis:
+            _lista_dfs_global_ccee = []
+            for _df_src in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
+                if _df_src is not None and not _df_src.empty and "MWmedio" in _df_src.columns:
+                    _cols_need = ["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA", "MWmedio"]
+                    if all(c in _df_src.columns for c in _cols_need):
+                        _tmp2 = _df_src[_cols_need].copy()
+                        _tmp2["MWmedio"] = _tmp2["MWmedio"].astype(str).str.strip().str.replace(",", ".", regex=False)
+                        _tmp2["MWmedio"] = pd.to_numeric(_tmp2["MWmedio"], errors="coerce").fillna(0.0)
+                        _lista_dfs_global_ccee.append(_tmp2)
+            if _lista_dfs_global_ccee:
+                _df_gc = pd.concat(_lista_dfs_global_ccee, ignore_index=True)
+                _gc_sum = _df_gc.groupby(["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA"])["MWmedio"].sum()
+                _gc_sum.index.names = ["Vendedor", "Comprador", "Submercado"]
+                _gc_sum = _gc_sum.reset_index()
+                base = base.merge(_gc_sum, on=["Vendedor", "Comprador", "Submercado"], how="left")
+                base.rename(columns={"MWmedio": "Volume Global CCEE"}, inplace=True)
+                base["Volume Global CCEE"] = base["Volume Global CCEE"].fillna(0.0)
+            else:
+                base["Volume Global CCEE"] = 0.0
+        else:
+            base["Volume Global CCEE"] = 0.0
+
+        # ── COLUNA: Check Volume Global ──────────────────────────────────────────
+        _vg = pd.to_numeric(base["Volume Global"], errors="coerce").fillna(0.0)
+        _vgc = pd.to_numeric(base["Volume Global CCEE"], errors="coerce").fillna(0.0)
+        _diff_global = _vg - _vgc
+        base["Check Volume Global"] = "OK"
+        base.loc[_diff_global > _tol, "Check Volume Global"] = "Book maior"
+        base.loc[_diff_global < -_tol, "Check Volume Global"] = "CCEE maior"
+
         compras_net = base[base["Operação"] == "Compra"].groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume (MWh)"].sum().rename(columns={"Volume (MWh)": "Compra (MWh)"})
         vendas_net = base[base["Operação"] == "Venda"].groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume (MWh)"].sum().rename(columns={"Volume (MWh)": "Venda (MWh)"})
         nets = compras_net.merge(vendas_net, on=["Parte", "Contraparte", "Submercado", "Tipo de Energia"], how="inner")
@@ -335,6 +412,9 @@ if arquivo is not None:
                 "Modulação Máxima": st.column_config.Column(disabled=True), "Contrato CliqCCEE mês anterior": st.column_config.TextColumn(disabled=True),
                 "Vendedor": st.column_config.TextColumn(disabled=True), "Comprador": st.column_config.TextColumn(disabled=True),
                 "Contrato CliqCCEE": st.column_config.TextColumn(disabled=True), "Editado Manualmente": st.column_config.Column(disabled=True),
+                "Volume Book": st.column_config.Column(disabled=True), "Volume CCEE": st.column_config.Column(disabled=True),
+                "Check Volume": st.column_config.Column(disabled=True), "Volume Global": st.column_config.Column(disabled=True),
+                "Volume Global CCEE": st.column_config.Column(disabled=True), "Check Volume Global": st.column_config.Column(disabled=True),
             }
 
             if flag_mesmo_titular:
