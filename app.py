@@ -221,7 +221,7 @@ if arquivo is not None:
         base["Submercado"]                     = df["Submercado"].astype(str).str.strip().map(mapa_submercado).fillna(df["Submercado"])
         base["Volume (MWh)"]                   = df["QuantAtualizada"].round(3)
         base["Volume MWm"]                     = volume_mwm.round(6)
-        base["CliqCCEE Paradigma"]             = df["Codigo_CCEE"].fillna("-").astype(str)
+        base["CliqCCEE Paradigma"]             = df["Codigo_CCEE"].astype(str).fillna("-")
         base["Modulação WBC"]                  = df["Tipo_de_modulacao"].astype(str).str.strip().map(mapa_modulacao).fillna(df["Tipo_de_modulacao"])
         base["% Modulação Mínima"]             = df["FlexLimite_modulacaoMin"].fillna("-")
         base["% Modulação Máxima"]             = df["FlexLimite_modulacaoMax"].fillna("-")
