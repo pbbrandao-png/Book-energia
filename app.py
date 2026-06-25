@@ -169,15 +169,17 @@ if arquivo is not None:
                     df_aj_manual = df_aj_manual.dropna(subset=["BOLETA"])
                     df_aj_manual["BOLETA"] = df_aj_manual["BOLETA"].astype(str).str.strip().str.replace(".0", "", regex=False)
                     if "CliqCCEE Paradigma" in df_aj_manual.columns:
-                        mapa_ajuste_manual_paradigma = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["CliqCCEE Paradigma"]))
+                        vals = df_aj_manual["CliqCCEE Paradigma"].apply(lambda x: str(int(x)) if isinstance(x, float) and x == int(x) else str(x))
+                        mapa_ajuste_manual_paradigma = dict(zip(df_aj_manual["BOLETA"], vals))
                     if "Contraparte" in df_aj_manual.columns:
-                        mapa_ajuste_manual_contraparte = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["Contraparte"]))
+                        mapa_ajuste_manual_contraparte = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["Contraparte"].astype(str)))
                     if "Vendedor" in df_aj_manual.columns:
-                        mapa_ajuste_manual_vendedor = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["Vendedor"]))
+                        mapa_ajuste_manual_vendedor = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["Vendedor"].astype(str)))
                     if "Comprador" in df_aj_manual.columns:
-                        mapa_ajuste_manual_comprador = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["Comprador"]))
+                        mapa_ajuste_manual_comprador = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["Comprador"].astype(str)))
                     if "Contrato CliqCCEE" in df_aj_manual.columns:
-                        mapa_ajuste_manual_contrato = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["Contrato CliqCCEE"]))
+                        vals_ct = df_aj_manual["Contrato CliqCCEE"].apply(lambda x: str(int(x)) if isinstance(x, float) and x == int(x) else str(x))
+                        mapa_ajuste_manual_contrato = dict(zip(df_aj_manual["BOLETA"], vals_ct))
             except Exception as e_aj:
                 st.error(f"Erro ao ler planilha de Ajuste Manual: {e_aj}")
 
@@ -575,23 +577,26 @@ if arquivo is not None:
 
             if st.session_state.get("editor_base") and st.session_state["editor_base"].get("edited_rows"):
                 edicoes = st.session_state["editor_base"]["edited_rows"]
+                # base_exibicao pode estar filtrada, então precisa mapear para os índices reais de base
+                indices_reais = base_exibicao.index.tolist()
                 
-                # Usar índices do base completo, não do filtrado
-                for idx_str, alteracoes in edicoes.items():
-                    idx = int(idx_str)
-                    # idx já é o índice real do base completo
-                    base.loc[idx, "Editado Manualmente"] = True
-                    for col, val in alteracoes.items():
-                        # Se for número com .0, converter para inteiro
-                        if isinstance(val, float) and val == int(val):
-                            val = str(int(val))
-                        else:
-                            val = str(val)
-                        base.loc[idx, col] = val
-                    
-                    # Se alterou Vendedor/Comprador e não definiu manualmente o contrato, força revalidação rápida
-                    if csvs_disponiveis and "Contrato CliqCCEE" not in alteracoes:
-                        base.loc[idx, "Contrato CliqCCEE"] = str(calcular_contrato_cliqccee_fast(base.loc[idx]))
+                for idx_disp, alteracoes in edicoes.items():
+                    # idx_disp é o índice de exibição no data_editor (0, 1, 2, ...)
+                    # Precisa converter para o índice real
+                    if idx_disp < len(indices_reais):
+                        idx_real = indices_reais[idx_disp]
+                        base.loc[idx_real, "Editado Manualmente"] = True
+                        for col, val in alteracoes.items():
+                            # Se for número com .0, converter para inteiro
+                            if isinstance(val, float) and val == int(val):
+                                val = str(int(val))
+                            else:
+                                val = str(val)
+                            base.loc[idx_real, col] = val
+                        
+                        # Se alterou Vendedor/Comprador e não definiu manualmente o contrato, força revalidação rápida
+                        if csvs_disponiveis and "Contrato CliqCCEE" not in alteracoes:
+                            base.loc[idx_real, "Contrato CliqCCEE"] = str(calcular_contrato_cliqccee_fast(base.loc[idx_real]))
                         
                 st.session_state["base_editada"] = base.copy()
                 st.rerun()
