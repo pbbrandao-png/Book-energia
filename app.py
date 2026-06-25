@@ -168,7 +168,7 @@ if arquivo is not None:
         df_ccee_bismut = combiner_dfs([csvs_bismut['cceal']])
         df_ccee_acr = combiner_dfs([csvs_matrix['ccear_q']])
 
-        # CRIAÇÃO DOS ÍNDICES DE AGILIDADE (A mágica do ganho de velocidade está aqui)
+        # CRIAÇÃO DOS ÍNDICES DE AGILIDADE
         idx_m_chave, idx_m_v, idx_m_c, idx_m_s, set_m_ext, idx_m_min, idx_m_max, idx_m_tipo = criar_indices_busca(df_ccee_matrix)
         idx_b_chave, idx_b_v, idx_b_c, idx_b_s, set_b_ext, idx_b_min, idx_b_max, idx_b_tipo = criar_indices_busca(df_ccee_bismut)
         idx_a_chave, idx_a_v, idx_a_c, idx_a_s, set_a_ext, idx_a_min, idx_a_max, idx_a_tipo = criar_indices_busca(df_ccee_acr)
@@ -225,7 +225,6 @@ if arquivo is not None:
 
         csvs_disponiveis = any([not df_ccee_matrix.empty, not df_ccee_bismut.empty, not df_ccee_acr.empty])
 
-        # ROTEAMENTO VELOZ USANDO LOOKUP DICT (Substituindo funções aninhadas pesadas)
         if csvs_disponiveis:
             BISMUT_NOME_UPPER = "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A."
             
@@ -235,7 +234,6 @@ if arquivo is not None:
                 except:
                     b_int = -1
                 
-                # Seleciona o dicionário correto conforme roteamento de boletas
                 if b_int in BOLETAS_ACR:
                     d_ch, s_ext = idx_a_chave, set_a_ext
                 elif str(row["Parte"]).strip().upper() == BISMUT_NOME_UPPER:
@@ -245,12 +243,10 @@ if arquivo is not None:
                 
                 chave_esp = str(row["Vendedor"]).strip() + str(row["Comprador"]).strip() + str(row["Submercado"]).strip()
                 
-                # Testa mês anterior
                 c_ant = str(row["Contrato CliqCCEE mês anterior"]).strip()
                 if c_ant in s_ext:
                     return c_ant if d_ch.get(c_ant) == chave_esp else 'Verificar'
                 
-                # Fallback paradigma
                 c_par = str(row["CliqCCEE Paradigma"]).strip()
                 if c_par in s_ext:
                     return c_par if d_ch.get(c_par) == chave_esp else 'Verificar'
@@ -260,8 +256,6 @@ if arquivo is not None:
             base["Contrato CliqCCEE"] = base.apply(calcular_contrato_cliqccee_fast, axis=1).astype(str)
         else:
             base["Contrato CliqCCEE"] = "-"
-            if pagina == "Base Conferência":
-                st.info("ℹ️ Faça upload dos ZIPs para preencher a coluna 'Contrato CliqCCEE'.")
 
         if "base_editada" not in st.session_state:
             st.session_state["base_editada"] = base.copy()
@@ -286,7 +280,6 @@ if arquivo is not None:
         base = st.session_state["base_editada"]
 
         # ── COLUNA: Volume Book ──────────────────────────────────────────────────
-        # SOMA.SE.S: soma Volume MWm por Contrato CliqCCEE, ignorando "-" e vazios
         _vol_mwm_num = pd.to_numeric(base["Volume MWm"], errors="coerce")
         _mask_valido_book = _vol_mwm_num.notna() & (base["Volume MWm"].astype(str).str.strip() != "-")
         _df_book = base[["Contrato CliqCCEE"]].copy()
@@ -295,15 +288,20 @@ if arquivo is not None:
         base["Volume Book"] = _soma_book
 
         # ── CÁLCULO DAS COLUNAS DE MODULAÇÃO BOOK E CCEE ──────────────────
-        # Se NÃO possui contrato válido associado (vazio, "-", "None", "nan", "Verificar"), não faz o cálculo!
-        _mask_tem_contrato = ~base["Contrato CliqCCEE"].astype(str).str.strip().isin(["", "-", "None", "nan", "Verificar"])
-
         _vol_book_num = pd.to_numeric(base["Volume Book"], errors="coerce").fillna(0.0)
-        _pct_mod_min = pd.to_numeric(base["% Modulação Mínima"], errors="coerce").fillna(0.0)
-        _pct_mod_max = pd.to_numeric(base["% Modulação Máxima"], errors="coerce").fillna(0.0)
+        
+        # Converte as colunas de % para numérico para validar se são maiores do que zero
+        _num_mod_min = pd.to_numeric(base["% Modulação Mínima"], errors="coerce").fillna(0.0)
+        _num_mod_max = pd.to_numeric(base["% Modulação Máxima"], errors="coerce").fillna(0.0)
 
-        base["Modulação Mínima"] = (_vol_book_num * (1 - (_pct_mod_min / 100))).where(_mask_tem_contrato, "-")
-        base["Modulação Máxima"] = (_vol_book_num * (1 + (_pct_mod_max / 100))).where(_mask_tem_contrato, "-")
+        # Regra refinada: Só calcula se tiver Cliq E se a porcentagem correspondente for maior do que zero
+        _mask_tem_contrato = ~base["Contrato CliqCCEE"].astype(str).str.strip().isin(["", "-", "None", "nan", "Verificar"])
+        _mask_calcular_min = _mask_tem_contrato & (_num_mod_min > 0.0)
+        _mask_calcular_max = _mask_tem_contrato & (_num_mod_max > 0.0)
+
+        # Aplica a conta somente onde a máscara for verdadeira. Caso contrário, põe "-"
+        base["Modulação Mínima"] = (_vol_book_num * (1 - (_num_mod_min / 100))).where(_mask_calcular_min, "-")
+        base["Modulação Máxima"] = (_vol_book_num * (1 + (_num_mod_max / 100))).where(_mask_calcular_max, "-")
 
         if csvs_disponiveis:
             def buscar_campo_ccee(row, dict_m, dict_b, dict_a):
@@ -336,11 +334,10 @@ if arquivo is not None:
         
         # Check Modulação Mínima
         base["Check Modulação Mínima"] = "-"
-        _mod_min_bk = pd.to_numeric(base.loc[_mask_tem_contrato, "Modulação Mínima"], errors="coerce").fillna(0.0)
-        _mod_min_cc_str = base.loc[_mask_tem_contrato, "Modulação Mínima CCEE"].astype(str).str.replace(",", ".", regex=False)
+        _mod_min_cc_str = base.loc[_mask_calcular_min, "Modulação Mínima CCEE"].astype(str).str.replace(",", ".", regex=False)
         _mod_min_cc = pd.to_numeric(_mod_min_cc_str, errors="coerce")
         
-        _mask_min_valid = _mask_tem_contrato & _mod_min_cc.notna()
+        _mask_min_valid = _mask_calcular_min & _mod_min_cc.notna()
         if _mask_min_valid.any():
             _diff_min = pd.to_numeric(base.loc[_mask_min_valid, "Modulação Mínima"]) - _mod_min_cc.loc[_mask_min_valid]
             base.loc[_mask_min_valid, "Check Modulação Mínima"] = "OK"
@@ -349,18 +346,17 @@ if arquivo is not None:
 
         # Check Modulação Máxima
         base["Check Modulação Máxima"] = "-"
-        _mod_max_bk = pd.to_numeric(base.loc[_mask_tem_contrato, "Modulação Máxima"], errors="coerce").fillna(0.0)
-        _mod_max_cc_str = base.loc[_mask_tem_contrato, "Modulação Máxima CCEE"].astype(str).str.replace(",", ".", regex=False)
+        _mod_max_cc_str = base.loc[_mask_calcular_max, "Modulação Máxima CCEE"].astype(str).str.replace(",", ".", regex=False)
         _mod_max_cc = pd.to_numeric(_mod_max_cc_str, errors="coerce")
         
-        _mask_max_valid = _mask_tem_contrato & _mod_max_cc.notna()
+        _mask_max_valid = _mask_calcular_max & _mod_max_cc.notna()
         if _mask_max_valid.any():
             _diff_max = pd.to_numeric(base.loc[_mask_max_valid, "Modulação Máxima"]) - _mod_max_cc.loc[_mask_max_valid]
             base.loc[_mask_max_valid, "Check Modulação Máxima"] = "OK"
             base.loc[_mask_max_valid & (_diff_max > _tol_mod), "Check Modulação Máxima"] = "Book maior"
             base.loc[_mask_max_valid & (_diff_max < -_tol_mod), "Check Modulação Máxima"] = "CCEE maior"
 
-        # Check Modulação Tipo
+        # Check Modulação Tipo (Apenas se houver um tipo mapeado e preenchido na CCEE)
         base["Check Modulação"] = "-"
         _mask_tipo_valid = _mask_tem_contrato & (~base["Modulação CCEE"].astype(str).str.strip().isin(["", "-", "None", "nan"]))
         if _mask_tipo_valid.any():
@@ -368,7 +364,6 @@ if arquivo is not None:
             base.loc[_mask_tipo_valid, "Check Modulação"] = "OK"
             base.loc[_mask_tipo_valid & _mask_div_tipo, "Check Modulação"] = "Divergente"
 
-        # Reordenar colunas inserindo as novas nos locais corretos solicitados
         _ordem_colunas = [
             "BOLETA", "Operação", "Tipo de Energia", "Parte", "Contraparte Razão Social", "Contraparte",
             "CP/LP", "CNPJ CONTRAPARTE", "Submercado", "Volume (MWh)", "Volume MWm", "CliqCCEE Paradigma",
@@ -381,7 +376,6 @@ if arquivo is not None:
         base = base[[c for c in _ordem_colunas if c in base.columns]]
 
         # ── COLUNA: Volume CCEE ──────────────────────────────────────────────────
-        # Soma MWmedio dos CSVs agrupado por CODIGO_CONTRATO
         if csvs_disponiveis:
             _lista_dfs_ccee_vol = []
             for _df_src in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
@@ -409,14 +403,12 @@ if arquivo is not None:
         base.loc[_diff_vol < -_tol, "Check Volume"] = "CCEE maior"
 
         # ── COLUNA: Volume Global ────────────────────────────────────────────────
-        # Soma Volume MWm por Vendedor + Comprador + Submercado
         _df_global = base[["Vendedor", "Comprador", "Submercado"]].copy()
         _df_global["_vol_num"] = _vol_mwm_num.where(_mask_valido_book, 0.0)
         _soma_global = _df_global.groupby(["Vendedor", "Comprador", "Submercado"])["_vol_num"].transform("sum")
         base["Volume Global"] = _soma_global
 
         # ── COLUNA: Volume Global CCEE ───────────────────────────────────────────
-        # Agrupa CSVs CCEE por Vendedor (SIGLA_PERFIL_VENDEDOR) + Comprador (SIGLA_PERFIL_COMPRADOR) + Submercado (SUBMERCADO_ENTREGA)
         if csvs_disponiveis:
             _lista_dfs_global_ccee = []
             for _df_src in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
@@ -492,7 +484,6 @@ if arquivo is not None:
             base_exibicao["Volume (MWh)"] = base_exibicao["Volume (MWh)"].map(lambda x: f"{x:.3f}" if isinstance(x, (int, float)) else x)
             base_exibicao["Volume MWm"]   = base_exibicao["Volume MWm"].map(lambda x: f"{x:.6f}" if isinstance(x, (int, float)) else x)
             
-            # Formatando as colunas numéricas calculadas para exibição amigável apenas onde o valor é numérico
             for c_format in ["Modulação Mínima", "Modulação Máxima"]:
                 if c_format in base_exibicao.columns:
                     base_exibicao[c_format] = base_exibicao[c_format].map(lambda x: f"{x:.4f}" if isinstance(x, (int, float)) else x)
@@ -551,7 +542,6 @@ if arquivo is not None:
             with pd.ExcelWriter(output, engine="openpyxl") as writer: base_download.to_excel(writer, sheet_name="Base Conferência", index=False)
             st.download_button("📥 Download Base Conferência", data=output.getvalue(), file_name="Base_Conferencia.xlsx")
 
-            # ── CLASSIFICAÇÃO ULTRA RÁPIDA DE ERROS / SEM MATCH (Mapeamento Vetorizado) ──
             if csvs_disponiveis:
                 st.markdown("---")
                 lista_divergencias = []
@@ -559,12 +549,9 @@ if arquivo is not None:
 
                 BISMUT_NOME_UPPER = "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A."
 
-                # Varre a lista processando de maneira imediata com os dicionários em memória
                 for _, row in base.iterrows():
                     parte_limpa = str(row["Parte"]).strip().upper()
                     contraparte_limpa = str(row["Contraparte Razão Social"]).strip().upper()
-                    
-                    # Regra de ouro: Se for Intraportfólio (titular igual) ou o volume for 0, não precisa de match!
                     if parte_limpa == contraparte_limpa or float(row["Volume (MWh)"]) == 0.0:
                         continue
 
@@ -590,11 +577,8 @@ if arquivo is not None:
                             cod_encontrado = c
                             break
 
-                    # Correção: Se nenhum código foi passado ou encontrado, não assume imediatamente SEM_MATCH.
-                    # Verifica de forma reversa se o mercado (Vendedor + Comprador + Submercado) existe no arquivo CCEE relevante
                     if not cod_encontrado:
                         if chave_esp in d_ch.values():
-                            # Se a combinação de mercado existe no CSV, existe Match! Consideramos OK/Divergência em vez de Sem Match.
                             status, justificativa = "OK", None
                         else:
                             status, justificativa = "SEM_MATCH", "Contrato inexistente no CSV CCEE"
