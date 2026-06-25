@@ -294,13 +294,23 @@ if arquivo is not None:
             if not df_salvo.empty:
                 df_atual.set_index("BOLETA", inplace=True)
                 df_salvo.set_index("BOLETA", inplace=True)
-                # SOLUÇÃO DO ERRO: Remove índices duplicados do df_salvo para permitir o .update()
+                
+                # 1. Remove índices duplicados para evitar ValueError
                 df_salvo = df_salvo[~df_salvo.index.duplicated(keep='first')]
+                
+                # 2. Corrige TypeError forçando colunas comuns para o tipo primitivo 'object'
+                colunas_comuns = df_atual.columns.intersection(df_salvo.columns)
+                for col in colunas_comuns:
+                    df_atual[col] = df_atual[col].astype(object)
+                    df_salvo[col] = df_salvo[col].astype(object)
+                
+                # Realiza o update com segurança
                 df_atual.update(df_salvo)
                 df_atual.reset_index(inplace=True)
+                
                 if csvs_disponiveis:
                     linhas_para_recalcular = df_atual["Editado Manualmente"] & (~df_atual["BOLETA"].isin(st.session_state.get("contratos_editados_diretamente", [])))
-                    if linhas_para_recalcular.any():
+                    if lignes_para_recalcular.any():
                         df_atual.loc[linhas_para_recalcular, "Contrato CliqCCEE"] = df_atual[linhas_para_recalcular].apply(calcular_contrato_cliqccee_fast, axis=1).astype(str)
                 base = df_atual
             else:
