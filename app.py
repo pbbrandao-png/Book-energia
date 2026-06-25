@@ -86,7 +86,7 @@ def combiner_dfs(lista):
 
 def criar_indices_busca(df_ccee):
     """Mapeia os códigos da CCEE em dicionários para busca em tempo de execução O(1)."""
-    if df_ccee.empty:
+    if df_ccee is None or df_ccee.empty:
         return {}, {}, {}, {}, {}
     
     # Remove duplicados mantendo o primeiro registro válido
@@ -153,7 +153,7 @@ if arquivo is not None:
             csvs.update(csvs_matrix)
         if zip_bismut is not None:
             csvs_bismut = extrair_csvs_zip(zip_bismut)
-            if csvs_bismut['cceal']:
+            if csvs_bismut['cceal'] is not None and not csvs_bismut['cceal'].empty:
                 csvs['cceal_bismut'] = csvs_bismut['cceal']
 
         idx_a_chave, idx_a_v, idx_a_c, idx_a_s, set_a_ext = criar_indices_busca(csvs.get('ccear_q'))
