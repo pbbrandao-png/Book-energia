@@ -42,7 +42,8 @@ def ler_csv_ccee(bytes_csv):
     if 'SITUACAO_CONTRATO' in df.columns:
         df = df[df['SITUACAO_CONTRATO'].str.strip().str.lower() != 'rascunho']
         
-    for col in ['CODIGO_CONTRATO', 'SIGLA_PERFIL_VENDEDOR', 'SIGLA_PERFIL_COMPRADOR', 'SUBMERCADO_ENTREGA', 'MWmedio']:
+    for col in ['CODIGO_CONTRATO', 'SIGLA_PERFIL_VENDEDOR', 'SIGLA_PERFIL_COMPRADOR', 'SUBMERCADO_ENTREGA', 'MWmedio',
+                'LIMITE_MINIMO_MODULACAO_MW', 'LIMITE_MAXIMO_MODULACAO_MW', 'TIPO_MODULACAO']:
         if col in df.columns:
             df[col] = df[col].str.strip()
             
@@ -196,8 +197,8 @@ if arquivo is not None:
         base["Volume MWm"]                     = volume_mwm.round(6)
         base["CliqCCEE Paradigma"]             = df["Codigo_CCEE"].fillna("-").astype(str)
         base["Modulação WBC"]                  = df["Tipo_de_modulacao"].astype(str).str.strip().map(mapa_modulacao).fillna(df["Tipo_de_modulacao"])
-        base["Modulação Mínima"]               = df["FlexLimite_modulacaoMin"].fillna("-")
-        base["Modulação Máxima"]               = df["FlexLimite_modulacaoMax"].fillna("-")
+        base["% Modulação Mínima"]             = df["FlexLimite_modulacaoMin"].fillna("-")
+        base["% Modulação Máxima"]             = df["FlexLimite_modulacaoMax"].fillna("-")
         base["Contrato CliqCCEE mês anterior"] = base["BOLETA"].map(mapa_mes_anterior).fillna("-").astype(str)
         base["Vendedor"]                       = df["Sigla_CCEE_vendedor"].fillna("-").astype(str)
         base["Comprador"]                      = df["Sigla_CCEE_comprador"].fillna("-").astype(str)
@@ -356,6 +357,80 @@ if arquivo is not None:
         base.loc[_diff_global > _tol, "Check Volume Global"] = "Book maior"
         base.loc[_diff_global < -_tol, "Check Volume Global"] = "CCEE maior"
 
+        # ── COLUNA: Modulação Mínima (calculada) ────────────────────────────────
+        # Volume Book × (1 - (% Modulação Mínima / 100))
+        _pct_min = pd.to_numeric(base["% Modulação Mínima"], errors="coerce")
+        _vol_book_num = pd.to_numeric(base["Volume Book"], errors="coerce").fillna(0.0)
+        base["Modulação Mínima"] = (_vol_book_num * (1 - (_pct_min / 100))).where(_pct_min.notna(), other=None)
+
+        # ── COLUNA: Modulação Máxima (calculada) ────────────────────────────────
+        # Volume Book × (1 + (% Modulação Máxima / 100))
+        _pct_max = pd.to_numeric(base["% Modulação Máxima"], errors="coerce")
+        base["Modulação Máxima"] = (_vol_book_num * (1 + (_pct_max / 100))).where(_pct_max.notna(), other=None)
+
+        # ── COLUNAS: Modulação Mínima CCEE, Modulação Máxima CCEE, Modulação CCEE ──
+        if csvs_disponiveis:
+            _lista_dfs_mod_ccee = []
+            for _df_src in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
+                if _df_src is not None and not _df_src.empty and "CODIGO_CONTRATO" in _df_src.columns:
+                    _cols_mod = ["CODIGO_CONTRATO"]
+                    for _cm in ["LIMITE_MINIMO_MODULACAO_MW", "LIMITE_MAXIMO_MODULACAO_MW", "TIPO_MODULACAO"]:
+                        if _cm in _df_src.columns:
+                            _cols_mod.append(_cm)
+                    _tmp_mod = _df_src[_cols_mod].drop_duplicates(subset=["CODIGO_CONTRATO"]).copy()
+                    _lista_dfs_mod_ccee.append(_tmp_mod)
+            if _lista_dfs_mod_ccee:
+                _df_mod_ccee = pd.concat(_lista_dfs_mod_ccee, ignore_index=True).drop_duplicates(subset=["CODIGO_CONTRATO"])
+                _map_mod_min = dict(zip(_df_mod_ccee["CODIGO_CONTRATO"], _df_mod_ccee.get("LIMITE_MINIMO_MODULACAO_MW", pd.Series(dtype=str)))) if "LIMITE_MINIMO_MODULACAO_MW" in _df_mod_ccee.columns else {}
+                _map_mod_max = dict(zip(_df_mod_ccee["CODIGO_CONTRATO"], _df_mod_ccee.get("LIMITE_MAXIMO_MODULACAO_MW", pd.Series(dtype=str)))) if "LIMITE_MAXIMO_MODULACAO_MW" in _df_mod_ccee.columns else {}
+                _map_tipo_mod = dict(zip(_df_mod_ccee["CODIGO_CONTRATO"], _df_mod_ccee.get("TIPO_MODULACAO", pd.Series(dtype=str)))) if "TIPO_MODULACAO" in _df_mod_ccee.columns else {}
+                base["Modulação Mínima CCEE"] = base["Contrato CliqCCEE"].map(_map_mod_min)
+                base["Modulação Máxima CCEE"] = base["Contrato CliqCCEE"].map(_map_mod_max)
+                base["Modulação CCEE"] = base["Contrato CliqCCEE"].map(_map_tipo_mod)
+            else:
+                base["Modulação Mínima CCEE"] = None
+                base["Modulação Máxima CCEE"] = None
+                base["Modulação CCEE"] = None
+        else:
+            base["Modulação Mínima CCEE"] = None
+            base["Modulação Máxima CCEE"] = None
+            base["Modulação CCEE"] = None
+
+        # ── COLUNA: Check Modulação ──────────────────────────────────────────────
+        # Compara Modulação WBC vs Modulação CCEE
+        _mod_wbc = base["Modulação WBC"].astype(str).str.strip().str.upper()
+        _mod_ccee_str = base["Modulação CCEE"].fillna("").astype(str).str.strip().str.upper()
+        base["Check Modulação"] = base["Modulação CCEE"].apply(lambda x: "-" if pd.isna(x) or str(x).strip() == "" else "")
+        base.loc[base["Check Modulação"] == "", "Check Modulação"] = (
+            (_mod_wbc == _mod_ccee_str).map({True: "OK", False: "Divergente"})
+        )
+
+        # ── COLUNA: Check Modulação Mínima ──────────────────────────────────────
+        _mod_min_calc = pd.to_numeric(base["Modulação Mínima"], errors="coerce")
+        _mod_min_ccee_num = pd.to_numeric(
+            base["Modulação Mínima CCEE"].astype(str).str.replace(",", ".", regex=False),
+            errors="coerce"
+        )
+        _diff_mod_min = _mod_min_calc - _mod_min_ccee_num
+        base["Check Modulação Mínima"] = "-"
+        _mask_mod_min_valido = _mod_min_calc.notna() & _mod_min_ccee_num.notna()
+        base.loc[_mask_mod_min_valido & (_diff_mod_min.abs() <= _tol), "Check Modulação Mínima"] = "OK"
+        base.loc[_mask_mod_min_valido & (_diff_mod_min > _tol), "Check Modulação Mínima"] = "Book maior"
+        base.loc[_mask_mod_min_valido & (_diff_mod_min < -_tol), "Check Modulação Mínima"] = "CCEE maior"
+
+        # ── COLUNA: Check Modulação Máxima ──────────────────────────────────────
+        _mod_max_calc = pd.to_numeric(base["Modulação Máxima"], errors="coerce")
+        _mod_max_ccee_num = pd.to_numeric(
+            base["Modulação Máxima CCEE"].astype(str).str.replace(",", ".", regex=False),
+            errors="coerce"
+        )
+        _diff_mod_max = _mod_max_calc - _mod_max_ccee_num
+        base["Check Modulação Máxima"] = "-"
+        _mask_mod_max_valido = _mod_max_calc.notna() & _mod_max_ccee_num.notna()
+        base.loc[_mask_mod_max_valido & (_diff_mod_max.abs() <= _tol), "Check Modulação Máxima"] = "OK"
+        base.loc[_mask_mod_max_valido & (_diff_mod_max > _tol), "Check Modulação Máxima"] = "Book maior"
+        base.loc[_mask_mod_max_valido & (_diff_mod_max < -_tol), "Check Modulação Máxima"] = "CCEE maior"
+
         compras_net = base[base["Operação"] == "Compra"].groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume (MWh)"].sum().rename(columns={"Volume (MWh)": "Compra (MWh)"})
         vendas_net = base[base["Operação"] == "Venda"].groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume (MWh)"].sum().rename(columns={"Volume (MWh)": "Venda (MWh)"})
         nets = compras_net.merge(vendas_net, on=["Parte", "Contraparte", "Submercado", "Tipo de Energia"], how="inner")
@@ -408,13 +483,17 @@ if arquivo is not None:
                 "CP/LP": st.column_config.Column(disabled=True), "CNPJ CONTRAPARTE": st.column_config.Column(disabled=True),
                 "Submercado": st.column_config.Column(disabled=True), "Volume (MWh)": st.column_config.Column(disabled=True),
                 "Volume MWm": st.column_config.Column(disabled=True), "CliqCCEE Paradigma": st.column_config.TextColumn(disabled=False),
-                "Modulação WBC": st.column_config.Column(disabled=True), "Modulação Mínima": st.column_config.Column(disabled=True),
-                "Modulação Máxima": st.column_config.Column(disabled=True), "Contrato CliqCCEE mês anterior": st.column_config.TextColumn(disabled=True),
+                "Modulação WBC": st.column_config.Column(disabled=True), "% Modulação Mínima": st.column_config.Column(disabled=True),
+                "% Modulação Máxima": st.column_config.Column(disabled=True), "Contrato CliqCCEE mês anterior": st.column_config.TextColumn(disabled=True),
                 "Vendedor": st.column_config.TextColumn(disabled=True), "Comprador": st.column_config.TextColumn(disabled=True),
                 "Contrato CliqCCEE": st.column_config.TextColumn(disabled=True), "Editado Manualmente": st.column_config.Column(disabled=True),
                 "Volume Book": st.column_config.Column(disabled=True), "Volume CCEE": st.column_config.Column(disabled=True),
                 "Check Volume": st.column_config.Column(disabled=True), "Volume Global": st.column_config.Column(disabled=True),
                 "Volume Global CCEE": st.column_config.Column(disabled=True), "Check Volume Global": st.column_config.Column(disabled=True),
+                "Modulação Mínima": st.column_config.Column(disabled=True), "Modulação Máxima": st.column_config.Column(disabled=True),
+                "Modulação Mínima CCEE": st.column_config.Column(disabled=True), "Modulação Máxima CCEE": st.column_config.Column(disabled=True),
+                "Modulação CCEE": st.column_config.Column(disabled=True), "Check Modulação": st.column_config.Column(disabled=True),
+                "Check Modulação Mínima": st.column_config.Column(disabled=True), "Check Modulação Máxima": st.column_config.Column(disabled=True),
             }
 
             if flag_mesmo_titular:
