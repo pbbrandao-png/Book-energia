@@ -582,7 +582,12 @@ if arquivo is not None:
                     idx_real = indices_exibicao[idx]
                     base.loc[idx_real, "Editado Manualmente"] = True
                     for col, val in alteracoes.items():
-                        base.loc[idx_real, col] = str(val)
+                        # Se for número com .0, converter para inteiro
+                        if isinstance(val, float) and val == int(val):
+                            val = str(int(val))
+                        else:
+                            val = str(val)
+                        base.loc[idx_real, col] = val
                     
                     # Se alterou Vendedor/Comprador e não definiu manualmente o contrato, força revalidação rápida
                     if csvs_disponiveis and "Contrato CliqCCEE" not in alteracoes:
