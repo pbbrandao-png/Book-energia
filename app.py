@@ -121,7 +121,8 @@ def highlight_mesmo_titular(row):
 # ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Book Energia", layout="wide")
 
-pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético", "Arquivos CCEE"])
+# Aba "Arquivos CCEE" removida do menu lateral
+pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético"])
 st.title("📊 Book Energia")
 
 arquivo = st.file_uploader("Selecione a RelPers", type=["xlsx", "xlsm"])
@@ -145,18 +146,21 @@ if arquivo is not None:
         else:
             mapa_mes_anterior = {}
 
-        mapa_ajuste_manual_paradigma = {}
-        mapa_ajuste_manual_contraparte = {}
+        mapa_ajuste_manual_vendedor = {}
+        mapa_ajuste_manual_comprador = {}
+        mapa_ajuste_manual_contrato = {}
         if arquivo_ajuste_manual is not None:
             try:
                 df_aj_manual = pd.read_excel(arquivo_ajuste_manual)
                 if "BOLETA" in df_aj_manual.columns:
                     df_aj_manual = df_aj_manual.dropna(subset=["BOLETA"])
                     df_aj_manual["BOLETA"] = df_aj_manual["BOLETA"].astype(str).str.strip().str.replace(".0", "", regex=False)
-                    if "CliqCCEE Paradigma" in df_aj_manual.columns:
-                        mapa_ajuste_manual_paradigma = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["CliqCCEE Paradigma"]))
-                    if "Contraparte" in df_aj_manual.columns:
-                        mapa_ajuste_manual_contraparte = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["Contraparte"]))
+                    if "VENDEDOR" in df_aj_manual.columns:
+                        mapa_ajuste_manual_vendedor = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["VENDEDOR"]))
+                    if "COMPRADOR" in df_aj_manual.columns:
+                        mapa_ajuste_manual_comprador = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["COMPRADOR"]))
+                    if "Contrato CliqCCEE" in df_aj_manual.columns:
+                        mapa_ajuste_manual_contrato = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["Contrato CliqCCEE"]))
             except Exception as e_aj:
                 st.error(f"Erro ao ler planilha de Ajuste Manual: {e_aj}")
 
@@ -203,7 +207,15 @@ if arquivo is not None:
         base["CliqCCEE Paradigma"]             = df["Codigo_CCEE"].fillna("-").astype(str)
         base["Modulação WBC"]                  = df["Tipo_de_modulacao"].astype(str).str.strip().map(mapa_modulacao).fillna(df["Tipo_de_modulacao"])
         base["% Modulação Mínima"]             = df["FlexLimite_modulacaoMin"].fillna("-")
+        base["Modulação Mínima"]               = "-"
+        base["Modulação Mínima CCEE"]          = "-"
+        base["Check Modulação Mínima"]         = "-"
         base["% Modulação Máxima"]             = df["FlexLimite_modulacaoMax"].fillna("-")
+        base["Modulação Máxima"]               = "-"
+        base["Modulação Máxima CCEE"]          = "-"
+        base["Check Modulação Máxima"]         = "-"
+        base["Modulação CCEE"]                 = "-"
+        base["Check Modulação"]                = "-"
         base["Contrato CliqCCEE mês anterior"] = base["BOLETA"].map(mapa_mes_anterior).fillna("-").astype(str)
         base["Vendedor"]                       = df["Sigla_CCEE_vendedor"].fillna("-").astype(str)
         base["Comprador"]                      = df["Sigla_CCEE_comprador"].fillna("-").astype(str)
@@ -211,14 +223,24 @@ if arquivo is not None:
 
         # Aplicação rápida dos ajustes via map de chaves strings
         boletas_str = base["BOLETA"].astype(str).str.strip().str.replace(".0", "", regex=False)
-        if mapa_ajuste_manual_paradigma:
-            aj_p = boletas_str.map(mapa_ajuste_manual_paradigma)
-            base["CliqCCEE Paradigma"] = aj_p.fillna(base["CliqCCEE Paradigma"])
-            base["Editado Manualmente"] = base["Editado Manualmente"] | aj_p.notna()
-        if mapa_ajuste_manual_contraparte:
-            aj_c = boletas_str.map(mapa_ajuste_manual_contraparte)
-            base["Contraparte"] = aj_c.fillna(base["Contraparte"])
+        if mapa_ajuste_manual_vendedor:
+            aj_v = boletas_str.map(mapa_ajuste_manual_vendedor)
+            base["Vendedor"] = aj_v.fillna(base["Vendedor"])
+            base["Editado Manualmente"] = base["Editado Manualmente"] | aj_v.notna()
+        if mapa_ajuste_manual_comprador:
+            aj_c = boletas_str.map(mapa_ajuste_manual_comprador)
+            base["Comprador"] = aj_c.fillna(base["Comprador"])
             base["Editado Manualmente"] = base["Editado Manualmente"] | aj_c.notna()
+        if mapa_ajuste_manual_contrato:
+            aj_ct = boletas_str.map(mapa_ajuste_manual_contrato)
+            base["Contrato CliqCCEE"] = aj_ct.fillna("-")
+            base["Editado Manualmente"] = base["Editado Manualmente"] | aj_ct.notna()
+            # Registra no session state para não recalcular via regra CCEE o que foi forçado no Excel
+            if "contratos_editados_diretamente" not in st.session_state:
+                st.session_state["contratos_editados_diretamente"] = []
+            for b_idx, b_val in enumerate(boletas_str):
+                if b_val in mapa_ajuste_manual_contrato and b_val not in st.session_state["contratos_editados_diretamente"]:
+                    st.session_state["contratos_editados_diretamente"].append(base.iloc[b_idx]["BOLETA"])
 
         mask_mesmo_titular = base["Parte"].str.strip().str.upper() == base["Contraparte Razão Social"].str.strip().str.upper()
         base.loc[mask_mesmo_titular, ["Volume (MWh)", "Volume MWm"]] = 0.0
@@ -253,9 +275,16 @@ if arquivo is not None:
                 
                 return '-'
 
-            base["Contrato CliqCCEE"] = base.apply(calcular_contrato_cliqccee_fast, axis=1).astype(str)
+            # Só calcula via automação CCEE as linhas que NÃO vieram preenchidas do ajuste manual
+            if "Contrato CliqCCEE" not in base.columns:
+                base["Contrato CliqCCEE"] = base.apply(calcular_contrato_cliqccee_fast, axis=1).astype(str)
+            else:
+                mask_n_definido = base["Contrato CliqCCEE"] == "-"
+                if mask_n_definido.any():
+                    base.loc[mask_n_definido, "Contrato CliqCCEE"] = base[mask_n_definido].apply(calcular_contrato_cliqccee_fast, axis=1).astype(str)
         else:
-            base["Contrato CliqCCEE"] = "-"
+            if "Contrato CliqCCEE" not in base.columns:
+                base["Contrato CliqCCEE"] = "-"
 
         if "base_editada" not in st.session_state:
             st.session_state["base_editada"] = base.copy()
