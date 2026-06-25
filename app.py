@@ -310,7 +310,7 @@ if arquivo is not None:
                 
                 if csvs_disponiveis:
                     linhas_para_recalcular = df_atual["Editado Manualmente"] & (~df_atual["BOLETA"].isin(st.session_state.get("contratos_editados_diretamente", [])))
-                    if lignes_para_recalcular.any():
+                    if linhas_para_recalcular.any():
                         df_atual.loc[linhas_para_recalcular, "Contrato CliqCCEE"] = df_atual[linhas_para_recalcular].apply(calcular_contrato_cliqccee_fast, axis=1).astype(str)
                 base = df_atual
             else:
