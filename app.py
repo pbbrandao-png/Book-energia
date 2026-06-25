@@ -140,6 +140,11 @@ if arquivo is not None:
             mask_rateio_interno = df["Parte_razao_social"].astype(str).str.strip().str.upper() == df["Contraparte_razao_social"].astype(str).str.strip().str.upper()
             df = df[~mask_rateio_interno].reset_index(drop=True)
 
+        # ── EXCLUSÃO DE RATEIOS COM Codigo_WBC == Numero_referencia_contrato E Rateio == "SIM" ──
+        if "Codigo_WBC" in df.columns and "Numero_referencia_contrato" in df.columns and "Rateio" in df.columns:
+            mask_rateio_duplicado = (df["Codigo_WBC"].astype(str).str.strip() == df["Numero_referencia_contrato"].astype(str).str.strip()) & (df["Rateio"].astype(str).str.strip().str.upper() == "SIM")
+            df = df[~mask_rateio_duplicado].reset_index(drop=True)
+
         horas_mes = {
             1: 744, 2: 672, 3: 744, 4: 720, 5: 744, 6: 720,
             7: 744, 8: 744, 9: 720, 10: 744, 11: 720, 12: 744
@@ -398,149 +403,36 @@ if arquivo is not None:
         _ordem_colunas = [
             "BOLETA", "Operação", "Tipo de Energia", "Parte", "Contraparte Razão Social", "Contraparte",
             "CP/LP", "CNPJ CONTRAPARTE", "Submercado", "Volume (MWh)", "Volume MWm", "CliqCCEE Paradigma",
-            "Modulação WBC", "% Modulação Mínima", "Modulação Mínima", "Modulação Mínima CCEE", "Check Modulação Mínima",
-            "% Modulação Máxima", "Modulação Máxima", "Modulação Máxima CCEE", "Check Modulação Máxima",
-            "Modulação CCEE", "Check Modulação",
-            "Contrato CliqCCEE mês anterior", "Vendedor", "Comprador", "Contrato CliqCCEE", "Editado Manualmente",
-            "Volume Book", "Volume CCEE", "Check Volume", "Volume Global", "Volume Global CCEE", "Check Volume Global"
+            "Contrato CliqCCEE mês anterior", "Contrato CliqCCEE", "Volume Book",
+            "Modulação WBC", "% Modulação Mínima", "% Modulação Máxima",
+            "Modulação Mínima", "Modulação Máxima", "Modulação Mínima CCEE", "Modulação Máxima CCEE",
+            "Check Modulação Mínima", "Check Modulação Máxima", "Modulação CCEE", "Check Modulação",
+            "Vendedor", "Comprador", "Editado Manualmente"
         ]
-        base = base[[c for c in _ordem_colunas if c in base.columns]]
+        _cols_ordenadas = [c for c in _ordem_colunas if c in base.columns] + [c for c in base.columns if c not in _ordem_colunas]
+        base = base[_cols_ordenadas]
 
-        # ── COLUNA: Volume CCEE ──────────────────────────────────────────────────
-        if csvs_disponiveis:
-            _lista_dfs_ccee_vol = []
-            for _df_src in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
-                if _df_src is not None and not _df_src.empty and "CODIGO_CONTRATO" in _df_src.columns and "MWmedio" in _df_src.columns:
-                    _tmp = _df_src[["CODIGO_CONTRATO", "MWmedio"]].copy()
-                    _tmp["MWmedio"] = _tmp["MWmedio"].astype(str).str.strip().str.replace(",", ".", regex=False)
-                    _tmp["MWmedio"] = pd.to_numeric(_tmp["MWmedio"], errors="coerce").fillna(0.0)
-                    _lista_dfs_ccee_vol.append(_tmp)
-            if _lista_dfs_ccee_vol:
-                _df_ccee_vol = pd.concat(_lista_dfs_ccee_vol, ignore_index=True)
-                _vol_ccee_por_contrato = _df_ccee_vol.groupby("CODIGO_CONTRATO")["MWmedio"].sum()
-                base["Volume CCEE"] = base["Contrato CliqCCEE"].map(_vol_ccee_por_contrato).fillna(0.0)
-            else:
-                base["Volume CCEE"] = 0.0
-        else:
-            base["Volume CCEE"] = 0.0
-
-        # ── COLUNA: Check Volume ─────────────────────────────────────────────────
-        _tol = 1e-6
-        _vb = pd.to_numeric(base["Volume Book"], errors="coerce").fillna(0.0)
-        _vc = pd.to_numeric(base["Volume CCEE"], errors="coerce").fillna(0.0)
-        _diff_vol = _vb - _vc
-        base["Check Volume"] = "OK"
-        base.loc[_diff_vol > _tol, "Check Volume"] = "Book maior"
-        base.loc[_diff_vol < -_tol, "Check Volume"] = "CCEE maior"
-
-        # ── COLUNA: Volume Global ────────────────────────────────────────────────
-        _df_global = base[["Vendedor", "Comprador", "Submercado"]].copy()
-        _df_global["_vol_num"] = _vol_mwm_num.where(_mask_valido_book, 0.0)
-        _soma_global = _df_global.groupby(["Vendedor", "Comprador", "Submercado"])["_vol_num"].transform("sum")
-        base["Volume Global"] = _soma_global
-
-        # ── COLUNA: Volume Global CCEE ───────────────────────────────────────────
-        if csvs_disponiveis:
-            _lista_dfs_global_ccee = []
-            for _df_src in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
-                if _df_src is not None and not _df_src.empty and "MWmedio" in _df_src.columns:
-                    _cols_need = ["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA", "MWmedio"]
-                    if all(c in _df_src.columns for c in _cols_need):
-                        _tmp2 = _df_src[_cols_need].copy()
-                        _tmp2["MWmedio"] = _tmp2["MWmedio"].astype(str).str.strip().str.replace(",", ".", regex=False)
-                        _tmp2["MWmedio"] = pd.to_numeric(_tmp2["MWmedio"], errors="coerce").fillna(0.0)
-                        _lista_dfs_global_ccee.append(_tmp2)
-            if _lista_dfs_global_ccee:
-                _df_gc = pd.concat(_lista_dfs_global_ccee, ignore_index=True)
-                _gc_sum = _df_gc.groupby(["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA"])["MWmedio"].sum()
-                _gc_sum.index.names = ["Vendedor", "Comprador", "Submercado"]
-                _gc_sum = _gc_sum.reset_index()
-                base = base.merge(_gc_sum, on=["Vendedor", "Comprador", "Submercado"], how="left")
-                base.rename(columns={"MWmedio": "Volume Global CCEE"}, inplace=True)
-                base["Volume Global CCEE"] = base["Volume Global CCEE"].fillna(0.0)
-            else:
-                base["Volume Global CCEE"] = 0.0
-        else:
-            base["Volume Global CCEE"] = 0.0
-
-        # ── COLUNA: Check Volume Global ──────────────────────────────────────────
-        _vg = pd.to_numeric(base["Volume Global"], errors="coerce").fillna(0.0)
-        _vgc = pd.to_numeric(base["Volume Global CCEE"], errors="coerce").fillna(0.0)
-        _diff_global = _vg - _vgc
-        base["Check Volume Global"] = "OK"
-        base.loc[_diff_global > _tol, "Check Volume Global"] = "Book maior"
-        base.loc[_diff_global < -_tol, "Check Volume Global"] = "CCEE maior"
-
-        compras_net = base[base["Operação"] == "Compra"].groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume (MWh)"].sum().rename(columns={"Volume (MWh)": "Compra (MWh)"})
-        vendas_net = base[base["Operação"] == "Venda"].groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume (MWh)"].sum().rename(columns={"Volume (MWh)": "Venda (MWh)"})
-        nets = compras_net.merge(vendas_net, on=["Parte", "Contraparte", "Submercado", "Tipo de Energia"], how="inner")
+        nets = base.groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"]).agg({"Volume (MWh)": "sum"}).reset_index()
+        nets["Saldo"] = nets["Volume (MWh)"]
+        nets = nets[nets["Saldo"] != 0]
+        if not nets.empty:
+            nets = nets.sort_values("Saldo", ascending=False)
 
         if pagina == "Base Conferência":
-            st.subheader("Base Conferência")
-            total_contratos = len(base)
-            total_compras = len(base[base['Operação'].str.upper() == 'COMPRA'])
-            total_vendas = len(base[base['Operação'].str.upper() == 'VENDA'])
-
-            col_metric1, col_metric2, col_metric3 = st.columns(3)
-            col_metric1.metric(label="Total de Contratos (Sem Rateios)", value=total_contratos)
-            col_metric2.metric(label="Contratos de Compra 📥", value=total_compras)
-            col_metric3.metric(label="Contratos de Venda 📤", value=total_vendas)
-            st.markdown("---")
-
-            col_flag1, col_flag2 = st.columns(2)
-            with col_flag1: flag_mesmo_titular = st.toggle("🟡 Ocultar IntraPortifólio Visualmente", value=True)
-            with col_flag2: flag_ocultar_zerados = st.toggle("🚫 Ocultar contratos zerados (Volume MWh = 0)", value=False)
+            st.subheader("📋 Base Conferência")
+            flag_ocultar_zerados = st.checkbox("Ocultar zerados", value=False)
+            flag_mesmo_titular = st.checkbox("Destacar Parte == Contraparte", value=False)
 
             base_exibicao = base.copy()
-            st.markdown("### 🔎 Filtros")
-            col_f1, col_f2, col_f3 = st.columns(3)
-            with col_f1: filtro_operacao = st.multiselect("Operação", options=sorted(base_exibicao["Operação"].dropna().unique()), default=[])
-            with col_f2: filtro_status = st.multiselect("Contrato CliqCCEE", options=sorted(base_exibicao["Contrato CliqCCEE"].dropna().astype(str).unique()), default=[])
-            with col_f3: filtro_submercado = st.multiselect("Submercado", options=sorted(base_exibicao["Submercado"].dropna().astype(str).unique()), default=[])
+            if flag_ocultar_zerados:
+                base_exibicao = base_exibicao[base_exibicao["Volume (MWh)"] != 0.0]
 
-            col_f4, col_f5, col_f6 = st.columns(3)
-            with col_f4: filtro_parte = st.text_input("Parte")
-            with col_f5: filtro_contraparte = st.text_input("Contraparte")
-            with col_f6: filtro_boleta = st.text_input("Boleta")
-
-            if filtro_operacao: base_exibicao = base_exibicao[base_exibicao["Operação"].isin(filtro_operacao)]
-            if filtro_status: base_exibicao = base_exibicao[base_exibicao["Contrato CliqCCEE"].astype(str).isin(filtro_status)]
-            if filtro_submercado: base_exibicao = base_exibicao[base_exibicao["Submercado"].astype(str).isin(filtro_submercado)]
-            if filtro_parte: base_exibicao = base_exibicao[base_exibicao["Parte"].astype(str).str.contains(filtro_parte, case=False, na=False)]
-            if filtro_contraparte: base_exibicao = base_exibicao[base_exibicao["Contraparte"].astype(str).str.contains(filtro_contraparte, case=False, na=False)]
-            if filtro_boleta: base_exibicao = base_exibicao[base_exibicao["BOLETA"].astype(str).str.contains(filtro_boleta, case=False, na=False)]
-
-            if flag_ocultar_zerados: base_exibicao = base_exibicao[base_exibicao["Volume (MWh)"] != 0.0]
-
-            base_exibicao["Volume (MWh)"] = base_exibicao["Volume (MWh)"].map(lambda x: f"{x:.3f}" if isinstance(x, (int, float)) else x)
-            base_exibicao["Volume MWm"]   = base_exibicao["Volume MWm"].map(lambda x: f"{x:.6f}" if isinstance(x, (int, float)) else x)
-            
-            for c_format in ["Modulação Mínima", "Modulação Máxima"]:
-                if c_format in base_exibicao.columns:
-                    base_exibicao[c_format] = base_exibicao[c_format].map(lambda x: f"{x:.4f}" if isinstance(x, (int, float)) else x)
-
-            st.caption(f"{len(base_exibicao):,} registros encontrados")
-
-            # ── CONFIGURAÇÃO DE COLUNAS: LIBERADO VENDEDOR, COMPRADOR E CONTRATO CLIQCCEE ──
             col_config = {
-                "BOLETA": st.column_config.Column(disabled=True), "Operação": st.column_config.Column(disabled=True),
-                "Tipo de Energia": st.column_config.Column(disabled=True), "Parte": st.column_config.Column(disabled=True),
-                "Contraparte Razão Social": st.column_config.Column(disabled=True), "Contraparte": st.column_config.TextColumn(disabled=False),
-                "CP/LP": st.column_config.Column(disabled=True), "CNPJ CONTRAPARTE": st.column_config.Column(disabled=True),
-                "Submercado": st.column_config.Column(disabled=True), "Volume (MWh)": st.column_config.Column(disabled=True),
-                "Volume MWm": st.column_config.Column(disabled=True), "CliqCCEE Paradigma": st.column_config.TextColumn(disabled=False),
-                "Modulação WBC": st.column_config.Column(disabled=True), 
-                "% Modulação Mínima": st.column_config.Column(disabled=True), "Modulação Mínima": st.column_config.Column(disabled=True), "Modulação Mínima CCEE": st.column_config.Column(disabled=True), "Check Modulação Mínima": st.column_config.Column(disabled=True),
-                "% Modulação Máxima": st.column_config.Column(disabled=True), "Modulação Máxima": st.column_config.Column(disabled=True), "Modulação Máxima CCEE": st.column_config.Column(disabled=True), "Check Modulação Máxima": st.column_config.Column(disabled=True),
-                "Modulação CCEE": st.column_config.Column(disabled=True), "Check Modulação": st.column_config.Column(disabled=True),
-                "Contrato CliqCCEE mês anterior": st.column_config.TextColumn(disabled=True),
-                "Vendedor": st.column_config.TextColumn(disabled=False),     # Liberado para ajuste interativo
-                "Comprador": st.column_config.TextColumn(disabled=False),    # Liberado para ajuste interativo
-                "Contrato CliqCCEE": st.column_config.TextColumn(disabled=False), # Liberado para ajuste interativo
-                "Editado Manualmente": st.column_config.Column(disabled=True),
-                "Volume Book": st.column_config.Column(disabled=True), "Volume CCEE": st.column_config.Column(disabled=True),
-                "Check Volume": st.column_config.Column(disabled=True), "Volume Global": st.column_config.Column(disabled=True),
-                "Volume Global CCEE": st.column_config.Column(disabled=True), "Check Volume Global": st.column_config.Column(disabled=True),
+                "BOLETA": st.column_config.TextColumn(disabled=True),
+                "Volume (MWh)": st.column_config.NumberColumn(disabled=True),
+                "Volume MWm": st.column_config.NumberColumn(disabled=True),
+                "Volume Book": st.column_config.NumberColumn(disabled=True),
+                "Editado Manualmente": st.column_config.CheckboxColumn(disabled=True),
             }
 
             if flag_mesmo_titular:
@@ -581,6 +473,11 @@ if arquivo is not None:
                 for _, row in base.iterrows():
                     try: b_int = int(float(str(row["BOLETA"]).strip()))
                     except: b_int = -1
+
+                    # Ignora contratos com volume zerado
+                    volume = float(row.get("Volume (MWh)", 0))
+                    if volume == 0:
+                        continue
 
                     if b_int in BOLETAS_ACR:
                         d_ch, d_v, d_c, d_s, s_ext = idx_a_chave, idx_a_v, idx_a_c, idx_a_s, set_a_ext
