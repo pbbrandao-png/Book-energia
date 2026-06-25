@@ -1,4 +1,4 @@
-# APP_BOOK_ENERGIA_V20 - VERSÃO DE ALTA PERFORMANCE (OTIMIZADA)
+# APP_BOOK_ENERGIA_V21 - VERSÃO DE ALTA PERFORMANCE (OTIMIZADA)
 # Coluna "Contrato CliqCCEE" via CSVs extraídos dos ZIPs Matrix e Bismut
 # Boletas ACR (lista fixa) → ccear_q (extraído do ZIP Matrix)
 # Matrix (não-Bismut, não-ACR) → cceal_firme + cbr_mercado_proprio (ZIP Matrix)
@@ -6,6 +6,7 @@
 # V17: + Contraparte Razão Social | highlight amarelo Parte==Contraparte | flag ocultar zerados
 # V19: + Ajuste Manual via Planilha | Separação de Erros de Divergência e Sem Match Nenhum nos CSVs
 # V20: + Otimização massiva de performance + Regra de ignorar Intraportfólio/Zerados nas tabelas de erro
+# V21: + Liberação das colunas para ajuste interativo + Remoção total de rateios (Auto-referência)
 
 import streamlit as st
 import pandas as pd
@@ -121,7 +122,7 @@ def highlight_mesmo_titular(row):
 # ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Book Energia", layout="wide")
 
-pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético"])
+pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético", "Arquivos CCEE"])
 st.title("📊 Book Energia")
 
 arquivo = st.file_uploader("Selecione a RelPers", type=["xlsx", "xlsm"])
@@ -134,6 +135,11 @@ if arquivo is not None:
     try:
         df = pd.read_excel(arquivo, header=8)
 
+        # ── EXCLUSÃO TOTAL DOS RATEIOS (PRÓPRIA REFERÊNCIA / INTRA-PORTFÓLIO) ──
+        if "Parte_razao_social" in df.columns and "Contraparte_razao_social" in df.columns:
+            mask_rateio_interno = df["Parte_razao_social"].astype(str).str.strip().str.upper() == df["Contraparte_razao_social"].astype(str).str.strip().str.upper()
+            df = df[~mask_rateio_interno].reset_index(drop=True)
+
         horas_mes = {
             1: 744, 2: 672, 3: 744, 4: 720, 5: 744, 6: 720,
             7: 744, 8: 744, 9: 720, 10: 744, 11: 720, 12: 744
@@ -145,19 +151,26 @@ if arquivo is not None:
         else:
             mapa_mes_anterior = {}
 
+        mapa_ajuste_manual_paradigma = {}
+        mapa_ajuste_manual_contraparte = {}
         mapa_ajuste_manual_vendedor = {}
         mapa_ajuste_manual_comprador = {}
         mapa_ajuste_manual_contrato = {}
+        
         if arquivo_ajuste_manual is not None:
             try:
                 df_aj_manual = pd.read_excel(arquivo_ajuste_manual)
                 if "BOLETA" in df_aj_manual.columns:
                     df_aj_manual = df_aj_manual.dropna(subset=["BOLETA"])
                     df_aj_manual["BOLETA"] = df_aj_manual["BOLETA"].astype(str).str.strip().str.replace(".0", "", regex=False)
-                    if "VENDEDOR" in df_aj_manual.columns:
-                        mapa_ajuste_manual_vendedor = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["VENDEDOR"]))
-                    if "COMPRADOR" in df_aj_manual.columns:
-                        mapa_ajuste_manual_comprador = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["COMPRADOR"]))
+                    if "CliqCCEE Paradigma" in df_aj_manual.columns:
+                        mapa_ajuste_manual_paradigma = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["CliqCCEE Paradigma"]))
+                    if "Contraparte" in df_aj_manual.columns:
+                        mapa_ajuste_manual_contraparte = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["Contraparte"]))
+                    if "Vendedor" in df_aj_manual.columns:
+                        mapa_ajuste_manual_vendedor = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["Vendedor"]))
+                    if "Comprador" in df_aj_manual.columns:
+                        mapa_ajuste_manual_comprador = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["Comprador"]))
                     if "Contrato CliqCCEE" in df_aj_manual.columns:
                         mapa_ajuste_manual_contrato = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["Contrato CliqCCEE"]))
             except Exception as e_aj:
@@ -206,43 +219,35 @@ if arquivo is not None:
         base["CliqCCEE Paradigma"]             = df["Codigo_CCEE"].fillna("-").astype(str)
         base["Modulação WBC"]                  = df["Tipo_de_modulacao"].astype(str).str.strip().map(mapa_modulacao).fillna(df["Tipo_de_modulacao"])
         base["% Modulação Mínima"]             = df["FlexLimite_modulacaoMin"].fillna("-")
-        base["Modulação Mínima"]               = "-"
-        base["Modulação Mínima CCEE"]          = "-"
-        base["Check Modulação Mínima"]         = "-"
         base["% Modulação Máxima"]             = df["FlexLimite_modulacaoMax"].fillna("-")
-        base["Modulação Máxima"]               = "-"
-        base["Modulação Máxima CCEE"]          = "-"
-        base["Check Modulação Máxima"]         = "-"
-        base["Modulação CCEE"]                 = "-"
-        base["Check Modulação"]                = "-"
         base["Contrato CliqCCEE mês anterior"] = base["BOLETA"].map(mapa_mes_anterior).fillna("-").astype(str)
         base["Vendedor"]                       = df["Sigla_CCEE_vendedor"].fillna("-").astype(str)
         base["Comprador"]                      = df["Sigla_CCEE_comprador"].fillna("-").astype(str)
+        base["Contrato CliqCCEE"]              = "-"
         base["Editado Manualmente"]            = False
 
-        # Aplicação rápida dos ajustes via map de chaves strings
+        # Aplicação rápida dos ajustes de planilha externa
         boletas_str = base["BOLETA"].astype(str).str.strip().str.replace(".0", "", regex=False)
+        if mapa_ajuste_manual_paradigma:
+            aj_p = boletas_str.map(mapa_ajuste_manual_paradigma)
+            base["CliqCCEE Paradigma"] = aj_p.fillna(base["CliqCCEE Paradigma"])
+            base["Editado Manualmente"] = base["Editado Manualmente"] | aj_p.notna()
+        if mapa_ajuste_manual_contraparte:
+            aj_c = boletas_str.map(mapa_ajuste_manual_contraparte)
+            base["Contraparte"] = aj_c.fillna(base["Contraparte"])
+            base["Editado Manualmente"] = base["Editado Manualmente"] | aj_c.notna()
         if mapa_ajuste_manual_vendedor:
             aj_v = boletas_str.map(mapa_ajuste_manual_vendedor)
             base["Vendedor"] = aj_v.fillna(base["Vendedor"])
             base["Editado Manualmente"] = base["Editado Manualmente"] | aj_v.notna()
         if mapa_ajuste_manual_comprador:
-            aj_c = boletas_str.map(mapa_ajuste_manual_comprador)
-            base["Comprador"] = aj_c.fillna(base["Comprador"])
-            base["Editado Manualmente"] = base["Editado Manualmente"] | aj_c.notna()
+            aj_co = boletas_str.map(mapa_ajuste_manual_comprador)
+            base["Comprador"] = aj_co.fillna(base["Comprador"])
+            base["Editado Manualmente"] = base["Editado Manualmente"] | aj_co.notna()
         if mapa_ajuste_manual_contrato:
             aj_ct = boletas_str.map(mapa_ajuste_manual_contrato)
             base["Contrato CliqCCEE"] = aj_ct.fillna("-")
             base["Editado Manualmente"] = base["Editado Manualmente"] | aj_ct.notna()
-            # Registra no session state para não recalcular via regra CCEE o que foi forçado no Excel
-            if "contratos_editados_diretamente" not in st.session_state:
-                st.session_state["contratos_editados_diretamente"] = []
-            for b_idx, b_val in enumerate(boletas_str):
-                if b_val in mapa_ajuste_manual_contrato and b_val not in st.session_state["contratos_editados_diretamente"]:
-                    st.session_state["contratos_editados_diretamente"].append(base.iloc[b_idx]["BOLETA"])
-
-        mask_mesmo_titular = base["Parte"].str.strip().str.upper() == base["Contraparte Razão Social"].str.strip().str.upper()
-        base.loc[mask_mesmo_titular, ["Volume (MWh)", "Volume MWm"]] = 0.0
 
         csvs_disponiveis = any([not df_ccee_matrix.empty, not df_ccee_bismut.empty, not df_ccee_acr.empty])
 
@@ -250,6 +255,9 @@ if arquivo is not None:
             BISMUT_NOME_UPPER = "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A."
             
             def calcular_contrato_cliqccee_fast(row):
+                if str(row.get("Contrato CliqCCEE", "-")).strip() not in ["", "-", "None", "nan"]:
+                    if row.get("Editado Manualmente") and str(row["Contrato CliqCCEE"]) != "Verificar":
+                        return str(row["Contrato CliqCCEE"])
                 try:
                     b_int = int(float(str(row["BOLETA"]).strip()))
                 except:
@@ -274,16 +282,12 @@ if arquivo is not None:
                 
                 return '-'
 
-            # Só calcula via automação CCEE as linhas que NÃO vieram preenchidas do ajuste manual
-            if "Contrato CliqCCEE" not in base.columns:
-                base["Contrato CliqCCEE"] = base.apply(calcular_contrato_cliqccee_fast, axis=1).astype(str)
-            else:
-                mask_n_definido = base["Contrato CliqCCEE"] == "-"
-                if mask_n_definido.any():
-                    base.loc[mask_n_definido, "Contrato CliqCCEE"] = base[mask_n_definido].apply(calcular_contrato_cliqccee_fast, axis=1).astype(str)
+            # Só roda para quem não foi forçado fixo pelo Excel anterior
+            mask_auto = base["Contrato CliqCCEE"] == "-"
+            if mask_auto.any():
+                base.loc[mask_auto, "Contrato CliqCCEE"] = base[mask_auto].apply(calcular_contrato_cliqccee_fast, axis=1).astype(str)
         else:
-            if "Contrato CliqCCEE" not in base.columns:
-                base["Contrato CliqCCEE"] = "-"
+            base["Contrato CliqCCEE"] = "-"
 
         if "base_editada" not in st.session_state:
             st.session_state["base_editada"] = base.copy()
@@ -295,23 +299,14 @@ if arquivo is not None:
                 df_atual.set_index("BOLETA", inplace=True)
                 df_salvo.set_index("BOLETA", inplace=True)
                 
-                # 1. Remove índices duplicados para evitar ValueError
                 df_salvo = df_salvo[~df_salvo.index.duplicated(keep='first')]
-                
-                # 2. Corrige TypeError forçando colunas comuns para o tipo primitivo 'object'
                 colunas_comuns = df_atual.columns.intersection(df_salvo.columns)
                 for col in colunas_comuns:
                     df_atual[col] = df_atual[col].astype(object)
                     df_salvo[col] = df_salvo[col].astype(object)
                 
-                # Realiza o update com segurança
                 df_atual.update(df_salvo)
                 df_atual.reset_index(inplace=True)
-                
-                if csvs_disponiveis:
-                    linhas_para_recalcular = df_atual["Editado Manualmente"] & (~df_atual["BOLETA"].isin(st.session_state.get("contratos_editados_diretamente", [])))
-                    if linhas_para_recalcular.any():
-                        df_atual.loc[linhas_para_recalcular, "Contrato CliqCCEE"] = df_atual[linhas_para_recalcular].apply(calcular_contrato_cliqccee_fast, axis=1).astype(str)
                 base = df_atual
             else:
                 base = df_atual
@@ -329,17 +324,13 @@ if arquivo is not None:
 
         # ── CÁLCULO DAS COLUNAS DE MODULAÇÃO BOOK E CCEE ──────────────────
         _vol_book_num = pd.to_numeric(base["Volume Book"], errors="coerce").fillna(0.0)
-        
-        # Converte as colunas de % para numérico para validar se são maiores do que zero
         _num_mod_min = pd.to_numeric(base["% Modulação Mínima"], errors="coerce").fillna(0.0)
         _num_mod_max = pd.to_numeric(base["% Modulação Máxima"], errors="coerce").fillna(0.0)
 
-        # Regra refinada: Só calcula se tiver Cliq E se a porcentagem correspondente for maior do que zero
         _mask_tem_contrato = ~base["Contrato CliqCCEE"].astype(str).str.strip().isin(["", "-", "None", "nan", "Verificar"])
         _mask_calcular_min = _mask_tem_contrato & (_num_mod_min > 0.0)
         _mask_calcular_max = _mask_tem_contrato & (_num_mod_max > 0.0)
 
-        # Aplica a conta somente onde a máscara for verdadeira. Caso contrário, põe "-"
         base["Modulação Mínima"] = (_vol_book_num * (1 - (_num_mod_min / 100))).where(_mask_calcular_min, "-")
         base["Modulação Máxima"] = (_vol_book_num * (1 + (_num_mod_max / 100))).where(_mask_calcular_max, "-")
 
@@ -396,7 +387,7 @@ if arquivo is not None:
             base.loc[_mask_max_valid & (_diff_max > _tol_mod), "Check Modulação Máxima"] = "Book maior"
             base.loc[_mask_max_valid & (_diff_max < -_tol_mod), "Check Modulação Máxima"] = "CCEE maior"
 
-        # Check Modulação Tipo (Apenas se houver um tipo mapeado e preenchido na CCEE)
+        # Check Modulação Tipo
         base["Check Modulação"] = "-"
         _mask_tipo_valid = _mask_tem_contrato & (~base["Modulação CCEE"].astype(str).str.strip().isin(["", "-", "None", "nan"]))
         if _mask_tipo_valid.any():
@@ -491,13 +482,13 @@ if arquivo is not None:
             total_vendas = len(base[base['Operação'].str.upper() == 'VENDA'])
 
             col_metric1, col_metric2, col_metric3 = st.columns(3)
-            col_metric1.metric(label="Total de Contratos", value=total_contratos)
+            col_metric1.metric(label="Total de Contratos (Sem Rateios)", value=total_contratos)
             col_metric2.metric(label="Contratos de Compra 📥", value=total_compras)
             col_metric3.metric(label="Contratos de Venda 📤", value=total_vendas)
             st.markdown("---")
 
             col_flag1, col_flag2 = st.columns(2)
-            with col_flag1: flag_mesmo_titular = st.toggle("🟡 Ocultar IntraPortifólio", value=True)
+            with col_flag1: flag_mesmo_titular = st.toggle("🟡 Ocultar IntraPortifólio Visualmente", value=True)
             with col_flag2: flag_ocultar_zerados = st.toggle("🚫 Ocultar contratos zerados (Volume MWh = 0)", value=False)
 
             base_exibicao = base.copy()
@@ -530,6 +521,7 @@ if arquivo is not None:
 
             st.caption(f"{len(base_exibicao):,} registros encontrados")
 
+            # ── CONFIGURAÇÃO DE COLUNAS: LIBERADO VENDEDOR, COMPRADOR E CONTRATO CLIQCCEE ──
             col_config = {
                 "BOLETA": st.column_config.Column(disabled=True), "Operação": st.column_config.Column(disabled=True),
                 "Tipo de Energia": st.column_config.Column(disabled=True), "Parte": st.column_config.Column(disabled=True),
@@ -542,8 +534,10 @@ if arquivo is not None:
                 "% Modulação Máxima": st.column_config.Column(disabled=True), "Modulação Máxima": st.column_config.Column(disabled=True), "Modulação Máxima CCEE": st.column_config.Column(disabled=True), "Check Modulação Máxima": st.column_config.Column(disabled=True),
                 "Modulação CCEE": st.column_config.Column(disabled=True), "Check Modulação": st.column_config.Column(disabled=True),
                 "Contrato CliqCCEE mês anterior": st.column_config.TextColumn(disabled=True),
-                "Vendedor": st.column_config.TextColumn(disabled=True), "Comprador": st.column_config.TextColumn(disabled=True),
-                "Contrato CliqCCEE": st.column_config.TextColumn(disabled=True), "Editado Manualmente": st.column_config.Column(disabled=True),
+                "Vendedor": st.column_config.TextColumn(disabled=False),     # Liberado para ajuste interativo
+                "Comprador": st.column_config.TextColumn(disabled=False),    # Liberado para ajuste interativo
+                "Contrato CliqCCEE": st.column_config.TextColumn(disabled=False), # Liberado para ajuste interativo
+                "Editado Manualmente": st.column_config.Column(disabled=True),
                 "Volume Book": st.column_config.Column(disabled=True), "Volume CCEE": st.column_config.Column(disabled=True),
                 "Check Volume": st.column_config.Column(disabled=True), "Volume Global": st.column_config.Column(disabled=True),
                 "Volume Global CCEE": st.column_config.Column(disabled=True), "Check Volume Global": st.column_config.Column(disabled=True),
@@ -558,21 +552,18 @@ if arquivo is not None:
             if st.session_state.get("editor_base") and st.session_state["editor_base"].get("edited_rows"):
                 edicoes = st.session_state["editor_base"]["edited_rows"]
                 indices_exibicao = base_exibicao.index.tolist()
-                if "contratos_editados_diretamente" not in st.session_state:
-                    st.session_state["contratos_editados_diretamente"] = []
 
                 for idx_str, alteracoes in edicoes.items():
                     idx = int(idx_str)
                     idx_real = indices_exibicao[idx]
-                    boleta_alvo = base.loc[idx_real, "BOLETA"]
                     base.loc[idx_real, "Editado Manualmente"] = True
                     for col, val in alteracoes.items():
                         base.loc[idx_real, col] = str(val)
-                        if col == "Contrato CliqCCEE" and boleta_alvo not in st.session_state["contratos_editados_diretamente"]:
-                            st.session_state["contratos_editados_diretamente"].append(boleta_alvo)
+                    
+                    # Se alterou Vendedor/Comprador e não definiu manualmente o contrato, força revalidação rápida
                     if csvs_disponiveis and "Contrato CliqCCEE" not in alteracoes:
-                        if boleta_alvo not in st.session_state["contratos_editados_diretamente"]:
-                            base.loc[idx_real, "Contrato CliqCCEE"] = str(calcular_contrato_cliqccee_fast(base.loc[idx_real]))
+                        base.loc[idx_real, "Contrato CliqCCEE"] = str(calcular_contrato_cliqccee_fast(base.loc[idx_real]))
+                        
                 st.session_state["base_editada"] = base.copy()
                 st.rerun()
 
@@ -587,20 +578,13 @@ if arquivo is not None:
                 lista_divergencias = []
                 lista_sem_match_nenhum = []
 
-                BISMUT_NOME_UPPER = "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A."
-
                 for _, row in base.iterrows():
-                    parte_limpa = str(row["Parte"]).strip().upper()
-                    contraparte_limpa = str(row["Contraparte Razão Social"]).strip().upper()
-                    if parte_limpa == contraparte_limpa or float(row["Volume (MWh)"]) == 0.0:
-                        continue
-
                     try: b_int = int(float(str(row["BOLETA"]).strip()))
                     except: b_int = -1
 
                     if b_int in BOLETAS_ACR:
                         d_ch, d_v, d_c, d_s, s_ext = idx_a_chave, idx_a_v, idx_a_c, idx_a_s, set_a_ext
-                    elif parte_limpa == BISMUT_NOME_UPPER:
+                    elif str(row["Parte"]).strip().upper() == "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A.":
                         d_ch, d_v, d_c, d_s, s_ext = idx_b_chave, idx_b_v, idx_b_c, idx_b_s, set_b_ext
                     else:
                         d_ch, d_v, d_c, d_s, s_ext = idx_m_chave, idx_m_v, idx_m_c, idx_m_s, set_m_ext
@@ -647,7 +631,6 @@ if arquivo is not None:
                 df_sem_match_nenhum = pd.DataFrame(lista_sem_match_nenhum, columns=["Boleta", "Vendedor", "Comprador", "Mensagem"])
 
                 st.subheader("❌ Contratos com Divergência (Existem no CSV, mas dados não batem)")
-                st.caption(f"{len(df_divergencias):,} contrato(s) com divergência encontrado(s)")
                 st.dataframe(df_divergencias, use_container_width=True, hide_index=True)
 
                 output_div = BytesIO()
@@ -656,7 +639,6 @@ if arquivo is not None:
                 st.markdown("---")
 
                 st.subheader("🔍 Contratos Sem Match Nenhum (Inexistentes no CSV CCEE)")
-                st.caption(f"{len(df_sem_match_nenhum):,} contrato(s) não localizados nos arquivos da CCEE")
                 st.dataframe(df_sem_match_nenhum, use_container_width=True, hide_index=True)
 
                 output_sm = BytesIO()
