@@ -325,19 +325,6 @@ if arquivo is not None:
 
         base = st.session_state["base_editada"]
 
-        # ── GARANTIR QUE TODAS AS COLUNAS TEXT SEJAM STRING (para compatibilidade com data_editor) ──
-        colunas_texto = [
-            "BOLETA", "Operação", "Tipo de Energia", "Parte", "Contraparte Razão Social",
-            "Contraparte", "CP/LP", "CNPJ CONTRAPARTE", "Submercado", "CliqCCEE Paradigma",
-            "Contrato CliqCCEE mês anterior", "Contrato CliqCCEE", "Modulação WBC",
-            "% Modulação Mínima", "% Modulação Máxima", "Modulação Mínima", "Modulação Máxima",
-            "Modulação Mínima CCEE", "Modulação Máxima CCEE", "Check Modulação Mínima",
-            "Check Modulação Máxima", "Modulação CCEE", "Check Modulação", "Vendedor", "Comprador"
-        ]
-        for col in colunas_texto:
-            if col in base.columns:
-                base[col] = base[col].astype(str)
-
         # ── COLUNA: Volume Book ──────────────────────────────────────────────────
         _vol_mwm_num = pd.to_numeric(base["Volume MWm"], errors="coerce")
         _mask_valido_book = _vol_mwm_num.notna() & (base["Volume MWm"].astype(str).str.strip() != "-")
@@ -545,6 +532,19 @@ if arquivo is not None:
 
             st.caption(f"{len(base_exibicao):,} registros encontrados")
 
+            # Converter para string apenas para exibição (evita .0 no data_editor)
+            colunas_texto = [
+                "BOLETA", "Operação", "Tipo de Energia", "Parte", "Contraparte Razão Social",
+                "Contraparte", "CP/LP", "CNPJ CONTRAPARTE", "Submercado", "CliqCCEE Paradigma",
+                "Contrato CliqCCEE mês anterior", "Contrato CliqCCEE", "Modulação WBC",
+                "% Modulação Mínima", "% Modulação Máxima", "Modulação Mínima", "Modulação Máxima",
+                "Modulação Mínima CCEE", "Modulação Máxima CCEE", "Check Modulação Mínima",
+                "Check Modulação Máxima", "Modulação CCEE", "Check Modulação", "Vendedor", "Comprador"
+            ]
+            for col in colunas_texto:
+                if col in base_exibicao.columns:
+                    base_exibicao[col] = base_exibicao[col].astype(str)
+
             # ── CONFIGURAÇÃO DE COLUNAS: LIBERADO VENDEDOR, COMPRADOR E CONTRATO CLIQCCEE ──
             col_config = {
                 "BOLETA": st.column_config.Column(disabled=True), "Operação": st.column_config.Column(disabled=True),
@@ -575,23 +575,23 @@ if arquivo is not None:
 
             if st.session_state.get("editor_base") and st.session_state["editor_base"].get("edited_rows"):
                 edicoes = st.session_state["editor_base"]["edited_rows"]
-                indices_exibicao = base_exibicao.index.tolist()
-
+                
+                # Usar índices do base completo, não do filtrado
                 for idx_str, alteracoes in edicoes.items():
                     idx = int(idx_str)
-                    idx_real = indices_exibicao[idx]
-                    base.loc[idx_real, "Editado Manualmente"] = True
+                    # idx já é o índice real do base completo
+                    base.loc[idx, "Editado Manualmente"] = True
                     for col, val in alteracoes.items():
                         # Se for número com .0, converter para inteiro
                         if isinstance(val, float) and val == int(val):
                             val = str(int(val))
                         else:
                             val = str(val)
-                        base.loc[idx_real, col] = val
+                        base.loc[idx, col] = val
                     
                     # Se alterou Vendedor/Comprador e não definiu manualmente o contrato, força revalidação rápida
                     if csvs_disponiveis and "Contrato CliqCCEE" not in alteracoes:
-                        base.loc[idx_real, "Contrato CliqCCEE"] = str(calcular_contrato_cliqccee_fast(base.loc[idx_real]))
+                        base.loc[idx, "Contrato CliqCCEE"] = str(calcular_contrato_cliqccee_fast(base.loc[idx]))
                         
                 st.session_state["base_editada"] = base.copy()
                 st.rerun()
