@@ -209,6 +209,12 @@ if arquivo is not None:
         horas_por_linha = df["Mes"].map(horas_mes)
         volume_mwm = (df["QuantAtualizada"] / horas_por_linha).round(6)
 
+        # Converter Codigo_CCEE para string antes de usar
+        codigo_ccee_str = df["Codigo_CCEE"].fillna("").astype(str).str.strip()
+        codigo_ccee_str = codigo_ccee_str.replace("nan", "-")
+        codigo_ccee_str = codigo_ccee_str.replace("", "-")
+        codigo_ccee_str = codigo_ccee_str.apply(lambda x: "-" if x == "0" or x == "" else x)
+
         base = pd.DataFrame()
         base["BOLETA"]                         = df["Codigo_WBC"]
         base["Operação"]                       = df["Movimentacao"]
@@ -221,7 +227,7 @@ if arquivo is not None:
         base["Submercado"]                     = df["Submercado"].astype(str).str.strip().map(mapa_submercado).fillna(df["Submercado"])
         base["Volume (MWh)"]                   = df["QuantAtualizada"].round(3)
         base["Volume MWm"]                     = volume_mwm.round(6)
-        base["CliqCCEE Paradigma"]             = df["Codigo_CCEE"].astype(str).fillna("-")
+        base["CliqCCEE Paradigma"]             = codigo_ccee_str
         base["Modulação WBC"]                  = df["Tipo_de_modulacao"].astype(str).str.strip().map(mapa_modulacao).fillna(df["Tipo_de_modulacao"])
         base["% Modulação Mínima"]             = df["FlexLimite_modulacaoMin"].fillna("-")
         base["% Modulação Máxima"]             = df["FlexLimite_modulacaoMax"].fillna("-")
