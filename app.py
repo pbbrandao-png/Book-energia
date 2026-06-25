@@ -12,6 +12,9 @@ import pandas as pd
 import zipfile
 from io import BytesIO
 
+# Configura o limite do Pandas Styler para evitar o erro de estouro de células devido ao aumento de colunas
+pd.set_option("styler.render.max_elements", 2000000)
+
 # Boletas que devem buscar no CSV ccear_q em vez do cceal_firme
 BOLETAS_ACR = {
     122387, 122389, 122391, 122393, 122395, 122397, 122399, 122401,
@@ -42,7 +45,7 @@ def ler_csv_ccee(bytes_csv):
     if 'SITUACAO_CONTRATO' in df.columns:
         df = df[df['SITUACAO_CONTRATO'].str.strip().str.lower() != 'rascunho']
         
-    for col in ['CODIGO_CONTRATO', 'SIGLA_PERFIL_VENDEDOR', 'SIGLA_PERFIL_COMPRADOR', 'SUBMERCADO_ENTREGA', 'MWmedio']:
+    for col in ['CODIGO_CONTRATO', 'SIGLA_PERFIL_VENDEDOR', 'SIGLA_PERFIL_COMPRADOR', 'SUBMERCADO_ENTREGA', 'MWmedio', 'LIMITE_MINIMO_MODULACAO_MW', 'LIMITE_MAXIMO_MODULACAO_MW', 'TIPO_MODULACAO']:
         if col in df.columns:
             df[col] = df[col].str.strip()
             
@@ -86,7 +89,7 @@ def combiner_dfs(lista):
 def criar_indices_busca(df_ccee):
     """Mapeia os códigos da CCEE em dicionários para busca em tempo de execução O(1)."""
     if df_ccee.empty:
-        return {}, {}, {}, {}, {}
+        return {}, {}, {}, {}, {}, {}, {}, {}
     
     # Remove duplicados mantendo o primeiro registro válido
     df_limpo = df_ccee.drop_duplicates(subset=['CODIGO_CONTRATO'])
@@ -95,11 +98,14 @@ def criar_indices_busca(df_ccee):
     dict_vend = dict(zip(df_limpo['CODIGO_CONTRATO'], df_limpo.get('SIGLA_PERFIL_VENDEDOR', '')))
     dict_comp = dict(zip(df_limpo['CODIGO_CONTRATO'], df_limpo.get('SIGLA_PERFIL_COMPRADOR', '')))
     dict_sub = dict(zip(df_limpo['CODIGO_CONTRATO'], df_limpo.get('SUBMERCADO_ENTREGA', '')))
+    dict_lim_min = dict(zip(df_limpo['CODIGO_CONTRATO'], df_limpo.get('LIMITE_MINIMO_MODULACAO_MW', '-')))
+    dict_lim_max = dict(zip(df_limpo['CODIGO_CONTRATO'], df_limpo.get('LIMITE_MAXIMO_MODULACAO_MW', '-')))
+    dict_tipo_mod = dict(zip(df_limpo['CODIGO_CONTRATO'], df_limpo.get('TIPO_MODULACAO', '-')))
     
     # Conjunto para checar existência imediata
     set_existentes = set(df_limpo['CODIGO_CONTRATO'])
     
-    return dict_chave, dict_vend, dict_comp, dict_sub, set_existentes
+    return dict_chave, dict_vend, dict_comp, dict_sub, set_existentes, dict_lim_min, dict_lim_max, dict_tipo_mod
 
 
 def highlight_mesmo_titular(row):
@@ -163,9 +169,9 @@ if arquivo is not None:
         df_ccee_acr = combiner_dfs([csvs_matrix['ccear_q']])
 
         # CRIAÇÃO DOS ÍNDICES DE AGILIDADE (A mágica do ganho de velocidade está aqui)
-        idx_m_chave, idx_m_v, idx_m_c, idx_m_s, set_m_ext = criar_indices_busca(df_ccee_matrix)
-        idx_b_chave, idx_b_v, idx_b_c, idx_b_s, set_b_ext = criar_indices_busca(df_ccee_bismut)
-        idx_a_chave, idx_a_v, idx_a_c, idx_a_s, set_a_ext = criar_indices_busca(df_ccee_acr)
+        idx_m_chave, idx_m_v, idx_m_c, idx_m_s, set_m_ext, idx_m_min, idx_m_max, idx_m_tipo = criar_indices_busca(df_ccee_matrix)
+        idx_b_chave, idx_b_v, idx_b_c, idx_b_s, set_b_ext, idx_b_min, idx_b_max, idx_b_tipo = criar_indices_busca(df_ccee_bismut)
+        idx_a_chave, idx_a_v, idx_a_c, idx_a_s, set_a_ext, idx_a_min, idx_a_max, idx_a_tipo = criar_indices_busca(df_ccee_acr)
 
         mapa_energia = {
             "Incentivada 50%": "Incentivada-I5", "Cogeração Qualificada 50%": "Incentivada-CQ5",
@@ -196,8 +202,8 @@ if arquivo is not None:
         base["Volume MWm"]                     = volume_mwm.round(6)
         base["CliqCCEE Paradigma"]             = df["Codigo_CCEE"].fillna("-").astype(str)
         base["Modulação WBC"]                  = df["Tipo_de_modulacao"].astype(str).str.strip().map(mapa_modulacao).fillna(df["Tipo_de_modulacao"])
-        base["Modulação Mínima"]               = df["FlexLimite_modulacaoMin"].fillna("-")
-        base["Modulação Máxima"]               = df["FlexLimite_modulacaoMax"].fillna("-")
+        base["% Modulação Mínima"]             = df["FlexLimite_modulacaoMin"].fillna("-")
+        base["% Modulação Máxima"]             = df["FlexLimite_modulacaoMax"].fillna("-")
         base["Contrato CliqCCEE mês anterior"] = base["BOLETA"].map(mapa_mes_anterior).fillna("-").astype(str)
         base["Vendedor"]                       = df["Sigla_CCEE_vendedor"].fillna("-").astype(str)
         base["Comprador"]                      = df["Sigla_CCEE_comprador"].fillna("-").astype(str)
@@ -287,6 +293,80 @@ if arquivo is not None:
         _df_book["_vol_num"] = _vol_mwm_num.where(_mask_valido_book, 0.0)
         _soma_book = _df_book.groupby("Contrato CliqCCEE")["_vol_num"].transform("sum")
         base["Volume Book"] = _soma_book
+
+        # ── CÁLCULO DAS NOVAS COLUNAS DE MODULAÇÃO BOOK E CCEE ──────────────────
+        _vol_book_num = pd.to_numeric(base["Volume Book"], errors="coerce").fillna(0.0)
+        _pct_mod_min = pd.to_numeric(base["% Modulação Mínima"], errors="coerce").fillna(0.0)
+        _pct_mod_max = pd.to_numeric(base["% Modulação Máxima"], errors="coerce").fillna(0.0)
+
+        base["Modulação Mínima"] = _vol_book_num * (1 - (_pct_mod_min / 100))
+        base["Modulação Máxima"] = _vol_book_num * (1 + (_pct_mod_max / 100))
+
+        if csvs_disponiveis:
+            def buscar_campo_ccee(row, dict_m, dict_b, dict_a):
+                try:
+                    b_int = int(float(str(row["BOLETA"]).strip()))
+                except:
+                    b_int = -1
+                
+                if b_int in BOLETAS_ACR:
+                    d_field = dict_a
+                elif str(row["Parte"]).strip().upper() == "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A.":
+                    d_field = dict_b
+                else:
+                    d_field = dict_m
+                
+                cod = str(row["Contrato CliqCCEE"]).strip()
+                return d_field.get(cod, "-")
+
+            base["Modulação Mínima CCEE"] = base.apply(lambda r: buscar_campo_ccee(r, idx_m_min, idx_b_min, idx_a_min), axis=1)
+            base["Modulação Máxima CCEE"] = base.apply(lambda r: buscar_campo_ccee(r, idx_m_max, idx_b_max, idx_a_max), axis=1)
+            base["Modulação CCEE"]        = base.apply(lambda r: buscar_campo_ccee(r, idx_m_tipo, idx_b_tipo, idx_a_tipo), axis=1)
+        else:
+            base["Modulação Mínima CCEE"] = "-"
+            base["Modulação Máxima CCEE"] = "-"
+            base["Modulação CCEE"]        = "-"
+
+        _tol_mod = 1e-4
+        _mod_min_bk = pd.to_numeric(base["Modulação Mínima"], errors="coerce").fillna(0.0)
+        _mod_min_cc = base["Modulação Mínima CCEE"].astype(str).str.replace(",", ".", regex=False)
+        _mod_min_cc = pd.to_numeric(_mod_min_cc, errors="coerce")
+        
+        base["Check Modulação Mínima"] = "OK"
+        _mask_min_empty = base["Contrato CliqCCEE"].astype(str).str.strip().isin(["", "-", "None", "nan"]) | _mod_min_cc.isna()
+        _diff_min = _mod_min_bk - _mod_min_cc
+        base.loc[~_mask_min_empty & (_diff_min > _tol_mod), "Check Modulação Mínima"] = "Book maior"
+        base.loc[~_mask_min_empty & (_diff_min < -_tol_mod), "Check Modulação Mínima"] = "CCEE maior"
+        base.loc[_mask_min_empty, "Check Modulação Mínima"] = "-"
+
+        _mod_max_bk = pd.to_numeric(base["Modulação Máxima"], errors="coerce").fillna(0.0)
+        _mod_max_cc = base["Modulação Máxima CCEE"].astype(str).str.replace(",", ".", regex=False)
+        _mod_max_cc = pd.to_numeric(_mod_max_cc, errors="coerce")
+
+        base["Check Modulação Máxima"] = "OK"
+        _mask_max_empty = base["Contrato CliqCCEE"].astype(str).str.strip().isin(["", "-", "None", "nan"]) | _mod_max_cc.isna()
+        _diff_max = _mod_max_bk - _mod_max_cc
+        base.loc[~_mask_max_empty & (_diff_max > _tol_mod), "Check Modulação Máxima"] = "Book maior"
+        base.loc[~_mask_max_empty & (_diff_max < -_tol_mod), "Check Modulação Máxima"] = "CCEE maior"
+        base.loc[_mask_max_empty, "Check Modulação Máxima"] = "-"
+
+        base["Check Modulação"] = "OK"
+        _mask_tipo_empty = base["Contrato CliqCCEE"].astype(str).str.strip().isin(["", "-", "None", "nan"]) | base["Modulação CCEE"].astype(str).str.strip().isin(["", "-", "None", "nan"])
+        _mask_div_tipo = base["Modulação WBC"].astype(str).str.strip().str.upper() != base["Modulação CCEE"].astype(str).str.strip().str.upper()
+        base.loc[~_mask_tipo_empty & _mask_div_tipo, "Check Modulação"] = "Divergente"
+        base.loc[_mask_tipo_empty, "Check Modulação"] = "-"
+
+        # Reordenar colunas inserindo as novas nos locais corretos solicitados
+        _ordem_colunas = [
+            "BOLETA", "Operação", "Tipo de Energia", "Parte", "Contraparte Razão Social", "Contraparte",
+            "CP/LP", "CNPJ CONTRAPARTE", "Submercado", "Volume (MWh)", "Volume MWm", "CliqCCEE Paradigma",
+            "Modulação WBC", "% Modulação Mínima", "Modulação Mínima", "Modulação Mínima CCEE", "Check Modulação Mínima",
+            "% Modulação Máxima", "Modulação Máxima", "Modulação Máxima CCEE", "Check Modulação Máxima",
+            "Modulação CCEE", "Check Modulação",
+            "Contrato CliqCCEE mês anterior", "Vendedor", "Comprador", "Contrato CliqCCEE", "Editado Manualmente",
+            "Volume Book", "Volume CCEE", "Check Volume", "Volume Global", "Volume Global CCEE", "Check Volume Global"
+        ]
+        base = base[[c for c in _ordem_colunas if c in base.columns]]
 
         # ── COLUNA: Volume CCEE ──────────────────────────────────────────────────
         # Soma MWmedio dos CSVs agrupado por CODIGO_CONTRATO
@@ -399,6 +479,12 @@ if arquivo is not None:
 
             base_exibicao["Volume (MWh)"] = base_exibicao["Volume (MWh)"].map(lambda x: f"{x:.3f}" if isinstance(x, (int, float)) else x)
             base_exibicao["Volume MWm"]   = base_exibicao["Volume MWm"].map(lambda x: f"{x:.6f}" if isinstance(x, (int, float)) else x)
+            
+            # Formatando as novas colunas numéricas calculadas para exibição amigável
+            for c_format in ["Modulação Mínima", "Modulação Máxima"]:
+                if c_format in base_exibicao.columns:
+                    base_exibicao[c_format] = base_exibicao[c_format].map(lambda x: f"{x:.4f}" if isinstance(x, (int, float)) else x)
+
             st.caption(f"{len(base_exibicao):,} registros encontrados")
 
             col_config = {
@@ -408,8 +494,11 @@ if arquivo is not None:
                 "CP/LP": st.column_config.Column(disabled=True), "CNPJ CONTRAPARTE": st.column_config.Column(disabled=True),
                 "Submercado": st.column_config.Column(disabled=True), "Volume (MWh)": st.column_config.Column(disabled=True),
                 "Volume MWm": st.column_config.Column(disabled=True), "CliqCCEE Paradigma": st.column_config.TextColumn(disabled=False),
-                "Modulação WBC": st.column_config.Column(disabled=True), "Modulação Mínima": st.column_config.Column(disabled=True),
-                "Modulação Máxima": st.column_config.Column(disabled=True), "Contrato CliqCCEE mês anterior": st.column_config.TextColumn(disabled=True),
+                "Modulação WBC": st.column_config.Column(disabled=True), 
+                "% Modulação Mínima": st.column_config.Column(disabled=True), "Modulação Mínima": st.column_config.Column(disabled=True), "Modulação Mínima CCEE": st.column_config.Column(disabled=True), "Check Modulação Mínima": st.column_config.Column(disabled=True),
+                "% Modulação Máxima": st.column_config.Column(disabled=True), "Modulação Máxima": st.column_config.Column(disabled=True), "Modulação Máxima CCEE": st.column_config.Column(disabled=True), "Check Modulação Máxima": st.column_config.Column(disabled=True),
+                "Modulação CCEE": st.column_config.Column(disabled=True), "Check Modulação": st.column_config.Column(disabled=True),
+                "Contrato CliqCCEE mês anterior": st.column_config.TextColumn(disabled=True),
                 "Vendedor": st.column_config.TextColumn(disabled=True), "Comprador": st.column_config.TextColumn(disabled=True),
                 "Contrato CliqCCEE": st.column_config.TextColumn(disabled=True), "Editado Manualmente": st.column_config.Column(disabled=True),
                 "Volume Book": st.column_config.Column(disabled=True), "Volume CCEE": st.column_config.Column(disabled=True),
