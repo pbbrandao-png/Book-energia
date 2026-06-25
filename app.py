@@ -294,16 +294,22 @@ if arquivo is not None:
         _soma_book = _df_book.groupby("Contrato CliqCCEE")["_vol_num"].transform("sum")
         base["Volume Book"] = _soma_book
 
-        # ── CÁLCULO DAS NOVAS COLUNAS DE MODULAÇÃO BOOK E CCEE ──────────────────
+        # ── CÁLCULO DAS COLUNAS DE MODULAÇÃO BOOK E CCEE ──────────────────
+        # Se NÃO possui contrato válido associado (vazio, "-", "None", "nan", "Verificar"), não faz o cálculo!
+        _mask_tem_contrato = ~base["Contrato CliqCCEE"].astype(str).str.strip().isin(["", "-", "None", "nan", "Verificar"])
+
         _vol_book_num = pd.to_numeric(base["Volume Book"], errors="coerce").fillna(0.0)
         _pct_mod_min = pd.to_numeric(base["% Modulação Mínima"], errors="coerce").fillna(0.0)
         _pct_mod_max = pd.to_numeric(base["% Modulação Máxima"], errors="coerce").fillna(0.0)
 
-        base["Modulação Mínima"] = _vol_book_num * (1 - (_pct_mod_min / 100))
-        base["Modulação Máxima"] = _vol_book_num * (1 + (_pct_mod_max / 100))
+        base["Modulação Mínima"] = (_vol_book_num * (1 - (_pct_mod_min / 100))).where(_mask_tem_contrato, "-")
+        base["Modulação Máxima"] = (_vol_book_num * (1 + (_pct_mod_max / 100))).where(_mask_tem_contrato, "-")
 
         if csvs_disponiveis:
             def buscar_campo_ccee(row, dict_m, dict_b, dict_a):
+                cod = str(row["Contrato CliqCCEE"]).strip()
+                if cod in ["", "-", "None", "nan", "Verificar"]:
+                    return "-"
                 try:
                     b_int = int(float(str(row["BOLETA"]).strip()))
                 except:
@@ -316,7 +322,6 @@ if arquivo is not None:
                 else:
                     d_field = dict_m
                 
-                cod = str(row["Contrato CliqCCEE"]).strip()
                 return d_field.get(cod, "-")
 
             base["Modulação Mínima CCEE"] = base.apply(lambda r: buscar_campo_ccee(r, idx_m_min, idx_b_min, idx_a_min), axis=1)
@@ -328,33 +333,40 @@ if arquivo is not None:
             base["Modulação CCEE"]        = "-"
 
         _tol_mod = 1e-4
-        _mod_min_bk = pd.to_numeric(base["Modulação Mínima"], errors="coerce").fillna(0.0)
-        _mod_min_cc = base["Modulação Mínima CCEE"].astype(str).str.replace(",", ".", regex=False)
-        _mod_min_cc = pd.to_numeric(_mod_min_cc, errors="coerce")
         
-        base["Check Modulação Mínima"] = "OK"
-        _mask_min_empty = base["Contrato CliqCCEE"].astype(str).str.strip().isin(["", "-", "None", "nan"]) | _mod_min_cc.isna()
-        _diff_min = _mod_min_bk - _mod_min_cc
-        base.loc[~_mask_min_empty & (_diff_min > _tol_mod), "Check Modulação Mínima"] = "Book maior"
-        base.loc[~_mask_min_empty & (_diff_min < -_tol_mod), "Check Modulação Mínima"] = "CCEE maior"
-        base.loc[_mask_min_empty, "Check Modulação Mínima"] = "-"
+        # Check Modulação Mínima
+        base["Check Modulação Mínima"] = "-"
+        _mod_min_bk = pd.to_numeric(base.loc[_mask_tem_contrato, "Modulação Mínima"], errors="coerce").fillna(0.0)
+        _mod_min_cc_str = base.loc[_mask_tem_contrato, "Modulação Mínima CCEE"].astype(str).str.replace(",", ".", regex=False)
+        _mod_min_cc = pd.to_numeric(_mod_min_cc_str, errors="coerce")
+        
+        _mask_min_valid = _mask_tem_contrato & _mod_min_cc.notna()
+        if _mask_min_valid.any():
+            _diff_min = pd.to_numeric(base.loc[_mask_min_valid, "Modulação Mínima"]) - _mod_min_cc.loc[_mask_min_valid]
+            base.loc[_mask_min_valid, "Check Modulação Mínima"] = "OK"
+            base.loc[_mask_min_valid & (_diff_min > _tol_mod), "Check Modulação Mínima"] = "Book maior"
+            base.loc[_mask_min_valid & (_diff_min < -_tol_mod), "Check Modulação Mínima"] = "CCEE maior"
 
-        _mod_max_bk = pd.to_numeric(base["Modulação Máxima"], errors="coerce").fillna(0.0)
-        _mod_max_cc = base["Modulação Máxima CCEE"].astype(str).str.replace(",", ".", regex=False)
-        _mod_max_cc = pd.to_numeric(_mod_max_cc, errors="coerce")
+        # Check Modulação Máxima
+        base["Check Modulação Máxima"] = "-"
+        _mod_max_bk = pd.to_numeric(base.loc[_mask_tem_contrato, "Modulação Máxima"], errors="coerce").fillna(0.0)
+        _mod_max_cc_str = base.loc[_mask_tem_contrato, "Modulação Máxima CCEE"].astype(str).str.replace(",", ".", regex=False)
+        _mod_max_cc = pd.to_numeric(_mod_max_cc_str, errors="coerce")
+        
+        _mask_max_valid = _mask_tem_contrato & _mod_max_cc.notna()
+        if _mask_max_valid.any():
+            _diff_max = pd.to_numeric(base.loc[_mask_max_valid, "Modulação Máxima"]) - _mod_max_cc.loc[_mask_max_valid]
+            base.loc[_mask_max_valid, "Check Modulação Máxima"] = "OK"
+            base.loc[_mask_max_valid & (_diff_max > _tol_mod), "Check Modulação Máxima"] = "Book maior"
+            base.loc[_mask_max_valid & (_diff_max < -_tol_mod), "Check Modulação Máxima"] = "CCEE maior"
 
-        base["Check Modulação Máxima"] = "OK"
-        _mask_max_empty = base["Contrato CliqCCEE"].astype(str).str.strip().isin(["", "-", "None", "nan"]) | _mod_max_cc.isna()
-        _diff_max = _mod_max_bk - _mod_max_cc
-        base.loc[~_mask_max_empty & (_diff_max > _tol_mod), "Check Modulação Máxima"] = "Book maior"
-        base.loc[~_mask_max_empty & (_diff_max < -_tol_mod), "Check Modulação Máxima"] = "CCEE maior"
-        base.loc[_mask_max_empty, "Check Modulação Máxima"] = "-"
-
-        base["Check Modulação"] = "OK"
-        _mask_tipo_empty = base["Contrato CliqCCEE"].astype(str).str.strip().isin(["", "-", "None", "nan"]) | base["Modulação CCEE"].astype(str).str.strip().isin(["", "-", "None", "nan"])
-        _mask_div_tipo = base["Modulação WBC"].astype(str).str.strip().str.upper() != base["Modulação CCEE"].astype(str).str.strip().str.upper()
-        base.loc[~_mask_tipo_empty & _mask_div_tipo, "Check Modulação"] = "Divergente"
-        base.loc[_mask_tipo_empty, "Check Modulação"] = "-"
+        # Check Modulação Tipo
+        base["Check Modulação"] = "-"
+        _mask_tipo_valid = _mask_tem_contrato & (~base["Modulação CCEE"].astype(str).str.strip().isin(["", "-", "None", "nan"]))
+        if _mask_tipo_valid.any():
+            _mask_div_tipo = base["Modulação WBC"].astype(str).str.strip().str.upper() != base["Modulação CCEE"].astype(str).str.strip().str.upper()
+            base.loc[_mask_tipo_valid, "Check Modulação"] = "OK"
+            base.loc[_mask_tipo_valid & _mask_div_tipo, "Check Modulação"] = "Divergente"
 
         # Reordenar colunas inserindo as novas nos locais corretos solicitados
         _ordem_colunas = [
@@ -480,7 +492,7 @@ if arquivo is not None:
             base_exibicao["Volume (MWh)"] = base_exibicao["Volume (MWh)"].map(lambda x: f"{x:.3f}" if isinstance(x, (int, float)) else x)
             base_exibicao["Volume MWm"]   = base_exibicao["Volume MWm"].map(lambda x: f"{x:.6f}" if isinstance(x, (int, float)) else x)
             
-            # Formatando as novas colunas numéricas calculadas para exibição amigável
+            # Formatando as colunas numéricas calculadas para exibição amigável apenas onde o valor é numérico
             for c_format in ["Modulação Mínima", "Modulação Máxima"]:
                 if c_format in base_exibicao.columns:
                     base_exibicao[c_format] = base_exibicao[c_format].map(lambda x: f"{x:.4f}" if isinstance(x, (int, float)) else x)
@@ -570,7 +582,7 @@ if arquivo is not None:
                     chave_esp = v_b + c_b + s_b
 
                     cods = [str(row.get(c, "")).strip() for c in ["Contrato CliqCCEE", "Contrato CliqCCEE mês anterior", "CliqCCEE Paradigma"]]
-                    cods_validos = [c for c in cods if c not in ('', '-', 'None', 'nan')]
+                    cods_validos = [c for c in cods if c not in ('', '-', 'None', 'nan', 'Verificar')]
 
                     cod_encontrado = None
                     for c in cods_validos:
