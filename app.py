@@ -169,16 +169,16 @@ if arquivo is not None:
                     df_aj_manual = df_aj_manual.dropna(subset=["BOLETA"])
                     df_aj_manual["BOLETA"] = df_aj_manual["BOLETA"].astype(str).str.strip().str.replace(".0", "", regex=False)
                     if "CliqCCEE Paradigma" in df_aj_manual.columns:
-                        vals = df_aj_manual["CliqCCEE Paradigma"].apply(lambda x: str(int(x)) if isinstance(x, float) and x == int(x) else str(x))
+                        vals = df_aj_manual["CliqCCEE Paradigma"].apply(lambda x: str(int(x)) if isinstance(x, float) and pd.notna(x) and x == int(x) else (str(x) if pd.notna(x) else ""))
                         mapa_ajuste_manual_paradigma = dict(zip(df_aj_manual["BOLETA"], vals))
                     if "Contraparte" in df_aj_manual.columns:
-                        mapa_ajuste_manual_contraparte = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["Contraparte"].astype(str)))
+                        mapa_ajuste_manual_contraparte = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["Contraparte"].fillna("").astype(str)))
                     if "Vendedor" in df_aj_manual.columns:
-                        mapa_ajuste_manual_vendedor = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["Vendedor"].astype(str)))
+                        mapa_ajuste_manual_vendedor = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["Vendedor"].fillna("").astype(str)))
                     if "Comprador" in df_aj_manual.columns:
-                        mapa_ajuste_manual_comprador = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["Comprador"].astype(str)))
+                        mapa_ajuste_manual_comprador = dict(zip(df_aj_manual["BOLETA"], df_aj_manual["Comprador"].fillna("").astype(str)))
                     if "Contrato CliqCCEE" in df_aj_manual.columns:
-                        vals_ct = df_aj_manual["Contrato CliqCCEE"].apply(lambda x: str(int(x)) if isinstance(x, float) and x == int(x) else str(x))
+                        vals_ct = df_aj_manual["Contrato CliqCCEE"].apply(lambda x: str(int(x)) if isinstance(x, float) and pd.notna(x) and x == int(x) else (str(x) if pd.notna(x) else ""))
                         mapa_ajuste_manual_contrato = dict(zip(df_aj_manual["BOLETA"], vals_ct))
             except Exception as e_aj:
                 st.error(f"Erro ao ler planilha de Ajuste Manual: {e_aj}")
