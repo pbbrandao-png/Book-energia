@@ -389,9 +389,7 @@ if arquivo is not None:
             base["Volume Global CCEE"] = 0.0
 
         # ── COLUNA: Check Volume Global ──────────────────────────────────────────
-        _vg = pd.to_numeric(base["Volume Global"], errors="coerce").fillna(0.0)
-        _vgc = pd.to_numeric(base["Volume Global CCEE"], errors="coerce").fillna(0.0)
-        _diff_global = _vg - _vgc
+        _diff_global = _vg - _vgc if '_vg' in locals() else pd.to_numeric(base["Volume Global"], errors="coerce").fillna(0.0) - pd.to_numeric(base["Volume Global CCEE"], errors="coerce").fillna(0.0)
         base["Check Volume Global"] = "OK"
         base.loc[_diff_global > _tol, "Check Volume Global"] = "Book maior"
         base.loc[_diff_global < -_tol, "Check Volume Global"] = "CCEE maior"
@@ -483,14 +481,9 @@ if arquivo is not None:
 
             # ── RESUMO DE NETs ────────────────────────────────────────────────────────
             with st.expander("📋 Resumo de NETs", expanded=False):
-                # Reutiliza exatamente a mesma lógica de formação dos NETs da tela Encontro Energético
-                # (linhas 399-401): inner join de compras e vendas agrupados por Parte/Contraparte/Submercado/Tipo de Energia
-                # e os mesmos volumes MWm calculados em base["Volume MWm"]
-
                 mes_ref_net = int(df["Mes"].dropna().iloc[0])
                 horas_net = horas_mes.get(mes_ref_net, 744)
 
-                # Agrupa MWm por operação — mesma chave do Encontro Energético
                 _grp_key = ["Parte", "Contraparte", "Submercado", "Tipo de Energia"]
 
                 _compras_mwm = (
@@ -506,10 +499,7 @@ if arquivo is not None:
                     .rename(columns={"Volume MWm": "_venda_mwm"})
                 )
 
-                # Inner join idêntico ao usado para montar `nets`
                 _nets_resumo = _compras_mwm.merge(_vendas_mwm, on=_grp_key, how="inner")
-
-                # Saldo e derivados
                 _nets_resumo["_saldo"] = _nets_resumo["_compra_mwm"] - _nets_resumo["_venda_mwm"]
 
                 def _quem_ajusta(saldo):
@@ -521,7 +511,6 @@ if arquivo is not None:
 
                 _nets_resumo["_quem_ajusta_flag"] = _nets_resumo["_saldo"].apply(_quem_ajusta)
 
-                # Resolve o nome real de quem ajusta para exibição
                 def _resolver_ajustador(row):
                     flag = row["_quem_ajusta_flag"]
                     if flag == "Contraparte":
@@ -535,19 +524,6 @@ if arquivo is not None:
                     _nets_resumo["_quem_ajusta_flag"] != "Nenhum", 0.0
                 )
 
-                # ── Consulta Cliq por NET ─────────────────────────────────────────────
-                # Reutiliza df_ccee_matrix, df_ccee_bismut, df_ccee_acr já carregados.
-                # Relacionamento: Vendedor (book) = SIGLA_PERFIL_VENDEDOR (csv)
-                #                 Comprador (book) = SIGLA_PERFIL_COMPRADOR (csv)
-                #                 Submercado (book) = SUBMERCADO_ENTREGA (csv)
-                # O campo Tipo de Energia não existe nos CSVs CCEE com esse nome;
-                # ele é derivado da Fonte_Contrato no book. A separação por tipo de energia
-                # é garantida pelo fato de cada NET ter um par Vendedor/Comprador/Submercado
-                # distinto (contratos de tipos diferentes geram pares diferentes ou boletas
-                # distintas com perfis distintos). A consulta soma apenas o par exato,
-                # nunca agregados globais.
-
-                # Monta um DataFrame unificado CCEE para consulta eficiente
                 _dfs_ccee_net = []
                 for _src in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
                     if _src is not None and not _src.empty:
@@ -566,7 +542,6 @@ if arquivo is not None:
 
                 if _dfs_ccee_net:
                     _df_ccee_all = pd.concat(_dfs_ccee_net, ignore_index=True)
-                    # Índice agrupado por (vendedor, comprador, submercado) → soma MWmedio
                     _idx_cliq = (
                         _df_ccee_all
                         .groupby(
@@ -581,23 +556,12 @@ if arquivo is not None:
                         columns=["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA", "_mwmedio_sum"]
                     )
 
-                # Para cada NET, precisamos saber o Vendedor e Comprador (perfis CCEE).
-                # Cada NET (Parte, Contraparte, Submercado, Tipo de Energia) corresponde
-                # a um conjunto de boletas no book. Extraímos os perfis das boletas desse NET.
-                # Compra Cliq: perfil onde a Parte é COMPRADOR e Contraparte é VENDEDOR
-                # Venda Cliq:  perfil onde a Parte é VENDEDOR e Contraparte é COMPRADOR
-                # Como Vendedor e Comprador nos NETs podem variar por boleta,
-                # usamos a soma dos MWmedio para o par (Vendedor_perfil, Comprador_perfil, Submercado)
-                # que apareça nas boletas do NET — idêntico ao relacionamento já usado no book.
-
                 def _buscar_cliq_net(row):
-                    """Retorna (compra_cliq, venda_cliq) para um NET."""
                     parte = row["Parte"]
                     contraparte = row["Contraparte"]
                     sub = row["Submercado"]
                     tipo_en = row["Tipo de Energia"]
 
-                    # Filtra boletas do NET no book
                     _mask_net = (
                         (base["Parte"] == parte) &
                         (base["Contraparte"] == contraparte) &
@@ -609,14 +573,12 @@ if arquivo is not None:
                     if _boletas_net.empty or _idx_cliq.empty:
                         return 0.0, 0.0
 
-                    # Pares de perfis únicos nas compras deste NET
                     _compras_net = _boletas_net[_boletas_net["Operação"] == "Compra"]
                     _vendas_net = _boletas_net[_boletas_net["Operação"] == "Venda"]
 
                     compra_cliq = 0.0
                     venda_cliq = 0.0
 
-                    # Compra Cliq: registros CCEE onde Parte aparece como COMPRADOR
                     for _, b_row in _compras_net.iterrows():
                         _v = str(b_row["Vendedor"]).strip()
                         _c = str(b_row["Comprador"]).strip()
@@ -630,7 +592,6 @@ if arquivo is not None:
                         if not _match.empty:
                             compra_cliq += _match["_mwmedio_sum"].iloc[0]
 
-                    # Venda Cliq: registros CCEE onde Parte aparece como VENDEDOR
                     for _, b_row in _vendas_net.iterrows():
                         _v = str(b_row["Vendedor"]).strip()
                         _c = str(b_row["Comprador"]).strip()
@@ -646,19 +607,14 @@ if arquivo is not None:
 
                     return compra_cliq, venda_cliq
 
-                # Aplica consulta Cliq uma vez por NET (sem repetição)
                 _cliq_results = _nets_resumo.apply(_buscar_cliq_net, axis=1, result_type="expand")
                 _nets_resumo["_compra_cliq"] = _cliq_results[0]
                 _nets_resumo["_venda_cliq"]  = _cliq_results[1]
 
-                # ── Estado dos checkboxes (Efetivado) ────────────────────────────────
                 if "net_efetivados" not in st.session_state:
                     st.session_state["net_efetivados"] = {}
 
-                # Conjunto de boletas marcadas como roxo (para highlight na tabela principal)
                 boletas_efetivadas = set()
-
-                # ── Renderiza tabela de NETs ─────────────────────────────────────────
                 _tol_cliq = 1e-6
 
                 def _calcular_status(row):
@@ -672,7 +628,6 @@ if arquivo is not None:
                     if quem == "Nenhum":
                         return "OK"
 
-                    # Quem ajusta é a Contraparte → o ajuste entra como compra da Parte no Cliq
                     if quem == "Contraparte":
                         cliq_aj = comp_cliq
                     else:
@@ -690,7 +645,6 @@ if arquivo is not None:
                     else:
                         return "Divergente"
 
-                # Monta cabeçalho manualmente + linhas interativas
                 _col_headers = [
                     "Efetivado", "Parte", "Contraparte", "Submercado", "Tipo de Energia",
                     "Compra (MWm)", "Venda (MWm)", "Saldo NET (MWm)",
@@ -698,7 +652,6 @@ if arquivo is not None:
                     "Compra Cliq (MWm)", "Venda Cliq (MWm)", "Status"
                 ]
 
-                # Linha de cabeçalho
                 _hdr = st.columns([0.5, 2, 2, 1.2, 1.5, 1.2, 1.2, 1.2, 1.5, 1.5, 1.5, 1.5, 1.5])
                 for _ci, _ch in zip(_hdr, _col_headers):
                     _ci.markdown(f"**{_ch}**")
@@ -716,7 +669,6 @@ if arquivo is not None:
                     _row["_efetivado"] = _efetivado
                     _status = _calcular_status(_row)
 
-                    # Cor de status
                     _status_cores = {
                         "OK": "🟢",
                         "Não Ajustado": "🔴",
@@ -750,7 +702,6 @@ if arquivo is not None:
                     _cols[11].write(f"{_row['_venda_cliq']:.6f}")
                     _cols[12].write(f"{_status_icon} {_status}")
 
-                    # Acumula boletas efetivadas para highlight na tabela principal
                     if _novo_ef:
                         _mask_ef = (
                             (base["Parte"] == _row["Parte"]) &
@@ -760,11 +711,9 @@ if arquivo is not None:
                         )
                         boletas_efetivadas.update(base[_mask_ef]["BOLETA"].astype(str).tolist())
 
-                # Armazena boletas efetivadas no session_state para uso no highlight
                 st.session_state["boletas_efetivadas"] = boletas_efetivadas
 
-            # ── FIM RESUMO DE NETs ─────────────────────────────────────────────────
-
+            # ── CONFERÊNCIA AVANÇADA DE DIVERGÊNCIAS (MÚLTIPLOS CHECKS UNIFICADOS) ──
             if csvs_disponiveis:
                 st.markdown("---")
                 lista_divergencias = []
@@ -798,26 +747,45 @@ if arquivo is not None:
                             cod_encontrado = c
                             break
 
-                    if not cod_encontrado:
-                        if chave_esp in d_ch.values():
-                            status, justificativa = "OK", None
-                        else:
-                            status, justificativa = "SEM_MATCH", "Contrato inexistente no CSV CCEE"
+                    divs = []
+
+                    # 1. Caso encontre o código do contrato, checa divergências de perfis
+                    if cod_encontrado:
+                        v_c = d_v.get(cod_encontrado, '')
+                        c_c = d_c.get(cod_encontrado, '')
+                        s_c = d_s.get(cod_encontrado, '')
+
+                        if v_b != v_c: divs.append(f"Divergência de Vendedor (Book={v_b} | CCEE={v_c})")
+                        if c_b != c_c: divs.append(f"Divergência de Comprador (Book={c_b} | CCEE={c_c})")
+                        if s_b != s_c: divs.append(f"Divergência de Submercado (Book={s_b} | CCEE={s_c})")
+
+                    # 2. Varredura dos outros validadores da planilha (Exceto Volume Global)
+                    check_mod_min = str(row.get("Check Modulação Mínima", "-")).strip()
+                    if check_mod_min in ("Book maior", "CCEE maior"):
+                        divs.append(f"Modulação Mínima ({check_mod_min})")
+
+                    check_mod_max = str(row.get("Check Modulação Máxima", "-")).strip()
+                    if check_mod_max in ("Book maior", "CCEE maior"):
+                        divs.append(f"Modulação Máxima ({check_mod_max})")
+
+                    check_mod_tipo = str(row.get("Check Modulação", "-")).strip()
+                    if check_mod_tipo == "Divergente":
+                        divs.append("Tipo de Modulação Divergente")
+
+                    check_vol_contrato = str(row.get("Check Volume", "-")).strip()
+                    if check_vol_contrato in ("Book maior", "CCEE maior"):
+                        divs.append(f"Volume do Contrato ({check_vol_contrato})")
+
+                    # 3. Classificação e destino final da boleta
+                    if not cod_encontrado and chave_esp not in d_ch.values():
+                        status = "SEM_MATCH"
+                        justificativa = "Contrato inexistente no CSV CCEE"
+                    elif divs:
+                        status = "ERRO"
+                        justificativa = " | ".join(divs)
                     else:
-                        v_c, c_c, s_c = d_v.get(cod_encontrado, ''), d_c.get(cod_encontrado, ''), d_s.get(cod_encontrado, '')
-
-                        divs = []
-                        if v_b != v_c: divs.append("Vendedor")
-                        if c_b != c_c: divs.append("Comprador")
-                        if s_b != s_c: divs.append(f"Submercado (Boleta={s_b} | CSV={s_c})")
-
-                        if not divs:
-                            status, justificativa = "OK", None
-                        else:
-                            status = "ERRO"
-                            if len(divs) == 1: justificativa = f"Divergência de {divs[0]}"
-                            elif len(divs) == 2: justificativa = f"Divergência de {divs[0]} e {divs[1]}"
-                            else: justificativa = f"Divergência de {divs[0]}, {divs[1]} e {divs[2]}"
+                        status = "OK"
+                        justificativa = None
 
                     if status in ("ERRO", "SEM_MATCH"):
                         item = {"Boleta": row["BOLETA"], "Vendedor": row["Vendedor"], "Comprador": row["Comprador"], "Mensagem": justificativa}
@@ -827,7 +795,7 @@ if arquivo is not None:
                 df_divergencias = pd.DataFrame(lista_divergencias, columns=["Boleta", "Vendedor", "Comprador", "Mensagem"])
                 df_sem_match_nenhum = pd.DataFrame(lista_sem_match_nenhum, columns=["Boleta", "Vendedor", "Comprador", "Mensagem"])
 
-                st.subheader("❌ Contratos com Divergência (Existem no CSV, mas dados não batem)")
+                st.subheader("❌ Contratos com Divergência (Cadastro ou Indicadores Incorretos)")
                 st.dataframe(df_divergencias, use_container_width=True, hide_index=True)
 
                 output_div = BytesIO()
