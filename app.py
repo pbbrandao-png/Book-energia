@@ -1,4 +1,4 @@
-# APP_BOOK_ENERGIA_V22 - COM TABELA DE RESUMO DE NETs RETRÁTIL
+# APP_BOOK_ENERGIA_V22 - CORREÇÃO DE ESCOPO DO FILTRO DE NETs
 import streamlit as st
 import pandas as pd
 import zipfile
@@ -76,13 +76,18 @@ def calcular_nets(base_df, horas_mes):
     vendas = base_df[(base_df["Operação"] == "Venda") & (base_df["Volume (MWh)"] > 0)].copy()
     if compras.empty or vendas.empty:
         return pd.DataFrame()
-    compras_agg = compras.groupby(["Parte", "Contraparte", "Submercado"], as_index=False)[["Volume (MWh)", "Volume MWm"]].sum()
-    compras_agg.rename(columns={"Volume (MWh)": "Compra_MWh", "Volume MWm": "Compra_MWm"}, inplace=True)
-    vendas_agg = vendas.groupby(["Parte", "Contraparte", "Submercado"], as_index=False)[["Volume (MWh)", "Volume MWm"]].sum()
-    vendas_agg.rename(columns={"Volume (MWh)": "Venda_MWh", "Volume MWm": "Venda_MWm"}, inplace=True)
+    
+    # Mantemos as siglas CCEE no agrupamento para saber exatamente quem mapear no CSV depois
+    compras_agg = compras.groupby(["Parte", "Contraparte", "Submercado", "Vendedor", "Comprador"], as_index=False)[["Volume (MWh)", "Volume MWm"]].sum()
+    compras_agg.rename(columns={"Volume (MWh)": "Compra_MWh", "Volume MWm": "Compra_MWm", "Vendedor": "Sigla_Parte_Vendedora", "Comprador": "Sigla_Parte_Compradora"}, inplace=True)
+    
+    vendas_agg = vendas.groupby(["Parte", "Contraparte", "Submercado", "Vendedor", "Comprador"], as_index=False)[["Volume (MWh)", "Volume MWm"]].sum()
+    vendas_agg.rename(columns={"Volume (MWh)": "Venda_MWh", "Volume MWm": "Venda_MWm", "Vendedor": "Sigla_Contraparte_Vendedora", "Comprador": "Sigla_Contraparte_Compradora"}, inplace=True)
+    
     nets = compras_agg.merge(vendas_agg, on=["Parte", "Contraparte", "Submercado"], how="inner")
     if nets.empty:
         return pd.DataFrame()
+    
     nets["Saldo_MWh"] = nets["Compra_MWh"] - nets["Venda_MWh"]
     nets["Saldo_MWm"] = nets["Saldo_MWh"] / pd.Series([horas_mes.get(1, 744)] * len(nets))
     nets["Ajuste Net"] = nets.apply(lambda r: r["Contraparte"] if r["Saldo_MWm"] > 0 else (r["Parte"] if r["Saldo_MWm"] < 0 else "ZERADO"), axis=1)
@@ -125,9 +130,11 @@ if arquivo is not None:
         df_ccee_bismut = combiner_dfs([csvs_bismut['cceal']])
         df_ccee_acr = combiner_dfs([csvs_matrix['ccear_q']])
         
-        # Junta todos os CSVs consolidados em um DataFrame mestre para buscas dinâmicas de volumes
         df_ccee_completo = combiner_dfs([df_ccee_matrix, df_ccee_bismut, df_ccee_acr])
         if not df_ccee_completo.empty and 'MWmedio' in df_ccee_completo.columns:
+            df_ccee_completo['SIGLA_PERFIL_VENDEDOR'] = df_ccee_completo['SIGLA_PERFIL_VENDEDOR'].astype(str).str.strip()
+            df_ccee_completo['SIGLA_PERFIL_COMPRADOR'] = df_ccee_completo['SIGLA_PERFIL_COMPRADOR'].astype(str).str.strip()
+            df_ccee_completo['SUBMERCADO_ENTREGA'] = df_ccee_completo['SUBMERCADO_ENTREGA'].astype(str).str.strip()
             df_ccee_completo['MWmedio_num'] = df_ccee_completo['MWmedio'].astype(str).str.strip().str.replace(',', '.', regex=False)
             df_ccee_completo['MWmedio_num'] = pd.to_numeric(df_ccee_completo['MWmedio_num'], errors='coerce').fillna(0.0)
 
@@ -195,7 +202,6 @@ if arquivo is not None:
         _df_book["_vol_num"] = _vol_mwm_num.where(_mask_valido_book, 0.0)
         base["Volume Book"] = _df_book.groupby("Contrato CliqCCEE")["_vol_num"].transform("sum")
 
-        # Configurações de modulação e validações de volume permanecem idênticas...
         _vol_book_num = pd.to_numeric(base["Volume Book"], errors="coerce").fillna(0.0)
         _num_mod_min = pd.to_numeric(base["% Modulação Mínima"], errors="coerce").fillna(0.0)
         _num_mod_max = pd.to_numeric(base["% Modulação Máxima"], errors="coerce").fillna(0.0)
@@ -217,7 +223,6 @@ if arquivo is not None:
         else:
             base["Modulação Mínima CCEE"] = base["Modulação Máxima CCEE"] = base["Modulação CCEE"] = "-"
 
-        # Geração das colunas de checagem...
         base["Check Modulação Mínima"] = base["Check Modulação Máxima"] = base["Check Modulação"] = "-"
 
         if csvs_disponiveis:
@@ -238,7 +243,7 @@ if arquivo is not None:
         base.loc[_diff_vol > _tol, "Check Volume"] = "Book maior"
         base.loc[_diff_vol < -_tol, "Check Volume"] = "CCEE maior"
 
-        # Cálculo de NETs Dinâmico com a NOVA LOGICA CCEE pedida
+        # GERAÇÃO DE NETs COM FILTRO ESTRITO DA RELAÇÃO PAR-A-PAR CCEE
         df_nets = calcular_nets(base, horas_mes)
         
         if "nets_aceitos" not in st.session_state:
@@ -250,21 +255,24 @@ if arquivo is not None:
             check_nets_lista = []
             
             for _, net_row in df_nets.iterrows():
-                parte_net = str(net_row["Parte"]).strip()
-                contraparte_net = str(net_row["Contraparte"]).strip()
                 submercado_net = str(net_row["Submercado"]).strip()
                 saldo_esperado = abs(net_row["Saldo_MWm"])
                 
+                # Resgata as siglas específicas que formaram o Net de Compra e o Net de Venda
+                sigla_parte_compradora = str(net_row["Sigla_Parte_Compradora"]).strip()
+                sigla_contraparte_vendedora = str(net_row["Sigla_Contraparte_Vendedora"]).strip()
+                
                 if not df_ccee_completo.empty:
-                    # NOVA REGRA: Volume Compra Cliq -> Contraparte é Vendedora no CSV
+                    # FILTRO DE ESCOPO FECHADO: Busca apenas o volume do par exato que faz o net
                     v_compra_ccee = df_ccee_completo[
-                        (df_ccee_completo["SIGLA_PERFIL_VENDEDOR"] == contraparte_net) & 
+                        (df_ccee_completo["SIGLA_PERFIL_VENDEDOR"] == sigla_contraparte_vendedora) & 
+                        (df_ccee_completo["SIGLA_PERFIL_COMPRADOR"] == sigla_parte_compradora) &
                         (df_ccee_completo["SUBMERCADO_ENTREGA"] == submercado_net)
                     ]["MWmedio_num"].sum()
                     
-                    # NOVA REGRA: Volume Venda Cliq -> Parte é Compradora no CSV
                     v_venda_ccee = df_ccee_completo[
-                        (df_ccee_completo["SIGLA_PERFIL_COMPRADOR"] == parte_net) & 
+                        (df_ccee_completo["SIGLA_PERFIL_VENDEDOR"] == sigla_contraparte_vendedora) & 
+                        (df_ccee_completo["SIGLA_PERFIL_COMPRADOR"] == sigla_parte_compradora) &
                         (df_ccee_completo["SUBMERCADO_ENTREGA"] == submercado_net)
                     ]["MWmedio_num"].sum()
                 else:
@@ -274,16 +282,15 @@ if arquivo is not None:
                 vol_compra_cliq_lista.append(v_compra_ccee)
                 vol_venda_cliq_lista.append(v_venda_ccee)
                 
-                # Validação do Check Net baseado em quem é o responsável pelo Ajuste
                 ajuste_resp = net_row["Ajuste Net"]
                 if ajuste_resp == "ZERADO":
                     check_nets_lista.append("-")
                 else:
-                    vol_efetivo_cliq = v_compra_ccee if ajuste_resp == parte_net else v_venda_ccee
+                    vol_efetivo_cliq = v_compra_ccee if ajuste_resp == net_row["Parte"] else v_venda_ccee
                     diff_net = vol_efetivo_cliq - saldo_esperado
                     if abs(diff_net) < 1e-4: check_nets_lista.append("OK")
                     elif diff_net > 1e-4: check_nets_lista.append("Volume ajustado maior que o esperado")
-                    else: check_nets_lista.append("Volume ajustado menor que o esperado")
+                    else: check_nets_lista.append("Volume adjusted menor que o esperado")
             
             df_nets["Volume Compra Cliq"] = vol_compra_cliq_lista
             df_nets["Volume Venda Cliq"] = vol_venda_cliq_lista
@@ -299,7 +306,7 @@ if arquivo is not None:
             col_metric3.metric(label="Contratos de Venda 📤", value=len(base[base['Operação'].str.upper() == 'VENDA']))
             st.markdown("---")
 
-            # ════════════════ RESUMO DE NETs RETRÁTIL (EXPANDER) ════════════════
+            # RESUMO DE NETs RETRÁTIL
             if not df_nets.empty:
                 with st.expander("📋 Resumo de NETs (Clique para Expandir / Recolher)", expanded=True):
                     df_nets_display = df_nets[[
@@ -334,7 +341,7 @@ if arquivo is not None:
                             cols_data[col_idx + 1].write(str(col_value))
                 st.markdown("---")
 
-            # ════════════════ TABELA PRINCIPAL RETRÁTIL (EXPANDER) ════════════════
+            # TABELA PRINCIPAL RETRÁTIL
             with st.expander("🔎 Filtros e Visão Global dos Contratos", expanded=True):
                 col_flag1, col_flag2 = st.columns(2)
                 with col_flag1: flag_mesmo_titular = st.toggle("Ocultar IntraPortifólio Visualmente", value=True)
@@ -374,7 +381,6 @@ if arquivo is not None:
                 st.dataframe(base_exibicao.style.apply(aplicar_estilos, axis=1), use_container_width=True, hide_index=True)
 
         elif pagina == "Encontro Energético":
-            # Lógica da aba Encontro Energético permanece sem alterações...
             pass
 
     except Exception as erro:
