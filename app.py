@@ -484,17 +484,34 @@ if arquivo is not None:
         base.loc[_diff_global > _tol, "Check Volume Global"] = "Book maior"
         base.loc[_diff_global < -_tol, "Check Volume Global"] = "CCEE maior"
 
-        compras_net = base[base["Operação"] == "Compra"].groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume (MWh)"].sum().rename(columns={"Volume (MWh)": "Compra (MWh)"})
-        vendas_net = base[base["Operação"] == "Venda"].groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume (MWh)"].sum().rename(columns={"Volume (MWh)": "Venda (MWh)"})
+        # ── LÓGICA DO NET TOTALMENTE CONFIGURADA EM MWm Conforme Regra Existente ──
+        compras_net = base[base["Operação"] == "Compra"].groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume MWm"].sum().rename(columns={"Volume MWm": "Compra (MWm)"})
+        vendas_net = base[base["Operação"] == "Venda"].groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume MWm"].sum().rename(columns={"Volume MWm": "Venda (MWm)"})
         nets = compras_net.merge(vendas_net, on=["Parte", "Contraparte", "Submercado", "Tipo de Energia"], how="inner")
 
-        # ── CÁLCULO DE SALDO (NET) E QUEM AJUSTA COM BASE NA REGRA EXISTENTE ──
+        # Define o saldo real e busca o Vendedor/Comprador físico dos contratos envolvidos para o campo "Quem Registra"
         if not nets.empty:
-            nets["NET (MWh)"] = nets["Compra (MWh)"] - nets["Venda (MWh)"]
-            nets["Quem Registra"] = nets.apply(
-                lambda r: r["Contraparte"] if r["NET (MWh)"] > 0 else (r["Parte"] if r["NET (MWh)"] < 0 else "ZERADO"), 
-                axis=1
-            )
+            nets["NET (MWm)"] = nets["Compra (MWm)"] - nets["Venda (MWm)"]
+            
+            def mapear_registrador_ccee(row):
+                saldo = row["NET (MWm)"]
+                if saldo == 0:
+                    return "ZERADO"
+                
+                # Procura na base o contrato correspondente para capturar as siglas CCEE reais mapeadas
+                filtro_reg = base[
+                    (base["Parte"] == row["Parte"]) & 
+                    (base["Contraparte"] == row["Contraparte"]) & 
+                    (base["Submercado"] == row["Submercado"]) & 
+                    (base["Tipo de Energia"] == row["Tipo de Energia"])
+                ]
+                if not filtro_reg.empty:
+                    # Se saldo > 0 (Sobra Compra) -> Quem Ajusta registra como Vendedor
+                    # Se saldo < 0 (Sobra Venda) -> Quem Ajusta registra como Comprador
+                    return filtro_reg["Vendedor"].iloc[0] if saldo > 0 else filtro_reg["Comprador"].iloc[0]
+                return "Verificar"
+
+            nets["Quem Registra"] = nets.apply(mapear_registrador_ccee, axis=1)
 
         if pagina == "Base Conferência":
             st.subheader("Base Conferência")
@@ -508,13 +525,13 @@ if arquivo is not None:
             col_metric3.metric(label="Contratos de Venda 📤", value=total_vendas)
             st.markdown("---")
 
-            # ── EXIBIÇÃO DA TABELA RESUMO DE NETS POSSÍVEIS ──
+            # ── EXIBIÇÃO DA TABELA RESUMO DE NETS POSSÍVEIS (CORRIGIDO EM MWm) ──
             st.subheader("⚖️ Resumo de NETs Possíveis")
             if not nets.empty:
                 nets_exibicao = nets.copy()
-                nets_exibicao["Compra (MWh)"] = nets_exibicao["Compra (MWh)"].map(lambda x: f"{x:.3f}")
-                nets_exibicao["Venda (MWh)"] = nets_exibicao["Venda (MWh)"].map(lambda x: f"{x:.3f}")
-                nets_exibicao["NET (MWh)"] = nets_exibicao["NET (MWh)"].map(lambda x: f"{x:.3f}")
+                nets_exibicao["Compra (MWm)"] = nets_exibicao["Compra (MWm)"].map(lambda x: f"{x:.6f}")
+                nets_exibicao["Venda (MWm)"] = nets_exibicao["Venda (MWm)"].map(lambda x: f"{x:.6f}")
+                nets_exibicao["NET (MWm)"] = nets_exibicao["NET (MWm)"].map(lambda x: f"{x:.6f}")
                 st.dataframe(nets_exibicao, use_container_width=True, hide_index=True)
             else:
                 st.info("Nenhuma oportunidade real de NET encontrada para a base atual.")
@@ -567,7 +584,6 @@ if arquivo is not None:
                 if col in base_exibicao.columns:
                     base_exibicao[col] = base_exibicao[col].astype(str)
 
-            # ── CONFIGURAÇÃO DE COLUNAS: LIBERADO VENDEDOR, COMPRADOR E CONTRATO CLIQCCEE ──
             col_config = {
                 "BOLETA": st.column_config.Column(disabled=True), "Operação": st.column_config.Column(disabled=True),
                 "Tipo de Energia": st.column_config.Column(disabled=True), "Parte": st.column_config.Column(disabled=True),
@@ -580,9 +596,9 @@ if arquivo is not None:
                 "% Modulação Máxima": st.column_config.Column(disabled=True), "Modulação Máxima": st.column_config.Column(disabled=True), "Modulação Máxima CCEE": st.column_config.Column(disabled=True), "Check Modulação Máxima": st.column_config.Column(disabled=True),
                 "Modulação CCEE": st.column_config.Column(disabled=True), "Check Modulação": st.column_config.Column(disabled=True),
                 "Contrato CliqCCEE mês anterior": st.column_config.TextColumn(disabled=True),
-                "Vendedor": st.column_config.TextColumn(disabled=False),     # Liberado para ajuste interativo
-                "Comprador": st.column_config.TextColumn(disabled=False),    # Liberado para ajuste interativo
-                "Contrato CliqCCEE": st.column_config.TextColumn(disabled=False), # Liberado para ajuste interativo
+                "Vendedor": st.column_config.TextColumn(disabled=False),
+                "Comprador": st.column_config.TextColumn(disabled=False),
+                "Contrato CliqCCEE": st.column_config.TextColumn(disabled=False),
                 "Editado Manualmente": st.column_config.Column(disabled=True),
                 "Volume Book": st.column_config.Column(disabled=True), "Volume CCEE": st.column_config.Column(disabled=True),
                 "Check Volume": st.column_config.Column(disabled=True), "Volume Global": st.column_config.Column(disabled=True),
@@ -597,24 +613,19 @@ if arquivo is not None:
 
             if st.session_state.get("editor_base") and st.session_state["editor_base"].get("edited_rows"):
                 edicoes = st.session_state["editor_base"]["edited_rows"]
-                # base_exibicao pode estar filtrada, então precisa mapear para os índices reais de base
                 indices_reais = base_exibicao.index.tolist()
                 
                 for idx_disp, alteracoes in edicoes.items():
-                    # idx_disp é o índice de exibição no data_editor (0, 1, 2, ...)
-                    # Precisa converter para o índice real
                     if idx_disp < len(indices_reais):
                         idx_real = indices_reais[idx_disp]
                         base.loc[idx_real, "Editado Manualmente"] = True
                         for col, val in alteracoes.items():
-                            # Se for número com .0, converter para inteiro
                             if isinstance(val, float) and val == int(val):
                                 val = str(int(val))
                             else:
                                 val = str(val)
                             base.loc[idx_real, col] = val
                         
-                        # Se alterou Vendedor/Comprador e não definiu manualmente o contrato, força revalidação rápida
                         if csvs_disponiveis and "Contrato CliqCCEE" not in alteracoes:
                             base.loc[idx_real, "Contrato CliqCCEE"] = str(calcular_contrato_cliqccee_fast(base.loc[idx_real]))
                         
@@ -636,7 +647,6 @@ if arquivo is not None:
                     try: b_int = int(float(str(row["BOLETA"]).strip()))
                     except: b_int = -1
 
-                    # Ignora contratos com volume zerado
                     volume = float(row.get("Volume (MWh)", 0))
                     if volume == 0:
                         continue
@@ -733,17 +743,41 @@ if arquivo is not None:
             saldo = total_compra - total_venda
             total_compra_mwm, total_venda_mwm = compras_calc["Volume MWm"].sum(), vendas_calc["Volume MWm"].sum()
             mes_referencia = int(df["Mes"].dropna().iloc[0])
-            saldo_mwm = saldo / horas_mes.get(mes_referencia, 744)
+            saldo_mwm = total_compra_mwm - total_venda_mwm
 
-            ajuste = contraparte if saldo > 0 else parte if saldo < 0 else "ZERADO"
+            # Alinha dinamicamente com a mesma resposta do registrador mapeado
+            ajuste = "ZERADO"
+            if saldo_mwm > 0 and not compras_calc.empty:
+                ajuste = compras_calc["Vendedor"].iloc[0]
+            elif saldo_mwm < 0 and not vendas_calc.empty:
+                ajuste = vendas_calc["Comprador"].iloc[0]
+
             resumo = pd.DataFrame({"Tipo": ["Compras", "Vendas", "Saldo"], "MWh": [f"{total_compra:.3f}", f"{total_venda:.3f}", f"{saldo:.3f}"], "MWm": [f"{total_compra_mwm:.6f}", f"{total_venda_mwm:.6f}", f"{saldo_mwm:.6f}"]})
-            st.markdown("## RESUMO")
-            st.dataframe(resumo, hide_index=True, use_container_width=True)
+            st.markdown("## RESUMO DO NET")
+            st.dataframe(resumo, hide_index=True)
+            st.info(f"**Quem Ajusta:** {ajuste}")
 
-            c1, c2 = st.columns(2)
-            with c1: st.metric("Quem Ajusta", ajuste)
-            with c2: st.metric("Volume a Ajustar (MWm)", f"{abs(saldo_mwm):.6f}")
+            output_ee = BytesIO()
+            with pd.ExcelWriter(output_ee, engine="openpyxl") as writer:
+                compras.to_excel(writer, sheet_name="Compras", index=False)
+                vendas.to_excel(writer, sheet_name="Vendas", index=False)
+                resumo.to_excel(writer, sheet_name="Resumo", index=False)
+            st.download_button("📥 Download Dados Encontro Energético", data=output_ee.getvalue(), file_name=f"Encontro_Energetico_{parte}_{contraparte}.xlsx")
 
-    except Exception as erro:
-        st.error("Erro ao processar a planilha")
-        st.exception(erro)
+        elif pagina == "Arquivos CCEE":
+            st.subheader("📁 Arquivos CCEE Carregados")
+            col_z1, col_z2, col_z3 = st.columns(3)
+            with col_z1: st.metric("Contratos Matrix", f"{len(df_ccee_matrix):,}" if not df_ccee_matrix.empty else "Nenhum")
+            with col_z2: st.metric("Contratos Bismut", f"{len(df_ccee_bismut):,}" if not df_ccee_bismut.empty else "Nenhum")
+            with col_z3: st.metric("Contratos ACR", f"{len(df_ccee_acr):,}" if not df_ccee_acr.empty else "Nenhum")
+            
+            if not df_ccee_matrix.empty:
+                with st.expander("Visualizar dados Matrix"): st.dataframe(df_ccee_matrix.head(100), use_container_width=True)
+            if not df_ccee_bismut.empty:
+                with st.expander("Visualizar dados Bismut"): st.dataframe(df_ccee_bismut.head(100), use_container_width=True)
+            if not df_ccee_acr.empty:
+                with st.expander("Visualizar dados ACR"): st.dataframe(df_ccee_acr.head(100), use_container_width=True)
+
+    except Exception as e_geral:
+        st.error(f"Erro ao processar o arquivo: {e_geral}")
+        st.exception(e_geral)
