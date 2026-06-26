@@ -10,6 +10,7 @@
 import streamlit as st
 import pandas as pd
 import zipfile
+import numpy as np
 from io import BytesIO
 
 # Configura o limite do Pandas Styler para evitar o erro de estouro de células devido ao aumento de colunas
@@ -277,6 +278,11 @@ if arquivo is not None:
                     d_field = dict_m
                 
                 res_val = d_field.get(cod, "-")
+                
+                # Tratamento explícito para nan e nulos vindos do dicionário
+                if pd.isna(res_val) or str(res_val).strip().lower() in ["nan", "none", ""]:
+                    return "-"
+
                 # Tratamento para converter strings numéricas vindas com vírgula da CCEE em float puro
                 if isinstance(res_val, str) and res_val != "-":
                     res_val_clean = res_val.replace(",", ".").strip()
@@ -296,7 +302,10 @@ if arquivo is not None:
                 try: b_int = int(float(str(row["BOLETA"]).strip()))
                 except: b_int = -1
                 d_field = dict_a if b_int in BOLETAS_ACR else (dict_b if str(row["Parte"]).strip().upper() == "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A." else dict_m)
-                return d_field.get(cod, "-")
+                res_tipo = d_field.get(cod, "-")
+                if pd.isna(res_tipo) or str(res_tipo).strip().lower() in ["nan", "none", ""]:
+                    return "-"
+                return res_tipo
                 
             base["Modulação CCEE"]        = base.apply(lambda r: buscar_tipo_ccee(r, idx_m_tipo, idx_b_tipo, idx_a_tipo), axis=1)
         else:
@@ -457,11 +466,11 @@ if arquivo is not None:
             # Formatando todos os campos numéricos de modulação para seguir estritamente o formato MWm (6 casas decimais)
             for c_format in ["Modulação Mínima", "Modulação Máxima", "Modulação Mínima CCEE", "Modulação Máxima CCEE"]:
                 if c_format in base_exibicao.columns:
-                    base_exibicao[c_format] = base_exibicao[c_format].map(lambda x: f"{x:.6f}" if isinstance(x, (int, float)) else x)
+                    base_exibicao[c_format] = base_exibicao[c_format].map(lambda x: f"{x:.6f}" if isinstance(x, (int, float)) and not pd.isna(x) else x)
 
             st.caption(f"{len(base_exibicao):,} registros encontrados")
 
-            # Converter para string apenas para exibição
+            # Converter para string apenas para exibição limpando de vez qualquer resíduo de "nan"
             colunas_texto = [
                 "BOLETA", "Operação", "Tipo de Energia", "Parte", "Contraparte Razão Social",
                 "Contraparte", "CP/LP", "CNPJ CONTRAPARTE", "Submercado", "CliqCCEE Paradigma",
@@ -472,7 +481,7 @@ if arquivo is not None:
             ]
             for col in colunas_texto:
                 if col in base_exibicao.columns:
-                    base_exibicao[col] = base_exibicao[col].astype(str)
+                    base_exibicao[col] = base_exibicao[col].astype(str).replace(["nan", "None", "NaN"], "-")
 
             _boletas_ef_set = st.session_state.get("boletas_efetivadas", set())
 
