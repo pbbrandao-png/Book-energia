@@ -5,7 +5,7 @@
 # Bismut → cceal_firme (ZIP Bismut)
 # V17: + Contraparte Razão Social | highlight amarelo Parte==Contraparte | flag ocultar zerados
 # V20: + Otimização massiva de performance + Regra de ignorar Intraportfólio/Zerados nas tabelas de erro
-# V21: + Remoção total de rateios (Auto-referência)
+# V21: + Remoção total de rateios (Auto-referência) + Tabela de Divergências Consolidada por Check
 
 import streamlit as st
 import pandas as pd
@@ -486,14 +486,11 @@ if arquivo is not None:
                         continue
 
                     if b_int in BOLETAS_ACR:
-                        d_ch, d_v, d_c, d_s, s_ext = idx_a_chave, idx_a_v, idx_a_c, idx_a_s, set_a_ext
+                        s_ext = set_a_ext
                     elif str(row["Parte"]).strip().upper() == "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A.":
-                        d_ch, d_v, d_c, d_s, s_ext = idx_b_chave, idx_b_v, idx_b_c, idx_b_s, set_b_ext
+                        s_ext = set_b_ext
                     else:
-                        d_ch, d_v, d_c, d_s, s_ext = idx_m_chave, idx_m_v, idx_m_c, idx_m_s, set_m_ext
-
-                    v_b, c_b, s_b = str(row["Vendedor"]).strip(), str(row["Comprador"]).strip(), str(row["Submercado"]).strip()
-                    chave_esp = v_b + c_b + s_b
+                        s_ext = set_m_ext
 
                     cods = [str(row.get(c, "")).strip() for c in ["Contrato CliqCCEE", "Contrato CliqCCEE mês anterior", "CliqCCEE Paradigma"]]
                     cods_validos = [c for c in cods if c not in ('', '-', 'None', 'nan', 'Verificar')]
@@ -505,30 +502,39 @@ if arquivo is not None:
                             break
 
                     if not cod_encontrado:
-                        if chave_esp in d_ch.values():
-                            status, justificativa = "OK", None
-                        else:
-                            status, justificativa = "SEM_MATCH", "Contrato inexistente no CSV CCEE"
+                        # Se não achou em nenhum índice estrutural
+                        lista_sem_match_nenhum.append({
+                            "Boleta": row["BOLETA"], 
+                            "Vendedor": row["Vendedor"], 
+                            "Comprador": row["Comprador"], 
+                            "Mensagem": "Contrato inexistente no CSV CCEE"
+                        })
                     else:
-                        v_c, c_c, s_c = d_v.get(cod_encontrado, ''), d_c.get(cod_encontrado, ''), d_s.get(cod_encontrado, '')
-
-                        divs = []
-                        if v_b != v_c: divs.append("Vendedor")
-                        if c_b != c_c: divs.append("Comprador")
-                        if s_b != s_c: divs.append(f"Submercado (Boleta={s_b} | CSV={s_c})")
-
-                        if not divs:
-                            status, justificativa = "OK", None
-                        else:
-                            status = "ERRO"
-                            if len(divs) == 1: justificativa = f"Divergência de {divs[0]}"
-                            elif len(divs) == 2: justificativa = f"Divergência de {divs[0]} e {divs[1]}"
-                            else: justificativa = f"Divergência de {divs[0]}, {divs[1]} e {divs[2]}"
-
-                    if status in ("ERRO", "SEM_MATCH"):
-                        item = {"Boleta": row["BOLETA"], "Vendedor": row["Vendedor"], "Comprador": row["Comprador"], "Mensagem": justificativa}
-                        if status == "ERRO": lista_divergencias.append(item)
-                        else: lista_sem_match_nenhum.append(item)
+                        # Mapeamento dinâmico de erros baseado em todas as colunas de Check (Exceto Volume Global)
+                        erros_encontrados = []
+                        
+                        check_vol = str(row.get("Check Volume", "OK")).strip()
+                        check_mod_min = str(row.get("Check Modulação Mínima", "OK")).strip()
+                        check_mod_max = str(row.get("Check Modulação Máxima", "OK")).strip()
+                        check_mod_tipo = str(row.get("Check Modulação", "OK")).strip()
+                        
+                        if check_vol not in ("OK", "-"):
+                            erros_encontrados.append(f"Volume ({check_vol})")
+                        if check_mod_min not in ("OK", "-"):
+                            erros_encontrados.append(f"Modulação Mínima ({check_mod_min})")
+                        if check_mod_max not in ("OK", "-"):
+                            erros_encontrados.append(f"Modulação Máxima ({check_mod_max})")
+                        if check_mod_tipo not in ("OK", "-"):
+                            erros_encontrados.append(f"Tipo Modulação ({check_mod_tipo})")
+                        
+                        if erros_encontrados:
+                            justificativa = "Divergência de " + ", ".join(erros_encontrados)
+                            lista_divergencias.append({
+                                "Boleta": row["BOLETA"], 
+                                "Vendedor": row["Vendedor"], 
+                                "Comprador": row["Comprador"], 
+                                "Mensagem": justificativa
+                            })
 
                 df_divergencias = pd.DataFrame(lista_divergencias, columns=["Boleta", "Vendedor", "Comprador", "Mensagem"])
                 df_sem_match_nenhum = pd.DataFrame(lista_sem_match_nenhum, columns=["Boleta", "Vendedor", "Comprador", "Mensagem"])
