@@ -78,7 +78,7 @@ def extrair_csvs_zip(zip_file):
     except Exception as e:
         st.warning(f"Erro ao ler ZIP: {e}")
     return result
-  
+
 
 def combiner_dfs(lista):
     validos = [df for df in lista if df is not None and not df.empty]
@@ -117,49 +117,48 @@ def highlight_mesmo_titular(row):
     return [""] * len(row)
 
 
-# Partes elegíveis para a regra InterCompany
+# ── InterCompany ──────────────────────────────────────────────────────────────
 _PARTES_INTERCOMPANY = {
     "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A.",
     "GET COMERCIALIZADORA DE ENERGIA S.A.",
     "ARGENTUM COMERCIALIZADORA DE ENERGIA LTDA.",
 }
 
-
 def aplicar_zerar_intercompany(base: pd.DataFrame):
-    """
-    Recebe uma cópia da Base Conferência e zera Volume (MWh) e Volume MWm
-    dos contratos InterCompany, conforme regra:
-
-    - Parte pertence a _PARTES_INTERCOMPANY
-    - Contraparte (sigla CCEE) começa com "MATRIX"
-    - MAS NÃO começa com "MATRIX VAR"
-
-    Retorna (base_modificada, mask_intercompany).
-    A base original nunca é alterada — passar sempre uma cópia.
-    """
+    """Zera volumes dos contratos InterCompany (Parte ∈ grupo + Contraparte começa com MATRIX mas não MATRIX VAR).
+    Retorna (base_modificada, mask_intercompany). Nunca altera a base original."""
     base = base.copy()
-
-    parte_upper = base["Parte"].astype(str).str.strip().str.upper()
-    contra_upper = base["Contraparte"].astype(str).str.strip().str.upper()
-
-    mask_parte     = parte_upper.isin(_PARTES_INTERCOMPANY)
-    mask_matrix    = contra_upper.str.startswith("MATRIX")
-    mask_matrix_var = contra_upper.str.startswith("MATRIX VAR")
-
-    mask_intercompany = mask_parte & mask_matrix & ~mask_matrix_var
-
-    base.loc[mask_intercompany, "Volume (MWh)"] = 0.0
-    base.loc[mask_intercompany, "Volume MWm"]   = 0.0
-
-    return base, mask_intercompany
+    parte_up   = base["Parte"].astype(str).str.strip().str.upper()
+    contra_up  = base["Contraparte"].astype(str).str.strip().str.upper()
+    mask = (
+        parte_up.isin(_PARTES_INTERCOMPANY)
+        & contra_up.str.startswith("MATRIX")
+        & ~contra_up.str.startswith("MATRIX VAR")
+    )
+    base.loc[mask, "Volume (MWh)"] = 0.0
+    base.loc[mask, "Volume MWm"]   = 0.0
+    return base, mask
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ── Grupos do dashboard Check Cliq/Book ───────────────────────────────────────
+# Cada grupo define: nome exibido, Parte no book, qual df_ccee usar, prefixo de sigla
+_CHECK_GRUPOS = [
+    ("BISMUT",             "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A.",  "bismut",  "BISMUT COM"),
+    ("GET",                "GET COMERCIALIZADORA DE ENERGIA S.A.",             "matrix",  "GET ENERGY TRADING"),
+    ("MATRIX",             "MATRIX COMERCIALIZADORA DE ENERGIA ELETRICA S/A", "matrix",  "MATRIX COM"),
+    ("ARGENTUM",           "ARGENTUM COMERCIALIZADORA DE ENERGIA LTDA.",      "matrix",  "ARGENTUM COM"),
+    ("MATRIX CAMANDUCAIA", "IBS SE-CAMANDUCAIA",                              "matrix",  "MTX CAMANDUCAIA"),
+]
 st.set_page_config(page_title="Book Energia", layout="wide")
 
-pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético", "Arquivos CCEE"])
-st.sidebar.markdown("---")
+pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético", "Arquivos CCEE", "Check Cliq/Book"])
 st.title("📊 Book Energia")
+
+# Flag InterCompany persistida no session_state para estar disponível antes dos cálculos.
+# O toggle é renderizado na página Base Conferência junto com os outros flags.
+if "flag_zerar_intercompany" not in st.session_state:
+    st.session_state["flag_zerar_intercompany"] = False
+flag_zerar_intercompany = st.session_state["flag_zerar_intercompany"]
 
 arquivo = st.file_uploader("Selecione a RelPers", type=["xlsx", "xlsm"])
 arquivo_mes_anterior = st.file_uploader("Selecione a planilha Mês Anterior", type=["xlsx"])
@@ -245,16 +244,6 @@ if arquivo is not None:
         base["Vendedor"]                       = df["Sigla_CCEE_vendedor"].fillna("-").astype(str)
         base["Comprador"]                      = df["Sigla_CCEE_comprador"].fillna("-").astype(str)
         base["Contrato CliqCCEE"]              = "-"
-
-        # ── ZERAR INTERCOMPANY (opcional) ────────────────────────────────────────
-        # Preserva a base original intacta; todos os cálculos abaixo usam `base`
-        # que já reflete o estado da flag. Quando desligada, base_original == base.
-        base_original = base.copy()
-        mask_intercompany = pd.Series(False, index=base.index)
-        flag_zerar_intercompany = st.session_state.get("zerar_ic", False)
-        if flag_zerar_intercompany:
-            base, mask_intercompany = aplicar_zerar_intercompany(base)
-        # ── FIM ZERAR INTERCOMPANY ────────────────────────────────────────────────
 
         csvs_disponiveis = any([not df_ccee_matrix.empty, not df_ccee_bismut.empty, not df_ccee_acr.empty])
 
@@ -457,7 +446,7 @@ if arquivo is not None:
             _lista_dfs_global_ccee = []
             for _df_src in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
                 if _df_src is not None and not _df_src.empty and "MWmedio" in _df_src.columns:
-                    _cols_need = ["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRAPOR", "SUBMERCADO_ENTREGA", "MWmedio"]
+                    _cols_need = ["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA", "MWmedio"]
                     if all(c in _df_src.columns for c in _cols_need):
                         _tmp2 = _df_src[_cols_need].copy()
                         _tmp2["MWmedio"] = _tmp2["MWmedio"].astype(str).str.strip().str.replace(",", ".", regex=False)
@@ -500,14 +489,9 @@ if arquivo is not None:
             col_metric3.metric(label="Contratos de Venda 📤", value=total_vendas)
             st.markdown("---")
 
-            col_flag1, col_flag2, col_flag3 = st.columns(3)
+            col_flag1, col_flag2 = st.columns(2)
             with col_flag1: flag_mesmo_titular = st.toggle("🟡 Ocultar IntraPortifólio Visualmente", value=True)
             with col_flag2: flag_ocultar_zerados = st.toggle("🚫 Ocultar contratos zerados (Volume MWh = 0)", value=False)
-            with col_flag3: st.toggle("🏢 Zerar InterCompany", value=False, key="zerar_ic")
-
-            if flag_zerar_intercompany:
-                n_ic = int(mask_intercompany.sum())
-                st.info(f"🏢 **Zerar InterCompany ativo** — {n_ic} contrato(s) zerado(s) destacados em amarelo 🟡")
 
             base_exibicao = base.copy()
             st.markdown("### 🔎 Filtros")
@@ -555,15 +539,10 @@ if arquivo is not None:
 
             _boletas_ef_set = st.session_state.get("boletas_efetivadas", set())
 
-            # Marca as linhas InterCompany zeradas para highlight (usa índice original da base)
-            _idx_intercompany = set(base.index[mask_intercompany].tolist()) if flag_zerar_intercompany else set()
-
             def _highlight_tabela(row):
                 boleta_str = str(row.get("BOLETA", "")).strip()
                 if boleta_str in _boletas_ef_set:
                     return ["background-color: #7B2D8B; color: white"] * len(row)
-                if flag_zerar_intercompany and row.name in _idx_intercompany:
-                    return ["background-color: #FFD700"] * len(row)
                 if flag_mesmo_titular:
                     parte_r = str(row.get("Parte", "")).strip().upper()
                     contra_r = str(row.get("Contraparte Razão Social", "")).strip().upper()
