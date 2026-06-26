@@ -488,6 +488,14 @@ if arquivo is not None:
         vendas_net = base[base["Operação"] == "Venda"].groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume (MWh)"].sum().rename(columns={"Volume (MWh)": "Venda (MWh)"})
         nets = compras_net.merge(vendas_net, on=["Parte", "Contraparte", "Submercado", "Tipo de Energia"], how="inner")
 
+        # ── CÁLCULO DE SALDO (NET) E QUEM AJUSTA COM BASE NA REGRA EXISTENTE ──
+        if not nets.empty:
+            nets["NET (MWh)"] = nets["Compra (MWh)"] - nets["Venda (MWh)"]
+            nets["Quem Registra"] = nets.apply(
+                lambda r: r["Contraparte"] if r["NET (MWh)"] > 0 else (r["Parte"] if r["NET (MWh)"] < 0 else "ZERADO"), 
+                axis=1
+            )
+
         if pagina == "Base Conferência":
             st.subheader("Base Conferência")
             total_contratos = len(base)
@@ -506,6 +514,7 @@ if arquivo is not None:
                 nets_exibicao = nets.copy()
                 nets_exibicao["Compra (MWh)"] = nets_exibicao["Compra (MWh)"].map(lambda x: f"{x:.3f}")
                 nets_exibicao["Venda (MWh)"] = nets_exibicao["Venda (MWh)"].map(lambda x: f"{x:.3f}")
+                nets_exibicao["NET (MWh)"] = nets_exibicao["NET (MWh)"].map(lambda x: f"{x:.3f}")
                 st.dataframe(nets_exibicao, use_container_width=True, hide_index=True)
             else:
                 st.info("Nenhuma oportunidade real de NET encontrada para a base atual.")
