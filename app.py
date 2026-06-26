@@ -78,7 +78,7 @@ def extrair_csvs_zip(zip_file):
     except Exception as e:
         st.warning(f"Erro ao ler ZIP: {e}")
     return result
-
+  
 
 def combiner_dfs(lista):
     validos = [df for df in lista if df is not None and not df.empty]
@@ -159,7 +159,6 @@ st.set_page_config(page_title="Book Energia", layout="wide")
 
 pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético", "Arquivos CCEE"])
 st.sidebar.markdown("---")
-flag_zerar_intercompany = st.sidebar.toggle("🏢 Zerar InterCompany", value=False)
 st.title("📊 Book Energia")
 
 arquivo = st.file_uploader("Selecione a RelPers", type=["xlsx", "xlsm"])
@@ -252,6 +251,7 @@ if arquivo is not None:
         # que já reflete o estado da flag. Quando desligada, base_original == base.
         base_original = base.copy()
         mask_intercompany = pd.Series(False, index=base.index)
+        flag_zerar_intercompany = st.session_state.get("zerar_ic", False)
         if flag_zerar_intercompany:
             base, mask_intercompany = aplicar_zerar_intercompany(base)
         # ── FIM ZERAR INTERCOMPANY ────────────────────────────────────────────────
@@ -457,7 +457,7 @@ if arquivo is not None:
             _lista_dfs_global_ccee = []
             for _df_src in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
                 if _df_src is not None and not _df_src.empty and "MWmedio" in _df_src.columns:
-                    _cols_need = ["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA", "MWmedio"]
+                    _cols_need = ["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRAPOR", "SUBMERCADO_ENTREGA", "MWmedio"]
                     if all(c in _df_src.columns for c in _cols_need):
                         _tmp2 = _df_src[_cols_need].copy()
                         _tmp2["MWmedio"] = _tmp2["MWmedio"].astype(str).str.strip().str.replace(",", ".", regex=False)
@@ -500,9 +500,10 @@ if arquivo is not None:
             col_metric3.metric(label="Contratos de Venda 📤", value=total_vendas)
             st.markdown("---")
 
-            col_flag1, col_flag2 = st.columns(2)
+            col_flag1, col_flag2, col_flag3 = st.columns(3)
             with col_flag1: flag_mesmo_titular = st.toggle("🟡 Ocultar IntraPortifólio Visualmente", value=True)
             with col_flag2: flag_ocultar_zerados = st.toggle("🚫 Ocultar contratos zerados (Volume MWh = 0)", value=False)
+            with col_flag3: st.toggle("🏢 Zerar InterCompany", value=False, key="zerar_ic")
 
             if flag_zerar_intercompany:
                 n_ic = int(mask_intercompany.sum())
@@ -783,173 +784,4 @@ if arquivo is not None:
                     _saldo = _row["_saldo"]
                     _saldo_fmt = f"{_saldo:+.6f}"
 
-                    _cols = st.columns([0.5, 2, 2, 1.2, 1.5, 1.2, 1.2, 1.2, 1.5, 1.5, 1.5, 1.5, 1.5])
-                    _novo_ef = _cols[0].checkbox("", value=_efetivado, key=f"net_ef_{_net_key}")
-                    if _novo_ef != _efetivado:
-                        st.session_state["net_efetivados"][_net_key] = _novo_ef
-                        st.rerun()
-
-                    _cols[1].write(_row["Parte"])
-                    _cols[2].write(_row["Contraparte"])
-                    _cols[3].write(_row["Submercado"])
-                    _cols[4].write(_row["Tipo de Energia"])
-                    _cols[5].write(f"{_row['_compra_mwm']:.6f}")
-                    _cols[6].write(f"{_row['_venda_mwm']:.6f}")
-                    _cols[7].write(_saldo_fmt)
-                    _cols[8].write(f"{_row['_vol_ajustar']:.6f}")
-                    _cols[9].write(_row["_quem_ajusta_nome"])
-                    _cols[10].write(f"{_row['_compra_cliq']:.6f}")
-                    _cols[11].write(f"{_row['_venda_cliq']:.6f}")
-                    _cols[12].write(f"{_status_icon} {_status}")
-
-                    if _novo_ef:
-                        _mask_ef = (
-                            (base["Parte"] == _row["Parte"]) &
-                            (base["Contraparte"] == _row["Contraparte"]) &
-                            (base["Submercado"] == _row["Submercado"]) &
-                            (base["Tipo de Energia"] == _row["Tipo de Energia"])
-                        )
-                        boletas_efetivadas.update(base[_mask_ef]["BOLETA"].astype(str).tolist())
-
-                st.session_state["boletas_efetivadas"] = boletas_efetivadas
-
-            # ── CONFERÊNCIA AVANÇADA DE DIVERGÊNCIAS (MÚLTIPLOS CHECKS UNIFICADOS) ──
-            if csvs_disponiveis:
-                st.markdown("---")
-                lista_divergencias = []
-                lista_sem_match_nenhum = []
-
-                for _, row in base.iterrows():
-                    try: b_int = int(float(str(row["BOLETA"]).strip()))
-                    except: b_int = -1
-
-                    # Ignora contratos com volume zerado
-                    volume = float(row.get("Volume (MWh)", 0))
-                    if volume == 0:
-                        continue
-
-                    if b_int in BOLETAS_ACR:
-                        d_ch, d_v, d_c, d_s, s_ext = idx_a_chave, idx_a_v, idx_a_c, idx_a_s, set_a_ext
-                    elif str(row["Parte"]).strip().upper() == "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A.":
-                        d_ch, d_v, d_c, d_s, s_ext = idx_b_chave, idx_b_v, idx_b_c, idx_b_s, set_b_ext
-                    else:
-                        d_ch, d_v, d_c, d_s, s_ext = idx_m_chave, idx_m_v, idx_m_c, idx_m_s, set_m_ext
-
-                    v_b, c_b, s_b = str(row["Vendedor"]).strip(), str(row["Comprador"]).strip(), str(row["Submercado"]).strip()
-                    chave_esp = v_b + c_b + s_b
-
-                    cods = [str(row.get(c, "")).strip() for c in ["Contrato CliqCCEE", "Contrato CliqCCEE mês anterior", "CliqCCEE Paradigma"]]
-                    cods_validos = [c for c in cods if c not in ('', '-', 'None', 'nan', 'Verificar')]
-
-                    cod_encontrado = None
-                    for c in cods_validos:
-                        if c in s_ext:
-                            cod_encontrado = c
-                            break
-
-                    divs = []
-
-                    # 1. Caso encontre o código do contrato, checa divergências de perfis
-                    if cod_encontrado:
-                        v_c = d_v.get(cod_encontrado, '')
-                        c_c = d_c.get(cod_encontrado, '')
-                        s_c = d_s.get(cod_encontrado, '')
-
-                        if v_b != v_c: divs.append(f"Divergência de Vendedor (Book={v_b} | CCEE={v_c})")
-                        if c_b != c_c: divs.append(f"Divergência de Comprador (Book={c_b} | CCEE={c_c})")
-                        if s_b != s_c: divs.append(f"Divergência de Submercado (Book={s_b} | CCEE={s_c})")
-
-                    # 2. Varredura dos outros validadores da planilha (Exceto Volume Global)
-                    check_mod_min = str(row.get("Check Modulação Mínima", "-")).strip()
-                    if check_mod_min in ("Book maior", "CCEE maior"):
-                        divs.append(f"Modulação Mínima ({check_mod_min})")
-
-                    check_mod_max = str(row.get("Check Modulação Máxima", "-")).strip()
-                    if check_mod_max in ("Book maior", "CCEE maior"):
-                        divs.append(f"Modulação Máxima ({check_mod_max})")
-
-                    check_mod_tipo = str(row.get("Check Modulação", "-")).strip()
-                    if check_mod_tipo == "Divergente":
-                        divs.append("Tipo de Modulação Divergente")
-
-                    check_vol_contrato = str(row.get("Check Volume", "-")).strip()
-                    if check_vol_contrato in ("Book maior", "CCEE maior"):
-                        divs.append(f"Volume do Contrato ({check_vol_contrato})")
-
-                    # 3. Classificação e destino final da boleta
-                    if not cod_encontrado and chave_esp not in d_ch.values():
-                        status = "SEM_MATCH"
-                        justificativa = "Contrato inexistente no CSV CCEE"
-                    elif divs:
-                        status = "ERRO"
-                        justificativa = " | ".join(divs)
-                    else:
-                        status = "OK"
-                        justificativa = None
-
-                    if status in ("ERRO", "SEM_MATCH"):
-                        item = {"Boleta": row["BOLETA"], "Vendedor": row["Vendedor"], "Comprador": row["Comprador"], "Mensagem": justificativa}
-                        if status == "ERRO": lista_divergencias.append(item)
-                        else: lista_sem_match_nenhum.append(item)
-
-                df_divergencias = pd.DataFrame(lista_divergencias, columns=["Boleta", "Vendedor", "Comprador", "Mensagem"])
-                df_sem_match_nenhum = pd.DataFrame(lista_sem_match_nenhum, columns=["Boleta", "Vendedor", "Comprador", "Mensagem"])
-
-                st.subheader("❌ Contratos com Divergência (Cadastro ou Indicadores Incorretos)")
-                st.dataframe(df_divergencias, use_container_width=True, hide_index=True)
-
-                output_div = BytesIO()
-                with pd.ExcelWriter(output_div, engine="openpyxl") as writer: df_divergencias.to_excel(writer, sheet_name="Divergencias", index=False)
-                st.download_button("📥 Download Contratos com Divergência", data=output_div.getvalue(), file_name="Contratos_com_Divergencia.xlsx")
-                st.markdown("---")
-
-                st.subheader("🔍 Contratos Sem Match Nenhum (Inexistentes no CSV CCEE)")
-                st.dataframe(df_sem_match_nenhum, use_container_width=True, hide_index=True)
-
-                output_sm = BytesIO()
-                with pd.ExcelWriter(output_sm, engine="openpyxl") as writer: df_sem_match_nenhum.to_excel(writer, sheet_name="Sem Match Nenhum", index=False)
-                st.download_button("📥 Download Contratos Sem Match Nenhum", data=output_sm.getvalue(), file_name="Contratos_Sem_Match_Nenhum.xlsx")
-
-        elif pagina == "Encontro Energético":
-            st.subheader("🤝 Encontro Energético")
-            parte = st.selectbox("Parte", sorted(nets["Parte"].dropna().unique()))
-            df_parte = nets[nets["Parte"] == parte]
-            contraparte = st.selectbox("Contraparte", sorted(df_parte["Contraparte"].dropna().unique()))
-            df_contraparte = df_parte[df_parte["Contraparte"] == contraparte]
-            submercado = st.selectbox("Submercado", sorted(df_contraparte["Submercado"].dropna().unique()))
-            df_sub = df_contraparte[df_contraparte["Submercado"] == submercado]
-            tipo_energia = st.selectbox("Tipo de Energia", sorted(df_sub["Tipo de Energia"].dropna().unique()))
-
-            encontro = base[(base["Parte"] == parte) & (base["Contraparte"] == contraparte) & (base["Submercado"] == submercado) & (base["Tipo de Energia"] == tipo_energia)]
-            compras_calc = encontro[encontro["Operação"] == "Compra"]
-            vendas_calc  = encontro[encontro["Operação"] == "Venda"]
-
-            compras, vendas = compras_calc.copy(), vendas_calc.copy()
-            compras["Volume (MWh)"] = compras["Volume (MWh)"].map(lambda x: f"{x:.3f}" if isinstance(x, (int, float)) else x)
-            compras["Volume MWm"]   = compras["Volume MWm"].map(lambda x: f"{x:.6f}" if isinstance(x, (int, float)) else x)
-            vendas["Volume (MWh)"]  = vendas["Volume (MWh)"].map(lambda x: f"{x:.3f}" if isinstance(x, (int, float)) else x)
-            vendas["Volume MWm"]    = vendas["Volume MWm"].map(lambda x: f"{x:.6f}" if isinstance(x, (int, float)) else x)
-
-            st.markdown("## COMPRAS")
-            st.dataframe(compras[["BOLETA", "Volume (MWh)", "Volume MWm"]], hide_index=True, use_container_width=True)
-            st.markdown("## VENDAS")
-            st.dataframe(vendas[["BOLETA", "Volume (MWh)", "Volume MWm"]], hide_index=True, use_container_width=True)
-
-            total_compra, total_venda = compras_calc["Volume (MWh)"].sum(), vendas_calc["Volume (MWh)"].sum()
-            saldo = total_compra - total_venda
-            total_compra_mwm, total_venda_mwm = compras_calc["Volume MWm"].sum(), vendas_calc["Volume MWm"].sum()
-            mes_referencia = int(df["Mes"].dropna().iloc[0])
-            saldo_mwm = saldo / horas_mes.get(mes_referencia, 744)
-
-            ajuste = contraparte if saldo > 0 else parte if saldo < 0 else "ZERADO"
-            resumo = pd.DataFrame({"Tipo": ["Compras", "Vendas", "Saldo"], "MWh": [f"{total_compra:.3f}", f"{total_venda:.3f}", f"{saldo:.3f}"], "MWm": [f"{total_compra_mwm:.6f}", f"{total_venda_mwm:.6f}", f"{saldo_mwm:.6f}"]})
-            st.markdown("## RESUMO")
-            st.dataframe(resumo, hide_index=True, use_container_width=True)
-
-            c1, c2 = st.columns(2)
-            with c1: st.metric("Quem Ajusta", ajuste)
-            with c2: st.metric("Volume a Ajustar (MWm)", f"{abs(saldo_mwm):.6f}")
-
-    except Exception as erro:
-        st.error("Erro ao processar a planilha")
-        st.exception(erro)
+                    _cols = st.columns(
