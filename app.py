@@ -5,7 +5,7 @@
 # Bismut → cceal_firme (ZIP Bismut)
 # V17: + Contraparte Razão Social | highlight amarelo Parte==Contraparte | flag ocultar zerados
 # V20: + Otimização massiva de performance + Regra de ignorar Intraportfólio/Zerados nas tabelas de erro
-# V21: + Remoção total de rateios (Auto-referência) + Tabela de Divergências Consolidada por Check
+# V21: + Remoção total de rateios (Auto-referência) + Tabela de Divergências Consolidada por Check + Resumo de NETs Completo
 
 import streamlit as st
 import pandas as pd
@@ -108,7 +108,14 @@ def criar_indices_busca(df_ccee):
     return dict_chave, dict_vend, dict_comp, dict_sub, set_existentes, dict_lim_min, dict_lim_max, dict_tipo_mod
 
 
-def highlight_mesmo_titular(row):
+def highlight_mesmo_titular_ou_net(row, n_compras_aceitas=set(), n_vendas_aceitas=set()):
+    vendedor = str(row.get("Vendedor", "")).strip()
+    comprador = str(row.get("Comprador", "")).strip()
+    
+    # Regra Roxa: Net Aceito tem maior precedência visual
+    if (vendedor, comprador) in n_compras_aceitas or (vendedor, comprador) in n_vendas_aceitas:
+        return ["background-color: #DDA0DD"] * len(row)
+        
     parte = str(row.get("Parte", "")).strip().upper()
     contraparte_rs = str(row.get("Contraparte Razão Social", "")).strip().upper()
     if parte and contraparte_rs and parte == contraparte_rs:
@@ -416,6 +423,117 @@ if arquivo is not None:
             with col_flag1: flag_mesmo_titular = st.toggle("🟡 Ocultar IntraPortifólio Visualmente", value=True)
             with col_flag2: flag_ocultar_zerados = st.toggle("🚫 Ocultar contratos zerados (Volume MWh = 0)", value=False)
 
+            # ──────────────────────────────────────────────────────────────────────────
+            # ── NOVA SEÇÃO: Resumo de NETs
+            # ──────────────────────────────────────────────────────────────────────────
+            st.markdown("---")
+            st.subheader("🤝 Resumo de NETs")
+
+            # Agrupamento e processamento dos dados estruturados existentes para compor a tabela NETs
+            _df_nets_prep = base.copy()
+            _df_nets_prep["Vol_MWm_Num"] = pd.to_numeric(_df_nets_prep["Volume MWm"], errors="coerce").fillna(0.0)
+
+            # Separação das somas por par de Vendedor/Comprador e Parte
+            _nets_vendas = _df_nets_prep[_df_nets_prep["Operação"] == "Venda"].groupby(["Parte", "Vendedor", "Comprador"], as_index=False)["Vol_MWm_Num"].sum().rename(columns={"Vol_MWm_Num": "Volume Total Vendas (MWm)"})
+            _nets_compras = _df_nets_prep[_df_nets_prep["Operação"] == "Compra"].groupby(["Parte", "Vendedor", "Comprador"], as_index=False)["Vol_MWm_Num"].sum().rename(columns={"Vol_MWm_Num": "Volume Total Compras (MWm)"})
+
+            df_nets_consolidado = pd.merge(_nets_vendas, _nets_compras, on=["Parte", "Vendedor", "Comprador"], how="outer").fillna(0.0)
+
+            if not df_nets_consolidado.empty:
+                # Regras estruturais de volumes
+                df_nets_consolidado["Volume Net"] = df_nets_consolidado["Volume Total Compras (MWm)"] - df_nets_consolidado["Volume Total Vendas (MWm)"]
+                
+                # Regra estrutural de Ajuste Net (Quem Ajusta baseado no saldo)
+                df_nets_consolidado["Ajuste Net"] = df_nets_consolidado.apply(
+                    lambda r: r["Comprador"] if r["Volume Net"] > 0 else (r["Vendedor"] if r["Volume Net"] < 0 else "ZERADO"), axis=1
+                )
+
+                # Busca de volumes reais no Cliq (Volume Global CCEE) mapeado a partir das estruturas O(1) já processadas
+                def obter_volumes_cliq_net(row, operacao_tipo):
+                    v_b, c_b = str(row["Vendedor"]).strip(), str(row["Comprador"]).strip()
+                    # Filtra os submercados somados daquela contraparte no CCEE global mapeado na base principal
+                    sub_df = base[(base["Vendedor"] == v_b) & (base["Comprador"] == c_b)]
+                    if sub_df.empty:
+                        return 0.0
+                    if operacao_tipo == "Compra":
+                        # Retorna a soma do Volume CCEE dos registros cuja operação original é Compra
+                        return pd.to_numeric(sub_df[sub_df["Operação"] == "Compra"]["Volume CCEE"], errors="coerce").sum()
+                    else:
+                        return pd.to_numeric(sub_df[sub_df["Operação"] == "Venda"]["Volume CCEE"], errors="coerce").sum()
+
+                df_nets_consolidado["Volume Compra Cliq"] = df_nets_consolidado.apply(lambda r: obter_volumes_cliq_net(r, "Compra"), axis=1)
+                df_nets_consolidado["Volume Venda Cliq"] = df_nets_consolidado.apply(lambda r: obter_volumes_cliq_net(r, "Venda"), axis=1)
+
+                # Cálculo analítico do Check Net
+                def calcular_check_net(row):
+                    vol_net_esperado = row["Volume Net"]
+                    vol_compra_cliq = row["Volume Compra Cliq"]
+                    vol_venda_cliq = row["Volume Venda Cliq"]
+                    responsavel = row["Ajuste Net"]
+
+                    vol_net_cliq = vol_compra_cliq - vol_venda_cliq
+
+                    if responsavel == "ZERADO":
+                        return "OK" if abs(vol_net_cliq) < 1e-4 else "Divergência entre o volume esperado e o volume existente no Cliq"
+
+                    if abs(vol_compra_cliq) < 1e-4 and abs(vol_venda_cliq) < 1e-4:
+                        return "Não ajustado"
+
+                    if abs(vol_net_esperado - vol_net_cliq) < 1e-4:
+                        return "OK"
+                    
+                    # Verificação de proporção para maior ou menor
+                    if responsavel == row["Comprador"]: # Esperava saldo positivo (Compra maior)
+                        if vol_net_cliq > vol_net_esperado:
+                            return "Volume ajustado maior que o necessário"
+                        elif vol_net_cliq < vol_net_esperado and vol_net_cliq > 0:
+                            return "Volume ajustado menor que o necessário"
+                    elif responsavel == row["Vendedor"]: # Esperava saldo negativo (Venda maior)
+                        if vol_net_cliq < vol_net_esperado: # mais negativo = maior venda
+                            return "Volume ajustado maior que o necessário"
+                        elif vol_net_cliq > vol_net_esperado and vol_net_cliq < 0:
+                            return "Volume ajustado menor que o necessário"
+
+                    return "Divergência entre o volume esperado e o volume existente no Cliq"
+
+                df_nets_consolidado["Check Net"] = df_nets_consolidado.apply(calcular_check_net, axis=1)
+                
+                # Inicializa a flag Net Aceito no State se não existir
+                if "net_aceito_state" not in st.session_state:
+                    st.session_state["net_aceito_state"] = [False] * len(df_nets_consolidado)
+                
+                df_nets_consolidado["Net Aceito"] = st.session_state["net_aceito_state"]
+
+                # Exibição iterativa com st.data_editor permitindo a flag checkbox editável
+                _ordem_nets = [
+                    "Net Aceito", "Parte", "Vendedor", "Comprador", 
+                    "Volume Total Vendas (MWm)", "Volume Total Compras (MWm)", 
+                    "Volume Net", "Ajuste Net", "Volume Compra Cliq", "Volume Venda Cliq", "Check Net"
+                ]
+                
+                edited_nets_df = st.data_editor(
+                    df_nets_consolidado[_ordem_nets],
+                    hide_index=True,
+                    use_container_width=True,
+                    disabled=[c for c in _ordem_nets if c != "Net Aceito"],
+                    key="editor_nets_key"
+                )
+
+                # Salva o estado da flag de volta para o session_state
+                st.session_state["net_aceito_state"] = edited_nets_df["Net Aceito"].tolist()
+
+                # Mapeamento dos pares de NETs que foram marcados como aceito pelo usuário para destacar em roxo
+                compras_aceitas = set()
+                vendas_aceitas = set()
+                for _, r_net in edited_nets_df[edited_nets_df["Net Aceito"] == True].iterrows():
+                    compras_aceitas.add((str(r_net["Vendedor"]).strip(), str(r_net["Comprador"]).strip()))
+                    vendas_aceitas.add((str(r_net["Vendedor"]).strip(), str(r_net["Comprador"]).strip()))
+            else:
+                st.info("Nenhum NET consolidado para o arquivo atual.")
+                compras_aceitas, vendas_aceitas = set(), set()
+
+            st.markdown("---")
+
             base_exibicao = base.copy()
             st.markdown("### 🔎 Filtros")
             col_f1, col_f2, col_f3 = st.columns(3)
@@ -459,11 +577,9 @@ if arquivo is not None:
                 if col in base_exibicao.columns:
                     base_exibicao[col] = base_exibicao[col].astype(str)
 
-            if flag_mesmo_titular:
-                styled = base_exibicao.style.apply(highlight_mesmo_titular, axis=1)
-                st.dataframe(styled, use_container_width=True, hide_index=True)
-            else:
-                st.dataframe(base_exibicao, use_container_width=True, hide_index=True)
+            # Aplicação dinâmica das regras de cores (Destaque Roxo de NETs tem maior precedência)
+            styled = base_exibicao.style.apply(lambda r: highlight_mesmo_titular_ou_net(r, compras_aceitas, vendas_aceitas), axis=1)
+            st.dataframe(styled, use_container_width=True, hide_index=True)
 
             base_download = base.copy()
             if flag_ocultar_zerados: base_download = base_download[base_download["Volume (MWh)"] != 0.0]
