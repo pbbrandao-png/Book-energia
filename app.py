@@ -1,12 +1,4 @@
-# APP_BOOK_ENERGIA_V21 - VERSÃO DE ALTA PERFORMANCE (OTIMIZADA)
-# Coluna "Contrato CliqCCEE" via CSVs extraídos dos ZIPs Matrix e Bismut
-# Boletas ACR (lista fixa) → ccear_q (extraído do ZIP Matrix)
-# Matrix (não-Bismut, não-ACR) → cceal_firme + cbr_mercado_proprio (ZIP Matrix)
-# Bismut → cceal_firme (ZIP Bismut)
-# V17: + Contraparte Razão Social | highlight amarelo Parte==Contraparte | flag ocultar zerados
-# V20: + Otimização massiva de performance + Regra de ignorar Intraportfólio/Zerados nas tabelas de erro
-# V21: + Remoção total de rateios (Auto-referência)
-
+# APP_BOOK_ENERGIA_V22 - VERSÃO DE ALTA PERFORMANCE COM CHECK EMPRESAS
 import streamlit as st
 import pandas as pd
 import zipfile
@@ -20,6 +12,15 @@ pd.set_option("styler.render.max_elements", 2000000)
 BOLETAS_ACR = {
     122387, 122389, 122391, 122393, 122395, 122397, 122399, 122401,
     144795, 144797, 144799, 148084, 148088, 148090, 148092, 148518,
+}
+
+# Centralização das Empresas e seus filtros por Razão Social (Parte) para futuras inclusões
+EMPRESAS_MAPEAMENTO = {
+    "BISMUT": "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A.",
+    "GET": "GET COMERCIALIZADORA DE ENERGIA S.A.",
+    "MATRIX": "MATRIX COMERCIALIZADORA DE ENERGIA ELÉTRICA S.A.",
+    "ARGENTUM": "ARGENTUM COMERCIALIZADORA DE ENERGIA LTDA.",
+    "MATRIX CAMANDUCAIA": "MATRIX CAMANDUCAIA ENERGIA S.A."
 }
 
 
@@ -126,19 +127,7 @@ _PARTES_INTERCOMPANY = {
 
 
 def aplicar_zerar_intercompany(base: pd.DataFrame):
-    """
-    Recebe uma cópia da Base Conferência e zera Volume (MWh) e Volume MWm
-    dos contratos InterCompany, conforme regra:
-
-    - Parte pertence a _PARTES_INTERCOMPANY
-    - Contraparte (sigla CCEE) começa com "MATRIX"
-    - MAS NÃO começa com "MATRIX VAR"
-
-    Retorna (base_modificada, mask_intercompany).
-    A base original nunca é alterada — passar sempre uma cópia.
-    """
     base = base.copy()
-
     parte_upper = base["Parte"].astype(str).str.strip().str.upper()
     contra_upper = base["Contraparte"].astype(str).str.strip().str.upper()
 
@@ -154,10 +143,107 @@ def aplicar_zerar_intercompany(base: pd.DataFrame):
     return base, mask_intercompany
 
 
+# ── LÓGICA AGREGADA DA PÁGINA CHECK EMPRESAS ──
+def colorir_diferencas(val):
+    try:
+        val_float = float(val)
+        if abs(val_float) < 1e-4:
+            return "color: #2b7b3e; font-weight: bold;" # Verde aproximado a zero
+        elif val_float > 0:
+            return "color: #1d4ed8; font-weight: bold;" # Azul para positivo
+        else:
+            return "color: #b91c1c; font-weight: bold;" # Vermelho para negativo
+    except:
+        return ""
+
+
+def processar_dados_check(base_df, df_ccee_matrix, df_ccee_bismut, df_ccee_acr):
+    """Gera tabelas comparativas unificadas por Perfil CCEE combinando Book e Cliq."""
+    
+    # 1. Agrupamento do BOOK (Garante que usamos a coluna tratada Volume MWm)
+    # Filtra contratos onde a Parte está mapeada no dicionário de empresas
+    razoes_sociais_validas = list(EMPRESAS_MAPEAMENTO.values())
+    df_book_filtrado = base_df[base_df["Parte"].isin(razoes_sociais_validas)].copy()
+    
+    df_book_filtrado["Volume MWm"] = pd.to_numeric(df_book_filtrado["Volume MWm"], errors="coerce").fillna(0.0)
+    
+    # Separa compras e vendas do Book usando as colunas apropriadas (Comprador e Vendedor)
+    b_compras = df_book_filtrado[df_book_filtrado["Operação"] == "Compra"].groupby("Comprador")["Volume MWm"].sum()
+    b_vendas = df_book_filtrado[df_book_filtrado["Operação"] == "Venda"].groupby("Vendedor")["Volume MWm"].sum()
+    
+    # 2. Agrupamento do CLIQ (Une todas as fontes disponíveis vindas dos zips)
+    lista_cliq = []
+    for df_src in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
+        if df_src is not None and not df_src.empty and "MWmedio" in df_src.columns:
+            tmp = df_src[["SIGLA_PERFIL_COMPRADOR", "SIGLA_PERFIL_VENDEDOR", "MWmedio"]].copy()
+            tmp["MWmedio"] = tmp["MWmedio"].astype(str).str.strip().str.replace(",", ".", regex=False)
+            tmp["MWmedio"] = pd.to_numeric(tmp["MWmedio"], errors="coerce").fillna(0.0)
+            lista_cliq.append(tmp)
+            
+    if lista_cliq:
+        df_cliq_total = pd.concat(lista_cliq, ignore_index=True)
+        c_compras = df_cliq_total.groupby("SIGLA_PERFIL_COMPRADOR")["MWmedio"].sum()
+        c_vendas = df_cliq_total.groupby("SIGLA_PERFIL_VENDEDOR")["MWmedio"].sum()
+    else:
+        c_compras = pd.Series(dtype=float)
+        c_vendas = pd.Series(dtype=float)
+        
+    # 3. Montagem dos blocos de resultados para cada empresa mapeada
+    resultados_empresas = {}
+    
+    for nome_chave, razao_social in EMPRESAS_MAPEAMENTO.items():
+        # Captura todos os perfis CCEE que pertencem a essa empresa olhando para o Book filtrado
+        perfis_compras_book = set(df_book_filtrado[(df_book_filtrado["Parte"] == razao_social) & (df_book_filtrado["Operação"] == "Compra")]["Comprador"].unique())
+        perfis_vendas_book = set(df_book_filtrado[(df_book_filtrado["Parte"] == razao_social) & (df_book_filtrado["Operação"] == "Venda")]["Vendedor"].unique())
+        perfis_empresa = sorted(list(perfis_compras_book.union(perfis_vendas_book)))
+        
+        # Filtro de segurança: Se não achou perfis no book, tenta buscar via prefixo textual comum nas bases cliq
+        if not perfis_empresa:
+            all_perfis_cliq = set(c_compras.index).union(set(c_vendas.index))
+            prefixo = "MATRIX" if "MATRIX" in nome_chave else nome_chave
+            perfis_empresa = sorted([p for p in all_perfis_cliq if str(p).startswith(prefixo)])
+            
+        linhas = []
+        for perfil in perfis_empresa:
+            if perfil == "-" or not perfil:
+                continue
+            v_compra_book = b_compras.get(perfil, 0.0)
+            v_venda_book = b_vendas.get(perfil, 0.0)
+            net_book = v_compra_book - v_venda_book
+            
+            v_compra_cliq = c_compras.get(perfil, 0.0)
+            v_venda_cliq = c_vendas.get(perfil, 0.0)
+            net_cliq = v_compra_cliq - v_venda_cliq
+            
+            dif_compra = v_compra_book - v_compra_cliq
+            dif_venda = v_venda_book - v_venda_cliq
+            dif_net = net_book - net_cliq
+            
+            status = "OK" if (abs(dif_compra) < 1e-4 and abs(dif_venda) < 1e-4 and abs(dif_net) < 1e-4) else "Divergente"
+            
+            linhas.append({
+                "Perfil CCEE": perfil,
+                "Compra Book": v_compra_book,
+                "Venda Book": v_venda_book,
+                "NET Book": net_book,
+                "Compra Cliq": v_compra_cliq,
+                "Venda Cliq": v_venda_cliq,
+                "NET Cliq": net_cliq,
+                "Diferença Compra": dif_compra,
+                "Diferença Venda": dif_venda,
+                "Diferença NET": dif_net,
+                "Status": status
+            })
+            
+        resultados_empresas[nome_chave] = pd.DataFrame(linhas)
+        
+    return resultados_empresas
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Book Energia", layout="wide")
 
-pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético", "Arquivos CCEE"])
+pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético", "Check Empresas", "Arquivos CCEE"])
 st.sidebar.markdown("---")
 st.title("📊 Book Energia")
 
@@ -247,14 +333,11 @@ if arquivo is not None:
         base["Contrato CliqCCEE"]              = "-"
 
         # ── ZERAR INTERCOMPANY (opcional) ────────────────────────────────────────
-        # Preserva a base original intacta; todos os cálculos abaixo usam `base`
-        # que já reflete o estado da flag. Quando desligada, base_original == base.
         base_original = base.copy()
         mask_intercompany = pd.Series(False, index=base.index)
         flag_zerar_intercompany = st.session_state.get("zerar_ic", False)
         if flag_zerar_intercompany:
             base, mask_intercompany = aplicar_zerar_intercompany(base)
-        # ── FIM ZERAR INTERCOMPANY ────────────────────────────────────────────────
 
         csvs_disponiveis = any([not df_ccee_matrix.empty, not df_ccee_bismut.empty, not df_ccee_acr.empty])
 
@@ -262,27 +345,19 @@ if arquivo is not None:
             BISMUT_NOME_UPPER = "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A."
             
             def calcular_contrato_cliqccee_fast(row):
-                try:
-                    b_int = int(float(str(row["BOLETA"]).strip()))
-                except:
-                    b_int = -1
+                try: b_int = int(float(str(row["BOLETA"]).strip()))
+                except: b_int = -1
                 
-                if b_int in BOLETAS_ACR:
-                    d_ch, s_ext = idx_a_chave, set_a_ext
-                elif str(row["Parte"]).strip().upper() == BISMUT_NOME_UPPER:
-                    d_ch, s_ext = idx_b_chave, set_b_ext
-                else:
-                    d_ch, s_ext = idx_m_chave, set_m_ext
+                if b_int in BOLETAS_ACR: d_ch, s_ext = idx_a_chave, set_a_ext
+                elif str(row["Parte"]).strip().upper() == BISMUT_NOME_UPPER: d_ch, s_ext = idx_b_chave, set_b_ext
+                else: d_ch, s_ext = idx_m_chave, set_m_ext
                 
                 chave_esp = str(row["Vendedor"]).strip() + str(row["Comprador"]).strip() + str(row["Submercado"]).strip()
-                
                 c_ant = str(row["Contrato CliqCCEE mês anterior"]).strip()
-                if c_ant in s_ext:
-                    return c_ant if d_ch.get(c_ant) == chave_esp else 'Verificar'
+                if c_ant in s_ext: return c_ant if d_ch.get(c_ant) == chave_esp else 'Verificar'
                 
                 c_par = str(row["CliqCCEE Paradigma"]).strip()
-                if c_par in s_ext:
-                    return c_par if d_ch.get(c_par) == chave_esp else 'Verificar'
+                if c_par in s_ext: return c_par if d_ch.get(c_par) == chave_esp else 'Verificar'
                 
                 return '-'
 
@@ -311,39 +386,23 @@ if arquivo is not None:
         if csvs_disponiveis:
             def buscar_campo_ccee(row, dict_m, dict_b, dict_a):
                 cod = str(row["Contrato CliqCCEE"]).strip()
-                if cod in ["", "-", "None", "nan", "Verificar"]:
-                    return "-"
-                try:
-                    b_int = int(float(str(row["BOLETA"]).strip()))
-                except:
-                    b_int = -1
+                if cod in ["", "-", "None", "nan", "Verificar"]: return "-"
+                try: b_int = int(float(str(row["BOLETA"]).strip()))
+                except: b_int = -1
                 
-                if b_int in BOLETAS_ACR:
-                    d_field = dict_a
-                elif str(row["Parte"]).strip().upper() == "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A.":
-                    d_field = dict_b
-                else:
-                    d_field = dict_m
-                
+                d_field = dict_a if b_int in BOLETAS_ACR else (dict_b if str(row["Parte"]).strip().upper() == "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A." else dict_m)
                 res_val = d_field.get(cod, "-")
-                
-                # Tratamento explícito para nan e nulos vindos do dicionário
-                if pd.isna(res_val) or str(res_val).strip().lower() in ["nan", "none", ""]:
-                    return "-"
+                if pd.isna(res_val) or str(res_val).strip().lower() in ["nan", "none", ""]: return "-"
 
-                # Tratamento para converter strings numéricas vindas com vírgula da CCEE em float puro
                 if isinstance(res_val, str) and res_val != "-":
                     res_val_clean = res_val.replace(",", ".").strip()
-                    try:
-                        return float(res_val_clean)
-                    except:
-                        return res_val
+                    try: return float(res_val_clean)
+                    except: return res_val
                 return res_val
 
             base["Modulação Mínima CCEE"] = base.apply(lambda r: buscar_campo_ccee(r, idx_m_min, idx_b_min, idx_a_min), axis=1)
             base["Modulação Máxima CCEE"] = base.apply(lambda r: buscar_campo_ccee(r, idx_m_max, idx_b_max, idx_a_max), axis=1)
             
-            # Tipo de modulação continua sendo string
             def buscar_tipo_ccee(row, dict_m, dict_b, dict_a):
                 cod = str(row["Contrato CliqCCEE"]).strip()
                 if cod in ["", "-", "None", "nan", "Verificar"]: return "-"
@@ -351,24 +410,19 @@ if arquivo is not None:
                 except: b_int = -1
                 d_field = dict_a if b_int in BOLETAS_ACR else (dict_b if str(row["Parte"]).strip().upper() == "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A." else dict_m)
                 res_tipo = d_field.get(cod, "-")
-                if pd.isna(res_tipo) or str(res_tipo).strip().lower() in ["nan", "none", ""]:
-                    return "-"
+                if pd.isna(res_tipo) or str(res_tipo).strip().lower() in ["nan", "none", ""]: return "-"
                 return res_tipo
                 
-            base["Modulação CCEE"]        = base.apply(lambda r: buscar_tipo_ccee(r, idx_m_tipo, idx_b_tipo, idx_a_tipo), axis=1)
+            base["Modulação CCEE"] = base.apply(lambda r: buscar_tipo_ccee(r, idx_m_tipo, idx_b_tipo, idx_a_tipo), axis=1)
         else:
             base["Modulação Mínima CCEE"] = "-"
             base["Modulação Máxima CCEE"] = "-"
             base["Modulação CCEE"]        = "-"
 
         _tol_mod = 1e-4
-        
-        # Check Modulação Mínima
         base["Check Modulação Mínima"] = "-"
         _mod_min_cc = pd.to_numeric(base["Modulação Mínima CCEE"], errors="coerce")
         _mask_min_valid = _mask_calcular_min & _mod_min_cc.notna()
-        
-        # Se ambos forem "-", o check é OK
         _mask_ambos_traco_min = (base["Modulação Mínima"].astype(str).str.strip() == "-") & (base["Modulação Mínima CCEE"].astype(str).str.strip() == "-")
         base.loc[_mask_ambos_traco_min, "Check Modulação Mínima"] = "OK"
 
@@ -379,12 +433,9 @@ if arquivo is not None:
             base.loc[_mask_min_calc & (_diff_min > _tol_mod), "Check Modulação Mínima"] = "Book maior"
             base.loc[_mask_min_calc & (_diff_min < -_tol_mod), "Check Modulação Mínima"] = "CCEE maior"
 
-        # Check Modulação Máxima
         base["Check Modulação Máxima"] = "-"
         _mod_max_cc = pd.to_numeric(base["Modulação Máxima CCEE"], errors="coerce")
         _mask_max_valid = _mask_calcular_max & _mod_max_cc.notna()
-        
-        # Se ambos forem "-", o check é OK
         _mask_ambos_traco_max = (base["Modulação Máxima"].astype(str).str.strip() == "-") & (base["Modulação Máxima CCEE"].astype(str).str.strip() == "-")
         base.loc[_mask_ambos_traco_max, "Check Modulação Máxima"] = "OK"
 
@@ -395,9 +446,7 @@ if arquivo is not None:
             base.loc[_mask_max_calc & (_diff_max > _tol_mod), "Check Modulação Máxima"] = "Book maior"
             base.loc[_mask_max_calc & (_diff_max < -_tol_mod), "Check Modulação Máxima"] = "CCEE maior"
 
-        # Check Modulação Tipo
         base["Check Modulação"] = "-"
-        # Se ambos forem "-", o check é OK
         _mask_ambos_traco_tipo = (base["Modulação WBC"].astype(str).str.strip() == "-") & (base["Modulação CCEE"].astype(str).str.strip() == "-")
         base.loc[_mask_ambos_traco_tipo, "Check Modulação"] = "OK"
 
@@ -432,10 +481,8 @@ if arquivo is not None:
                 _df_ccee_vol = pd.concat(_lista_dfs_ccee_vol, ignore_index=True)
                 _vol_ccee_por_contrato = _df_ccee_vol.groupby("CODIGO_CONTRATO")["MWmedio"].sum()
                 base["Volume CCEE"] = base["Contrato CliqCCEE"].map(_vol_ccee_por_contrato).fillna(0.0)
-            else:
-                base["Volume CCEE"] = 0.0
-        else:
-            base["Volume CCEE"] = 0.0
+            else: base["Volume CCEE"] = 0.0
+        else: base["Volume CCEE"] = 0.0
 
         # ── COLUNA: Check Volume ─────────────────────────────────────────────────
         _tol = 1e-6
@@ -457,7 +504,7 @@ if arquivo is not None:
             _lista_dfs_global_ccee = []
             for _df_src in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
                 if _df_src is not None and not _df_src.empty and "MWmedio" in _df_src.columns:
-                    _cols_need = ["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRAPOR", "SUBMERCADO_ENTREGA", "MWmedio"]
+                    _cols_need = ["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA", "MWmedio"]
                     if all(c in _df_src.columns for c in _cols_need):
                         _tmp2 = _df_src[_cols_need].copy()
                         _tmp2["MWmedio"] = _tmp2["MWmedio"].astype(str).str.strip().str.replace(",", ".", regex=False)
@@ -471,10 +518,8 @@ if arquivo is not None:
                 base = base.merge(_gc_sum, on=["Vendedor", "Comprador", "Submercado"], how="left")
                 base.rename(columns={"MWmedio": "Volume Global CCEE"}, inplace=True)
                 base["Volume Global CCEE"] = base["Volume Global CCEE"].fillna(0.0)
-            else:
-                base["Volume Global CCEE"] = 0.0
-        else:
-            base["Volume Global CCEE"] = 0.0
+            else: base["Volume Global CCEE"] = 0.0
+        else: base["Volume Global CCEE"] = 0.0
 
         # ── COLUNA: Check Volume Global ──────────────────────────────────────────
         _vgb = pd.to_numeric(base["Volume Global"], errors="coerce").fillna(0.0)
@@ -488,6 +533,9 @@ if arquivo is not None:
         vendas_net = base[base["Operação"] == "Venda"].groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume (MWh)"].sum().rename(columns={"Volume (MWh)": "Venda (MWh)"})
         nets = compras_net.merge(vendas_net, on=["Parte", "Contraparte", "Submercado", "Tipo de Energia"], how="inner")
 
+        # ──────────────────────────────────────────────────────────────────────
+        # PÁGINA: BASE CONFERÊNCIA
+        # ──────────────────────────────────────────────────────────────────────
         if pagina == "Base Conferência":
             st.subheader("Base Conferência")
             total_contratos = len(base)
@@ -533,14 +581,12 @@ if arquivo is not None:
             base_exibicao["Volume (MWh)"] = base_exibicao["Volume (MWh)"].map(lambda x: f"{x:.3f}" if isinstance(x, (int, float)) else x)
             base_exibicao["Volume MWm"]   = base_exibicao["Volume MWm"].map(lambda x: f"{x:.6f}" if isinstance(x, (int, float)) else x)
             
-            # Formatando todos os campos numéricos de modulação para seguir estritamente o formato MWm (6 casas decimais)
             for c_format in ["Modulação Mínima", "Modulação Máxima", "Modulação Mínima CCEE", "Modulação Máxima CCEE"]:
                 if c_format in base_exibicao.columns:
                     base_exibicao[c_format] = base_exibicao[c_format].map(lambda x: f"{x:.6f}" if isinstance(x, (int, float)) and not pd.isna(x) else x)
 
             st.caption(f"{len(base_exibicao):,} registros encontrados")
 
-            # Converter para string apenas para exibição limpando de vez qualquer resíduo de "nan"
             colunas_texto = [
                 "BOLETA", "Operação", "Tipo de Energia", "Parte", "Contraparte Razão Social",
                 "Contraparte", "CP/LP", "CNPJ CONTRAPARTE", "Submercado", "CliqCCEE Paradigma",
@@ -554,21 +600,16 @@ if arquivo is not None:
                     base_exibicao[col] = base_exibicao[col].astype(str).replace(["nan", "None", "NaN"], "-")
 
             _boletas_ef_set = st.session_state.get("boletas_efetivadas", set())
-
-            # Marca as linhas InterCompany zeradas para highlight (usa índice original da base)
             _idx_intercompany = set(base.index[mask_intercompany].tolist()) if flag_zerar_intercompany else set()
 
             def _highlight_tabela(row):
                 boleta_str = str(row.get("BOLETA", "")).strip()
-                if boleta_str in _boletas_ef_set:
-                    return ["background-color: #7B2D8B; color: white"] * len(row)
-                if flag_zerar_intercompany and row.name in _idx_intercompany:
-                    return ["background-color: #FFD700"] * len(row)
+                if boleta_str in _boletas_ef_set: return ["background-color: #7B2D8B; color: white"] * len(row)
+                if flag_zerar_intercompany and row.name in _idx_intercompany: return ["background-color: #FFD700"] * len(row)
                 if flag_mesmo_titular:
                     parte_r = str(row.get("Parte", "")).strip().upper()
                     contra_r = str(row.get("Contraparte Razão Social", "")).strip().upper()
-                    if parte_r and contra_r and parte_r == contra_r:
-                        return ["background-color: #FFD700"] * len(row)
+                    if parte_r and contra_r and parte_r == contra_r: return ["background-color: #FFD700"] * len(row)
                 return [""] * len(row)
 
             styled = base_exibicao.style.apply(_highlight_tabela, axis=1)
@@ -580,209 +621,89 @@ if arquivo is not None:
             with pd.ExcelWriter(output, engine="openpyxl") as writer: base_download.to_excel(writer, sheet_name="Base Conferência", index=False)
             st.download_button("📥 Download Base Conferência", data=output.getvalue(), file_name="Base_Conferencia.xlsx")
 
-            # ── RESUMO DE NETs ────────────────────────────────────────────────────────
+            # ── RESUMO DE NETs ──
             with st.expander("📋 Resumo de NETs", expanded=False):
                 mes_ref_net = int(df["Mes"].dropna().iloc[0])
                 text_horas_net = horas_mes.get(mes_ref_net, 744)
 
                 _grp_key = ["Parte", "Contraparte", "Submercado", "Tipo de Energia"]
-
-                _compras_mwm = (
-                    base[base["Operação"] == "Compra"]
-                    .groupby(_grp_key, as_index=False)["Volume MWm"]
-                    .sum()
-                    .rename(columns={"Volume MWm": "_compra_mwm"})
-                )
-                _vendas_mwm = (
-                    base[base["Operação"] == "Venda"]
-                    .groupby(_grp_key, as_index=False)["Volume MWm"]
-                    .sum()
-                    .rename(columns={"Volume MWm": "_venda_mwm"})
-                )
+                _compras_mwm = base[base["Operação"] == "Compra"].groupby(_grp_key, as_index=False)["Volume MWm"].sum().rename(columns={"Volume MWm": "_compra_mwm"})
+                _vendas_mwm = base[base["Operação"] == "Venda"].groupby(_grp_key, as_index=False)["Volume MWm"].sum().rename(columns={"Volume MWm": "_venda_mwm"})
 
                 _nets_resumo = _compras_mwm.merge(_vendas_mwm, on=_grp_key, how="inner")
                 _nets_resumo["_saldo"] = _nets_resumo["_compra_mwm"] - _nets_resumo["_venda_mwm"]
 
                 def _quem_ajusta(saldo):
-                    if saldo > 1e-9:
-                        return "Contraparte"
-                    elif saldo < -1e-9:
-                        return "Parte"
+                    if saldo > 1e-9: return "Contraparte"
+                    elif saldo < -1e-9: return "Parte"
                     return "Nenhum"
 
                 _nets_resumo["_quem_ajusta_flag"] = _nets_resumo["_saldo"].apply(_quem_ajusta)
-
-                def _resolver_ajustador(row):
-                    flag = row["_quem_ajusta_flag"]
-                    if flag == "Contraparte":
-                        return row["Contraparte"]
-                    elif flag == "Parte":
-                        return row["Parte"]
-                    return "Nenhum"
-
-                _nets_resumo["_quem_ajusta_nome"] = _nets_resumo.apply(_resolver_ajustador, axis=1)
-                _nets_resumo["_vol_ajustar"] = _nets_resumo["_saldo"].abs().where(
-                    _nets_resumo["_quem_ajusta_flag"] != "Nenhum", 0.0
-                )
+                _nets_resumo["_quem_ajusta_nome"] = _nets_resumo.apply(lambda r: r["Contraparte"] if r["_quem_ajusta_flag"] == "Contraparte" else (r["Parte"] if r["_quem_ajusta_flag"] == "Parte" else "Nenhum"), axis=1)
+                _nets_resumo["_vol_ajustar"] = _nets_resumo["_saldo"].abs().where(_nets_resumo["_quem_ajusta_flag"] != "Nenhum", 0.0)
 
                 _dfs_ccee_net = []
                 for _src in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
-                    if _src is not None and not _src.empty:
-                        _cols_need_net = [
-                            "SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR",
-                            "SUBMERCADO_ENTREGA", "MWmedio"
-                        ]
-                        if all(c in _src.columns for c in _cols_need_net):
-                            _tmp_net = _src[_cols_need_net].copy()
-                            _tmp_net["MWmedio"] = (
-                                _tmp_net["MWmedio"].astype(str).str.strip()
-                                .str.replace(",", ".", regex=False)
-                            )
-                            _tmp_net["MWmedio"] = pd.to_numeric(_tmp_net["MWmedio"], errors="coerce").fillna(0.0)
-                            _dfs_ccee_net.append(_tmp_net)
+                    if _src is not None and not _src.empty and all(c in _src.columns for c in ["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA", "MWmedio"]):
+                        _tmp_net = _src[["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA", "MWmedio"]].copy()
+                        _tmp_net["MWmedio"] = _tmp_net["MWmedio"].astype(str).str.strip().str.replace(",", ".", regex=False)
+                        _tmp_net["MWmedio"] = pd.to_numeric(_tmp_net["MWmedio"], errors="coerce").fillna(0.0)
+                        _dfs_ccee_net.append(_tmp_net)
 
                 if _dfs_ccee_net:
                     _df_ccee_all = pd.concat(_dfs_ccee_net, ignore_index=True)
-                    _idx_cliq = (
-                        _df_ccee_all
-                        .groupby(
-                            ["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA"],
-                            as_index=False
-                        )["MWmedio"]
-                        .sum()
-                    )
-                    _idx_cliq.rename(columns={"MWmedio": "_mwmedio_sum"}, inplace=True)
+                    _idx_cliq = _df_ccee_all.groupby(["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA"], as_index=False)["MWmedio"].sum().rename(columns={"MWmedio": "_mwmedio_sum"})
                 else:
-                    _idx_cliq = pd.DataFrame(
-                        columns=["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA", "_mwmedio_sum"]
-                    )
+                    _idx_cliq = pd.DataFrame(columns=["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA", "_mwmedio_sum"])
 
                 def _buscar_cliq_net(row):
-                    parte = row["Parte"]
-                    contraparte = row["Contraparte"]
-                    sub = row["Submercado"]
-                    tipo_en = row["Tipo de Energia"]
+                    p, c, s, t = row["Parte"], row["Contraparte"], row["Submercado"], row["Tipo de Energia"]
+                    _boletas_net = base[(base["Parte"] == p) & (base["Contraparte"] == c) & (base["Submercado"] == s) & (base["Tipo de Energia"] == t)]
+                    if _boletas_net.empty or _idx_cliq.empty: return 0.0, 0.0
 
-                    _mask_net = (
-                        (base["Parte"] == parte) &
-                        (base["Contraparte"] == contraparte) &
-                        (base["Submercado"] == sub) &
-                        (base["Tipo de Energia"] == tipo_en)
-                    )
-                    _boletas_net = base[_mask_net]
+                    compra_cliq, venda_cliq = 0.0, 0.0
+                    for _, b_row in _boletas_net[_boletas_net["Operação"] == "Compra"].iterrows():
+                        _v, _c = str(b_row["Vendedor"]).strip(), str(b_row["Comprador"]).strip()
+                        _match = _idx_cliq[(_idx_cliq["SIGLA_PERFIL_VENDEDOR"] == _v) & (_idx_cliq["SIGLA_PERFIL_COMPRADOR"] == _c) & (_idx_cliq["SUBMERCADO_ENTREGA"] == s)]
+                        if not _match.empty: compra_cliq += _match["_mwmedio_sum"].iloc[0]
 
-                    if _boletas_net.empty or _idx_cliq.empty:
-                        return 0.0, 0.0
-
-                    _compras_net = _boletas_net[_boletas_net["Operação"] == "Compra"]
-                    _vendas_net = _boletas_net[_boletas_net["Operação"] == "Venda"]
-
-                    compra_cliq = 0.0
-                    venda_cliq = 0.0
-
-                    for _, b_row in _compras_net.iterrows():
-                        _v = str(b_row["Vendedor"]).strip()
-                        _c = str(b_row["Comprador"]).strip()
-                        if _v in ("-", "", "nan") or _c in ("-", "", "nan"):
-                            continue
-                        _match = _idx_cliq[
-                            (_idx_cliq["SIGLA_PERFIL_VENDEDOR"] == _v) &
-                            (_idx_cliq["SIGLA_PERFIL_COMPRADOR"] == _c) &
-                            (_idx_cliq["SUBMERCADO_ENTREGA"] == sub)
-                        ]
-                        if not _match.empty:
-                            compra_cliq += _match["_mwmedio_sum"].iloc[0]
-
-                    for _, b_row in _vendas_net.iterrows():
-                        _v = str(b_row["Vendedor"]).strip()
-                        _c = str(b_row["Comprador"]).strip()
-                        if _v in ("-", "", "nan") or _c in ("-", "", "nan"):
-                            continue
-                        _match = _idx_cliq[
-                            (_idx_cliq["SIGLA_PERFIL_VENDEDOR"] == _v) &
-                            (_idx_cliq["SIGLA_PERFIL_COMPRADOR"] == _c) &
-                            (_idx_cliq["SUBMERCADO_ENTREGA"] == sub)
-                        ]
-                        if not _match.empty:
-                            venda_cliq += _match["_mwmedio_sum"].iloc[0]
-
+                    for _, b_row in _boletas_net[_boletas_net["Operação"] == "Venda"].iterrows():
+                        _v, _c = str(b_row["Vendedor"]).strip(), str(b_row["Comprador"]).strip()
+                        _match = _idx_cliq[(_idx_cliq["SIGLA_PERFIL_VENDEDOR"] == _v) & (_idx_cliq["SIGLA_PERFIL_COMPRADOR"] == _c) & (_idx_cliq["SUBMERCADO_ENTREGA"] == s)]
+                        if not _match.empty: venda_cliq += _match["_mwmedio_sum"].iloc[0]
                     return compra_cliq, venda_cliq
 
                 _cliq_results = _nets_resumo.apply(_buscar_cliq_net, axis=1, result_type="expand")
                 _nets_resumo["_compra_cliq"] = _cliq_results[0]
                 _nets_resumo["_venda_cliq"]  = _cliq_results[1]
 
-                if "net_efetivados" not in st.session_state:
-                    st.session_state["net_efetivados"] = {}
-
+                if "net_efetivados" not in st.session_state: st.session_state["net_efetivados"] = {}
                 boletas_efetivadas = set()
                 _tol_cliq = 1e-6
 
                 def _calcular_status(row):
-                    if not row.get("_efetivado", False):
-                        return "NET Não Efetivado"
-                    vol_aj = row["_vol_ajustar"]
-                    comp_cliq = row["_compra_cliq"]
-                    vend_cliq = row["_venda_cliq"]
-                    quem = row["_quem_ajusta_flag"]
-
-                    if quem == "Nenhum":
-                        return "OK"
-
-                    if quem == "Contraparte":
-                        cliq_aj = comp_cliq
-                    else:
-                        cliq_aj = vend_cliq
-
+                    if not row.get("_efetivado", False): return "NET Não Efetivado"
+                    vol_aj, comp_cliq, vend_cliq, quem = row["_vol_ajustar"], row["_compra_cliq"], row["_venda_cliq"], row["_quem_ajusta_flag"]
+                    if quem == "Nenhum": return "OK"
+                    cliq_aj = comp_cliq if quem == "Contraparte" else vend_cliq
                     diff = abs(cliq_aj - vol_aj)
-                    if diff < _tol_cliq:
-                        return "OK"
-                    elif cliq_aj == 0.0:
-                        return "Não Ajustado"
-                    elif cliq_aj < vol_aj - _tol_cliq:
-                        return "Ajuste Parcial"
-                    elif cliq_aj > vol_aj + _tol_cliq:
-                        return "Volume Maior"
-                    else:
-                        return "Divergente"
+                    if diff < _tol_cliq: return "OK"
+                    elif cliq_aj == 0.0: return "Não Ajustado"
+                    elif cliq_aj < vol_aj - _tol_cliq: return "Ajuste Parcial"
+                    elif cliq_aj > vol_aj + _tol_cliq: return "Volume Maior"
+                    return "Divergente"
 
-                _col_headers = [
-                    "Efetivado", "Parte", "Contraparte", "Submercado", "Tipo de Energia",
-                    "Compra (MWm)", "Venda (MWm)", "Saldo NET (MWm)",
-                    "Volume a Ajustar (MWm)", "Quem Ajusta",
-                    "Compra Cliq (MWm)", "Venda Cliq (MWm)", "Status"
-                ]
-
+                _col_headers = ["Efetivado", "Parte", "Contraparte", "Submercado", "Tipo de Energia", "Compra (MWm)", "Venda (MWm)", "Saldo NET (MWm)", "Volume a Ajustar (MWm)", "Quem Ajusta", "Compra Cliq (MWm)", "Venda Cliq (MWm)", "Status"]
                 _hdr = st.columns([0.5, 2, 2, 1.2, 1.5, 1.2, 1.2, 1.2, 1.5, 1.5, 1.5, 1.5, 1.5])
-                for _ci, _ch in zip(_hdr, _col_headers):
-                    _ci.markdown(f"**{_ch}**")
-
+                for _ci, _ch in zip(_hdr, _col_headers): _ci.markdown(f"**{_ch}**")
                 st.markdown("---")
 
                 for _i, _row in _nets_resumo.iterrows():
-                    _net_key = (
-                        str(_row["Parte"]) + "|" +
-                        str(_row["Contraparte"]) + "|" +
-                        str(_row["Submercado"]) + "|" +
-                        str(_row["Tipo de Energia"])
-                    )
+                    _net_key = str(_row["Parte"]) + "|" + str(_row["Contraparte"]) + "|" + str(_row["Submercado"]) + "|" + str(_row["Tipo de Energia"])
                     _efetivado = st.session_state["net_efetivados"].get(_net_key, False)
                     _row["_efetivado"] = _efetivado
                     _status = _calcular_status(_row)
-
-                    _status_cores = {
-                        "OK": "🟢",
-                        "Não Ajustado": "🔴",
-                        "Ajuste Parcial": "🟡",
-                        "Volume Maior": "🟠",
-                        "Volume Menor": "🟠",
-                        "Divergente": "🔴",
-                        "NET Não Efetivado": "⚪",
-                    }
-                    _status_icon = _status_cores.get(_status, "⚪")
-
-                    _saldo = _row["_saldo"]
-                    _saldo_fmt = f"{_saldo:+.6f}"
+                    _status_icon = {"OK": "🟢", "Não Ajustado": "🔴", "Ajuste Parcial": "🟡", "Volume Maior": "🟠", "Volume Menor": "🟠", "Divergente": "🔴", "NET Não Efetivado": "⚪"}.get(_status, "⚪")
 
                     _cols = st.columns([0.5, 2, 2, 1.2, 1.5, 1.2, 1.2, 1.2, 1.5, 1.5, 1.5, 1.5, 1.5])
                     _novo_ef = _cols[0].checkbox("", value=_efetivado, key=f"net_ef_{_net_key}")
@@ -796,7 +717,7 @@ if arquivo is not None:
                     _cols[4].write(_row["Tipo de Energia"])
                     _cols[5].write(f"{_row['_compra_mwm']:.6f}")
                     _cols[6].write(f"{_row['_venda_mwm']:.6f}")
-                    _cols[7].write(_saldo_fmt)
+                    _cols[7].write(f"{_row['_saldo']:+.6f}")
                     _cols[8].write(f"{_row['_vol_ajustar']:.6f}")
                     _cols[9].write(_row["_quem_ajusta_nome"])
                     _cols[10].write(f"{_row['_compra_cliq']:.6f}")
@@ -804,113 +725,58 @@ if arquivo is not None:
                     _cols[12].write(f"{_status_icon} {_status}")
 
                     if _novo_ef:
-                        _mask_ef = (
-                            (base["Parte"] == _row["Parte"]) &
-                            (base["Contraparte"] == _row["Contraparte"]) &
-                            (base["Submercado"] == _row["Submercado"]) &
-                            (base["Tipo de Energia"] == _row["Tipo de Energia"])
-                        )
-                        boletas_efetivadas.update(base[_mask_ef]["BOLETA"].astype(str).tolist())
-
+                        boletas_efetivadas.update(base[(base["Parte"] == _row["Parte"]) & (base["Contraparte"] == _row["Contraparte"]) & (base["Submercado"] == _row["Submercado"]) & (base["Tipo de Energia"] == _row["Tipo de Energia"])]["BOLETA"].astype(str).tolist())
                 st.session_state["boletas_efetivadas"] = boletas_efetivadas
 
-            # ── CONFERÊNCIA AVANÇADA DE DIVERGÊNCIAS (MÚLTIPLOS CHECKS UNIFICADOS) ──
+            # ── CONFERÊNCIA AVANÇADA DE DIVERGÊNCIAS ──
             if csvs_disponiveis:
                 st.markdown("---")
-                lista_divergencias = []
-                lista_sem_match_nenhum = []
+                lista_divergencias, lista_sem_match_nenhum = [], []
 
                 for _, row in base.iterrows():
                     try: b_int = int(float(str(row["BOLETA"]).strip()))
                     except: b_int = -1
+                    if float(row.get("Volume (MWh)", 0)) == 0: continue
 
-                    # Ignora contratos com volume zerado
-                    volume = float(row.get("Volume (MWh)", 0))
-                    if volume == 0:
-                        continue
-
-                    if b_int in BOLETAS_ACR:
-                        d_ch, d_v, d_c, d_s, s_ext = idx_a_chave, idx_a_v, idx_a_c, idx_a_s, set_a_ext
-                    elif str(row["Parte"]).strip().upper() == "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A.":
-                        d_ch, d_v, d_c, d_s, s_ext = idx_b_chave, idx_b_v, idx_b_c, idx_b_s, set_b_ext
-                    else:
-                        d_ch, d_v, d_c, d_s, s_ext = idx_m_chave, idx_m_v, idx_m_c, idx_m_s, set_m_ext
+                    if b_int in BOLETAS_ACR: d_ch, d_v, d_c, d_s, s_ext = idx_a_chave, idx_a_v, idx_a_c, idx_a_s, set_a_ext
+                    elif str(row["Parte"]).strip().upper() == "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A.": d_ch, d_v, d_c, d_s, s_ext = idx_b_chave, idx_b_v, idx_b_c, idx_b_s, set_b_ext
+                    else: d_ch, d_v, d_c, d_s, s_ext = idx_m_chave, idx_m_v, idx_m_c, idx_m_s, set_m_ext
 
                     v_b, c_b, s_b = str(row["Vendedor"]).strip(), str(row["Comprador"]).strip(), str(row["Submercado"]).strip()
                     chave_esp = v_b + c_b + s_b
+                    cods_validos = [str(row.get(c, "")).strip() for c in ["Contrato CliqCCEE", "Contrato CliqCCEE mês anterior", "CliqCCEE Paradigma"] if str(row.get(c, "")).strip() not in ('', '-', 'None', 'nan', 'Verificar')]
 
-                    cods = [str(row.get(c, "")).strip() for c in ["Contrato CliqCCEE", "Contrato CliqCCEE mês anterior", "CliqCCEE Paradigma"]]
-                    cods_validos = [c for c in cods if c not in ('', '-', 'None', 'nan', 'Verificar')]
-
-                    cod_encontrado = None
-                    for c in cods_validos:
-                        if c in s_ext:
-                            cod_encontrado = c
-                            break
-
+                    cod_encontrado = next((c for c in cods_validos if c in s_ext), None)
                     divs = []
 
-                    # 1. Caso encontre o código do contrato, checa divergências de perfis
                     if cod_encontrado:
-                        v_c = d_v.get(cod_encontrado, '')
-                        c_c = d_c.get(cod_encontrado, '')
-                        s_c = d_s.get(cod_encontrado, '')
-
+                        v_c, c_c, s_c = d_v.get(cod_encontrado, ''), d_c.get(cod_encontrado, ''), d_s.get(cod_encontrado, '')
                         if v_b != v_c: divs.append(f"Divergência de Vendedor (Book={v_b} | CCEE={v_c})")
                         if c_b != c_c: divs.append(f"Divergência de Comprador (Book={c_b} | CCEE={c_c})")
                         if s_b != s_c: divs.append(f"Divergência de Submercado (Book={s_b} | CCEE={s_c})")
 
-                    # 2. Varredura dos outros validadores da planilha (Exceto Volume Global)
-                    check_mod_min = str(row.get("Check Modulação Mínima", "-")).strip()
-                    if check_mod_min in ("Book maior", "CCEE maior"):
-                        divs.append(f"Modulação Mínima ({check_mod_min})")
+                    for c_m, msg in [("Check Modulação Mínima", "Modulação Mínima"), ("Check Modulação Máxima", "Modulação Máxima")]:
+                        if str(row.get(c_m, "-")).strip() in ("Book maior", "CCEE maior"): divs.append(f"{msg} ({str(row.get(c_m, '-')).strip()})")
+                    if str(row.get("Check Modulação", "-")).strip() == "Divergente": divs.append("Tipo de Modulação Divergente")
+                    if str(row.get("Check Volume", "-")).strip() in ("Book maior", "CCEE maior"): divs.append(f"Volume do Contrato ({str(row.get('Check Volume', '-')).strip()})")
 
-                    check_mod_max = str(row.get("Check Modulação Máxima", "-")).strip()
-                    if check_mod_max in ("Book maior", "CCEE maior"):
-                        divs.append(f"Modulação Máxima ({check_mod_max})")
-
-                    check_mod_tipo = str(row.get("Check Modulação", "-")).strip()
-                    if check_mod_tipo == "Divergente":
-                        divs.append("Tipo de Modulação Divergente")
-
-                    check_vol_contrato = str(row.get("Check Volume", "-")).strip()
-                    if check_vol_contrato in ("Book maior", "CCEE maior"):
-                        divs.append(f"Volume do Contrato ({check_vol_contrato})")
-
-                    # 3. Classificação e destino final da boleta
-                    if not cod_encontrado and chave_esp not in d_ch.values():
-                        status = "SEM_MATCH"
-                        justificativa = "Contrato inexistente no CSV CCEE"
-                    elif divs:
-                        status = "ERRO"
-                        justificativa = " | ".join(divs)
-                    else:
-                        status = "OK"
-                        justificativa = None
-
-                    if status in ("ERRO", "SEM_MATCH"):
-                        item = {"Boleta": row["BOLETA"], "Vendedor": row["Vendedor"], "Comprador": row["Comprador"], "Mensagem": justificativa}
-                        if status == "ERRO": lista_divergencias.append(item)
-                        else: lista_sem_match_nenhum.append(item)
+                    status = "SEM_MATCH" if (not cod_encontrado and chave_esp not in d_ch.values()) else ("ERRO" if divs else "OK")
+                    item = {"Boleta": row["BOLETA"], "Vendedor": row["Vendedor"], "Comprador": row["Comprador"], "Mensagem": " | ".join(divs) if status == "ERRO" else "Contrato inexistente no CSV CCEE"}
+                    if status == "ERRO": lista_divergencias.append(item)
+                    elif status == "SEM_MATCH": lista_sem_match_nenhum.append(item)
 
                 df_divergencias = pd.DataFrame(lista_divergencias, columns=["Boleta", "Vendedor", "Comprador", "Mensagem"])
                 df_sem_match_nenhum = pd.DataFrame(lista_sem_match_nenhum, columns=["Boleta", "Vendedor", "Comprador", "Mensagem"])
 
                 st.subheader("❌ Contratos com Divergência (Cadastro ou Indicadores Incorretos)")
                 st.dataframe(df_divergencias, use_container_width=True, hide_index=True)
-
-                output_div = BytesIO()
-                with pd.ExcelWriter(output_div, engine="openpyxl") as writer: df_divergencias.to_excel(writer, sheet_name="Divergencias", index=False)
-                st.download_button("📥 Download Contratos com Divergência", data=output_div.getvalue(), file_name="Contratos_com_Divergencia.xlsx")
                 st.markdown("---")
-
                 st.subheader("🔍 Contratos Sem Match Nenhum (Inexistentes no CSV CCEE)")
                 st.dataframe(df_sem_match_nenhum, use_container_width=True, hide_index=True)
 
-                output_sm = BytesIO()
-                with pd.ExcelWriter(output_sm, engine="openpyxl") as writer: df_sem_match_nenhum.to_excel(writer, sheet_name="Sem Match Nenhum", index=False)
-                st.download_button("📥 Download Contratos Sem Match Nenhum", data=output_sm.getvalue(), file_name="Contratos_Sem_Match_Nenhum.xlsx")
-
+        # ──────────────────────────────────────────────────────────────────────
+        # PÁGINA: ENCONTRO ENERGÉTICO
+        # ──────────────────────────────────────────────────────────────────────
         elif pagina == "Encontro Energético":
             st.subheader("🤝 Encontro Energético")
             parte = st.selectbox("Parte", sorted(nets["Parte"].dropna().unique()))
@@ -950,6 +816,112 @@ if arquivo is not None:
             c1, c2 = st.columns(2)
             with c1: st.metric("Quem Ajusta", ajuste)
             with c2: st.metric("Volume a Ajustar (MWm)", f"{abs(saldo_mwm):.6f}")
+
+        # ──────────────────────────────────────────────────────────────────────
+        # PÁGINA: CHECK EMPRESAS
+        # ──────────────────────────────────────────────────────────────────────
+        elif pagina == "Check Empresas":
+            st.subheader("🏢 Conferência de Saldos por Perfil CCEE (Check)")
+            
+            # Executa o mapeamento e cruzamento massivo uma única vez
+            dict_dfs_check = processar_dados_check(base, df_ccee_matrix, df_ccee_bismut, df_ccee_acr)
+            
+            # --- CÁLCULO DAS MÉTRICAS DO DASHBOARD GLOBAL ---
+            total_empresas = len(EMPRESAS_MAPEAMENTO)
+            empresas_ok = 0
+            empresas_divergentes = 0
+            
+            g_compra_book, g_venda_book = 0.0, 0.0
+            g_compra_cliq, g_venda_cliq = 0.0, 0.0
+            
+            for df_emp in dict_dfs_check.values():
+                if not df_emp.empty:
+                    if (df_emp["Status"] == "Divergente").any():
+                        empresas_divergentes += 1
+                    else:
+                        empresas_ok += 1
+                        
+                    g_compra_book += df_emp["Compra Book"].sum()
+                    g_venda_book += df_emp["Venda Book"].sum()
+                    g_compra_cliq += df_emp["Compra Cliq"].sum()
+                    g_venda_cliq += df_emp["Venda Cliq"].sum()
+                else:
+                    empresas_ok += 1 # Vazia e sem divergência é tratada como OK
+                    
+            g_net_book = g_compra_book - g_venda_book
+            g_net_cliq = g_compra_cliq - g_venda_cliq
+            
+            # --- RENDERIZAÇÃO DO DASHBOARD (CARDS SUPERIORES) ---
+            c_db1, c_db2, c_db3 = st.columns(3)
+            c_db1.metric("Total de Empresas", total_empresas)
+            c_db2.metric("Empresas estáveis (OK) 🟢", empresas_ok)
+            c_db3.metric("Empresas com Divergência 🔴", empresas_divergentes)
+            
+            st.markdown("---")
+            
+            c_v1, c_v2, c_v3 = st.columns(3)
+            c_v1.metric("Total Compra Book", f"{g_compra_book:.6f} MWm")
+            c_v2.metric("Total Venda Book", f"{g_venda_book:.6f} MWm")
+            c_v3.metric("Total NET Book", f"{g_net_book:.6f} MWm")
+            
+            c_v4, c_v5, c_v6 = st.columns(3)
+            c_v4.metric("Total Compra Cliq", f"{g_compra_cliq:.6f} MWm")
+            c_v5.metric("Total Venda Cliq", f"{g_venda_cliq:.6f} MWm")
+            c_v6.metric("Total NET Cliq", f"{g_net_cliq:.6f} MWm")
+            
+            st.markdown("---")
+            
+            # --- CONSTRUÇÃO DOS EXPANDERS DAS EMPRESAS ---
+            for emp_nome in EMPRESAS_MAPEAMENTO.keys():
+                df_exibir = dict_dfs_check[emp_nome].copy()
+                
+                # Definição do status e ícone do expander
+                if df_exibir.empty:
+                    exp_status = "🟢 OK (Sem registros)"
+                elif (df_exibir["Status"] == "Divergente").any():
+                    exp_status = "🔴 DIVERGENTE"
+                else:
+                    exp_status = "🟢 OK"
+                    
+                with st.expander(f"🏢 {emp_nome} — [{exp_status}]", expanded=False):
+                    if df_exibir.empty:
+                        st.caption("Nenhum contrato ativo ou movimentação CCEE identificada para esta empresa.")
+                        continue
+                        
+                    # Formatação de exibição das colunas numéricas
+                    cols_num = ["Compra Book", "Venda Book", "NET Book", "Compra Cliq", "Venda Cliq", "NET Cliq", "Diferença Compra", "Diferença Venda", "Diferença NET"]
+                    df_styled = df_exibir.copy()
+                    for c in cols_num:
+                        df_styled[c] = df_styled[c].map(lambda x: f"{x:.6f}")
+                        
+                    # Aplicação do Styler para destacar cores das diferenças
+                    styled_table = df_styled.style.applymap(colorir_diferencas, subset=["Diferença Compra", "Diferença Venda", "Diferença NET"])
+                    st.dataframe(styled_table, use_container_width=True, hide_index=True)
+                    
+                    # --- CÁLCULO DOS TOTAIS DO BLOCO ---
+                    t_c_book = df_exibir["Compra Book"].sum()
+                    t_v_book = df_exibir["Venda Book"].sum()
+                    t_n_book = df_exibir["NET Book"].sum()
+                    
+                    t_c_cliq = df_exibir["Compra Cliq"].sum()
+                    t_v_cliq = df_exibir["Venda Cliq"].sum()
+                    t_n_cliq = df_exibir["NET Cliq"].sum()
+                    
+                    t_dif_global = t_n_book - t_n_cliq
+                    
+                    # --- EXIBIÇÃO DOS TOTAIS FORMATADOS ---
+                    st.markdown("#### Totais do Bloco")
+                    col_t1, col_t2, col_t3 = st.columns(3)
+                    col_t1.markdown(f"**Total Compra Book:** `{t_c_book:.6f}` MWm")
+                    col_t2.markdown(f"**Total Venda Book:** `{t_v_book:.6f}` MWm")
+                    col_t3.markdown(f"**Total NET Book:** `{t_n_book:.6f}` MWm")
+                    
+                    col_t4, col_t5, col_t6 = st.columns(3)
+                    col_t4.markdown(f"**Total Compra Cliq:** `{t_c_cliq:.6f}` MWm")
+                    col_t5.markdown(f"**Total Venda Cliq:** `{t_v_cliq:.6f}` MWm")
+                    col_t6.markdown(f"**Total NET Cliq:** `{t_n_cliq:.6f}` MWm")
+                    
+                    st.markdown(f"**Diferença Total (NET Book - NET Cliq):** `{t_dif_global:.6f}` MWm")
 
     except Exception as erro:
         st.error("Erro ao processar a planilha")
