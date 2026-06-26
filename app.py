@@ -459,17 +459,311 @@ if arquivo is not None:
                 if col in base_exibicao.columns:
                     base_exibicao[col] = base_exibicao[col].astype(str)
 
-            if flag_mesmo_titular:
-                styled = base_exibicao.style.apply(highlight_mesmo_titular, axis=1)
-                st.dataframe(styled, use_container_width=True, hide_index=True)
-            else:
-                st.dataframe(base_exibicao, use_container_width=True, hide_index=True)
+            _boletas_ef_set = st.session_state.get("boletas_efetivadas", set())
+
+            def _highlight_tabela(row):
+                boleta_str = str(row.get("BOLETA", "")).strip()
+                if boleta_str in _boletas_ef_set:
+                    return ["background-color: #7B2D8B; color: white"] * len(row)
+                if flag_mesmo_titular:
+                    parte_r = str(row.get("Parte", "")).strip().upper()
+                    contra_r = str(row.get("Contraparte Razão Social", "")).strip().upper()
+                    if parte_r and contra_r and parte_r == contra_r:
+                        return ["background-color: #FFD700"] * len(row)
+                return [""] * len(row)
+
+            styled = base_exibicao.style.apply(_highlight_tabela, axis=1)
+            st.dataframe(styled, use_container_width=True, hide_index=True)
 
             base_download = base.copy()
             if flag_ocultar_zerados: base_download = base_download[base_download["Volume (MWh)"] != 0.0]
             output = BytesIO()
             with pd.ExcelWriter(output, engine="openpyxl") as writer: base_download.to_excel(writer, sheet_name="Base Conferência", index=False)
             st.download_button("📥 Download Base Conferência", data=output.getvalue(), file_name="Base_Conferencia.xlsx")
+
+            # ── RESUMO DE NETs ────────────────────────────────────────────────────────
+            with st.expander("📋 Resumo de NETs", expanded=False):
+                # Reutiliza exatamente a mesma lógica de formação dos NETs da tela Encontro Energético
+                # (linhas 399-401): inner join de compras e vendas agrupados por Parte/Contraparte/Submercado/Tipo de Energia
+                # e os mesmos volumes MWm calculados em base["Volume MWm"]
+
+                mes_ref_net = int(df["Mes"].dropna().iloc[0])
+                horas_net = horas_mes.get(mes_ref_net, 744)
+
+                # Agrupa MWm por operação — mesma chave do Encontro Energético
+                _grp_key = ["Parte", "Contraparte", "Submercado", "Tipo de Energia"]
+
+                _compras_mwm = (
+                    base[base["Operação"] == "Compra"]
+                    .groupby(_grp_key, as_index=False)["Volume MWm"]
+                    .sum()
+                    .rename(columns={"Volume MWm": "_compra_mwm"})
+                )
+                _vendas_mwm = (
+                    base[base["Operação"] == "Venda"]
+                    .groupby(_grp_key, as_index=False)["Volume MWm"]
+                    .sum()
+                    .rename(columns={"Volume MWm": "_venda_mwm"})
+                )
+
+                # Inner join idêntico ao usado para montar `nets`
+                _nets_resumo = _compras_mwm.merge(_vendas_mwm, on=_grp_key, how="inner")
+
+                # Saldo e derivados
+                _nets_resumo["_saldo"] = _nets_resumo["_compra_mwm"] - _nets_resumo["_venda_mwm"]
+
+                def _quem_ajusta(saldo):
+                    if saldo > 1e-9:
+                        return "Contraparte"
+                    elif saldo < -1e-9:
+                        return "Parte"
+                    return "Nenhum"
+
+                _nets_resumo["_quem_ajusta_flag"] = _nets_resumo["_saldo"].apply(_quem_ajusta)
+
+                # Resolve o nome real de quem ajusta para exibição
+                def _resolver_ajustador(row):
+                    flag = row["_quem_ajusta_flag"]
+                    if flag == "Contraparte":
+                        return row["Contraparte"]
+                    elif flag == "Parte":
+                        return row["Parte"]
+                    return "Nenhum"
+
+                _nets_resumo["_quem_ajusta_nome"] = _nets_resumo.apply(_resolver_ajustador, axis=1)
+                _nets_resumo["_vol_ajustar"] = _nets_resumo["_saldo"].abs().where(
+                    _nets_resumo["_quem_ajusta_flag"] != "Nenhum", 0.0
+                )
+
+                # ── Consulta Cliq por NET ─────────────────────────────────────────────
+                # Reutiliza df_ccee_matrix, df_ccee_bismut, df_ccee_acr já carregados.
+                # Relacionamento: Vendedor (book) = SIGLA_PERFIL_VENDEDOR (csv)
+                #                 Comprador (book) = SIGLA_PERFIL_COMPRADOR (csv)
+                #                 Submercado (book) = SUBMERCADO_ENTREGA (csv)
+                # O campo Tipo de Energia não existe nos CSVs CCEE com esse nome;
+                # ele é derivado da Fonte_Contrato no book. A separação por tipo de energia
+                # é garantida pelo fato de cada NET ter um par Vendedor/Comprador/Submercado
+                # distinto (contratos de tipos diferentes geram pares diferentes ou boletas
+                # distintas com perfis distintos). A consulta soma apenas o par exato,
+                # nunca agregados globais.
+
+                # Monta um DataFrame unificado CCEE para consulta eficiente
+                _dfs_ccee_net = []
+                for _src in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
+                    if _src is not None and not _src.empty:
+                        _cols_need_net = [
+                            "SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR",
+                            "SUBMERCADO_ENTREGA", "MWmedio"
+                        ]
+                        if all(c in _src.columns for c in _cols_need_net):
+                            _tmp_net = _src[_cols_need_net].copy()
+                            _tmp_net["MWmedio"] = (
+                                _tmp_net["MWmedio"].astype(str).str.strip()
+                                .str.replace(",", ".", regex=False)
+                            )
+                            _tmp_net["MWmedio"] = pd.to_numeric(_tmp_net["MWmedio"], errors="coerce").fillna(0.0)
+                            _dfs_ccee_net.append(_tmp_net)
+
+                if _dfs_ccee_net:
+                    _df_ccee_all = pd.concat(_dfs_ccee_net, ignore_index=True)
+                    # Índice agrupado por (vendedor, comprador, submercado) → soma MWmedio
+                    _idx_cliq = (
+                        _df_ccee_all
+                        .groupby(
+                            ["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA"],
+                            as_index=False
+                        )["MWmedio"]
+                        .sum()
+                    )
+                    _idx_cliq.rename(columns={"MWmedio": "_mwmedio_sum"}, inplace=True)
+                else:
+                    _idx_cliq = pd.DataFrame(
+                        columns=["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA", "_mwmedio_sum"]
+                    )
+
+                # Para cada NET, precisamos saber o Vendedor e Comprador (perfis CCEE).
+                # Cada NET (Parte, Contraparte, Submercado, Tipo de Energia) corresponde
+                # a um conjunto de boletas no book. Extraímos os perfis das boletas desse NET.
+                # Compra Cliq: perfil onde a Parte é COMPRADOR e Contraparte é VENDEDOR
+                # Venda Cliq:  perfil onde a Parte é VENDEDOR e Contraparte é COMPRADOR
+                # Como Vendedor e Comprador nos NETs podem variar por boleta,
+                # usamos a soma dos MWmedio para o par (Vendedor_perfil, Comprador_perfil, Submercado)
+                # que apareça nas boletas do NET — idêntico ao relacionamento já usado no book.
+
+                def _buscar_cliq_net(row):
+                    """Retorna (compra_cliq, venda_cliq) para um NET."""
+                    parte = row["Parte"]
+                    contraparte = row["Contraparte"]
+                    sub = row["Submercado"]
+                    tipo_en = row["Tipo de Energia"]
+
+                    # Filtra boletas do NET no book
+                    _mask_net = (
+                        (base["Parte"] == parte) &
+                        (base["Contraparte"] == contraparte) &
+                        (base["Submercado"] == sub) &
+                        (base["Tipo de Energia"] == tipo_en)
+                    )
+                    _boletas_net = base[_mask_net]
+
+                    if _boletas_net.empty or _idx_cliq.empty:
+                        return 0.0, 0.0
+
+                    # Pares de perfis únicos nas compras deste NET
+                    _compras_net = _boletas_net[_boletas_net["Operação"] == "Compra"]
+                    _vendas_net = _boletas_net[_boletas_net["Operação"] == "Venda"]
+
+                    compra_cliq = 0.0
+                    venda_cliq = 0.0
+
+                    # Compra Cliq: registros CCEE onde Parte aparece como COMPRADOR
+                    for _, b_row in _compras_net.iterrows():
+                        _v = str(b_row["Vendedor"]).strip()
+                        _c = str(b_row["Comprador"]).strip()
+                        if _v in ("-", "", "nan") or _c in ("-", "", "nan"):
+                            continue
+                        _match = _idx_cliq[
+                            (_idx_cliq["SIGLA_PERFIL_VENDEDOR"] == _v) &
+                            (_idx_cliq["SIGLA_PERFIL_COMPRADOR"] == _c) &
+                            (_idx_cliq["SUBMERCADO_ENTREGA"] == sub)
+                        ]
+                        if not _match.empty:
+                            compra_cliq += _match["_mwmedio_sum"].iloc[0]
+
+                    # Venda Cliq: registros CCEE onde Parte aparece como VENDEDOR
+                    for _, b_row in _vendas_net.iterrows():
+                        _v = str(b_row["Vendedor"]).strip()
+                        _c = str(b_row["Comprador"]).strip()
+                        if _v in ("-", "", "nan") or _c in ("-", "", "nan"):
+                            continue
+                        _match = _idx_cliq[
+                            (_idx_cliq["SIGLA_PERFIL_VENDEDOR"] == _v) &
+                            (_idx_cliq["SIGLA_PERFIL_COMPRADOR"] == _c) &
+                            (_idx_cliq["SUBMERCADO_ENTREGA"] == sub)
+                        ]
+                        if not _match.empty:
+                            venda_cliq += _match["_mwmedio_sum"].iloc[0]
+
+                    return compra_cliq, venda_cliq
+
+                # Aplica consulta Cliq uma vez por NET (sem repetição)
+                _cliq_results = _nets_resumo.apply(_buscar_cliq_net, axis=1, result_type="expand")
+                _nets_resumo["_compra_cliq"] = _cliq_results[0]
+                _nets_resumo["_venda_cliq"]  = _cliq_results[1]
+
+                # ── Estado dos checkboxes (Efetivado) ────────────────────────────────
+                if "net_efetivados" not in st.session_state:
+                    st.session_state["net_efetivados"] = {}
+
+                # Conjunto de boletas marcadas como roxo (para highlight na tabela principal)
+                boletas_efetivadas = set()
+
+                # ── Renderiza tabela de NETs ─────────────────────────────────────────
+                _tol_cliq = 1e-6
+
+                def _calcular_status(row):
+                    if not row.get("_efetivado", False):
+                        return "NET Não Efetivado"
+                    vol_aj = row["_vol_ajustar"]
+                    comp_cliq = row["_compra_cliq"]
+                    vend_cliq = row["_venda_cliq"]
+                    quem = row["_quem_ajusta_flag"]
+
+                    if quem == "Nenhum":
+                        return "OK"
+
+                    # Quem ajusta é a Contraparte → o ajuste entra como compra da Parte no Cliq
+                    if quem == "Contraparte":
+                        cliq_aj = comp_cliq
+                    else:
+                        cliq_aj = vend_cliq
+
+                    diff = abs(cliq_aj - vol_aj)
+                    if diff < _tol_cliq:
+                        return "OK"
+                    elif cliq_aj == 0.0:
+                        return "Não Ajustado"
+                    elif cliq_aj < vol_aj - _tol_cliq:
+                        return "Ajuste Parcial"
+                    elif cliq_aj > vol_aj + _tol_cliq:
+                        return "Volume Maior"
+                    else:
+                        return "Divergente"
+
+                # Monta cabeçalho manualmente + linhas interativas
+                _col_headers = [
+                    "Efetivado", "Parte", "Contraparte", "Submercado", "Tipo de Energia",
+                    "Compra (MWm)", "Venda (MWm)", "Saldo NET (MWm)",
+                    "Volume a Ajustar (MWm)", "Quem Ajusta",
+                    "Compra Cliq (MWm)", "Venda Cliq (MWm)", "Status"
+                ]
+
+                # Linha de cabeçalho
+                _hdr = st.columns([0.5, 2, 2, 1.2, 1.5, 1.2, 1.2, 1.2, 1.5, 1.5, 1.5, 1.5, 1.5])
+                for _ci, _ch in zip(_hdr, _col_headers):
+                    _ci.markdown(f"**{_ch}**")
+
+                st.markdown("---")
+
+                for _i, _row in _nets_resumo.iterrows():
+                    _net_key = (
+                        str(_row["Parte"]) + "|" +
+                        str(_row["Contraparte"]) + "|" +
+                        str(_row["Submercado"]) + "|" +
+                        str(_row["Tipo de Energia"])
+                    )
+                    _efetivado = st.session_state["net_efetivados"].get(_net_key, False)
+                    _row["_efetivado"] = _efetivado
+                    _status = _calcular_status(_row)
+
+                    # Cor de status
+                    _status_cores = {
+                        "OK": "🟢",
+                        "Não Ajustado": "🔴",
+                        "Ajuste Parcial": "🟡",
+                        "Volume Maior": "🟠",
+                        "Volume Menor": "🟠",
+                        "Divergente": "🔴",
+                        "NET Não Efetivado": "⚪",
+                    }
+                    _status_icon = _status_cores.get(_status, "⚪")
+
+                    _saldo = _row["_saldo"]
+                    _saldo_fmt = f"{_saldo:+.6f}"
+
+                    _cols = st.columns([0.5, 2, 2, 1.2, 1.5, 1.2, 1.2, 1.2, 1.5, 1.5, 1.5, 1.5, 1.5])
+                    _novo_ef = _cols[0].checkbox("", value=_efetivado, key=f"net_ef_{_net_key}")
+                    if _novo_ef != _efetivado:
+                        st.session_state["net_efetivados"][_net_key] = _novo_ef
+                        st.rerun()
+
+                    _cols[1].write(_row["Parte"])
+                    _cols[2].write(_row["Contraparte"])
+                    _cols[3].write(_row["Submercado"])
+                    _cols[4].write(_row["Tipo de Energia"])
+                    _cols[5].write(f"{_row['_compra_mwm']:.6f}")
+                    _cols[6].write(f"{_row['_venda_mwm']:.6f}")
+                    _cols[7].write(_saldo_fmt)
+                    _cols[8].write(f"{_row['_vol_ajustar']:.6f}")
+                    _cols[9].write(_row["_quem_ajusta_nome"])
+                    _cols[10].write(f"{_row['_compra_cliq']:.6f}")
+                    _cols[11].write(f"{_row['_venda_cliq']:.6f}")
+                    _cols[12].write(f"{_status_icon} {_status}")
+
+                    # Acumula boletas efetivadas para highlight na tabela principal
+                    if _novo_ef:
+                        _mask_ef = (
+                            (base["Parte"] == _row["Parte"]) &
+                            (base["Contraparte"] == _row["Contraparte"]) &
+                            (base["Submercado"] == _row["Submercado"]) &
+                            (base["Tipo de Energia"] == _row["Tipo de Energia"])
+                        )
+                        boletas_efetivadas.update(base[_mask_ef]["BOLETA"].astype(str).tolist())
+
+                # Armazena boletas efetivadas no session_state para uso no highlight
+                st.session_state["boletas_efetivadas"] = boletas_efetivadas
+
+            # ── FIM RESUMO DE NETs ─────────────────────────────────────────────────
 
             if csvs_disponiveis:
                 st.markdown("---")
