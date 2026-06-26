@@ -412,6 +412,182 @@ if arquivo is not None:
             col_metric3.metric(label="Contratos de Venda 📤", value=total_vendas)
             st.markdown("---")
 
+            # ── RESUMO DE NETs ────────────────────────────────────────────────────
+            # Reutiliza integralmente a lógica de formação dos NETs já existente (inner merge de compras x vendas)
+            mes_referencia_net = int(df["Mes"].dropna().iloc[0]) if "Mes" in df.columns and not df["Mes"].dropna().empty else 1
+            horas_net = horas_mes.get(mes_referencia_net, 744)
+
+            compras_net_mwm = (
+                base[base["Operação"] == "Compra"]
+                .groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume MWm"]
+                .sum()
+                .rename(columns={"Volume MWm": "Compra (MWm)"})
+            )
+            vendas_net_mwm = (
+                base[base["Operação"] == "Venda"]
+                .groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume MWm"]
+                .sum()
+                .rename(columns={"Volume MWm": "Venda (MWm)"})
+            )
+            nets_resumo = compras_net_mwm.merge(
+                vendas_net_mwm,
+                on=["Parte", "Contraparte", "Submercado", "Tipo de Energia"],
+                how="inner"
+            )
+
+            if not nets_resumo.empty:
+                # Volume NET = mínimo entre compra e venda (volume compensável)
+                nets_resumo["Volume NET (MWm)"] = nets_resumo[["Compra (MWm)", "Venda (MWm)"]].min(axis=1)
+
+                # Responsável pelo Ajuste: quem tem o maior volume deve ajustar o excedente no Cliq
+                def responsavel_ajuste(row):
+                    saldo = row["Compra (MWm)"] - row["Venda (MWm)"]
+                    if abs(saldo) < 1e-9:
+                        return "ZERADO"
+                    elif saldo > 0:
+                        return row["Contraparte"]
+                    else:
+                        return row["Parte"]
+
+                nets_resumo["Responsável pelo Ajuste"] = nets_resumo.apply(responsavel_ajuste, axis=1)
+
+                # Vendedor e Comprador (perspectiva do NET: quem vende para quem)
+                # Parte é sempre quem aparece nos dois lados; Contraparte é o outro lado
+                nets_resumo["Vendedor"] = nets_resumo.apply(
+                    lambda r: r["Parte"] if r["Venda (MWm)"] >= r["Compra (MWm)"] else r["Contraparte"], axis=1
+                )
+                nets_resumo["Comprador"] = nets_resumo.apply(
+                    lambda r: r["Parte"] if r["Compra (MWm)"] >= r["Venda (MWm)"] else r["Contraparte"], axis=1
+                )
+
+                # Compra Cliq e Venda Cliq por NET específico (usando CSVs já carregados)
+                def calcular_cliq_net(row):
+                    parte = str(row["Parte"]).strip()
+                    contraparte = str(row["Contraparte"]).strip()
+                    submercado = str(row["Submercado"]).strip()
+
+                    compra_cliq = 0.0
+                    venda_cliq = 0.0
+
+                    dfs_ccee = []
+                    if csvs_disponiveis:
+                        for _df_src in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
+                            if _df_src is not None and not _df_src.empty:
+                                dfs_ccee.append(_df_src)
+
+                    for _df_src in dfs_ccee:
+                        cols_need = ["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA", "MWmedio"]
+                        if not all(c in _df_src.columns for c in cols_need):
+                            continue
+                        _tmp = _df_src[cols_need].copy()
+                        _tmp["MWmedio"] = _tmp["MWmedio"].astype(str).str.strip().str.replace(",", ".", regex=False)
+                        _tmp["MWmedio"] = pd.to_numeric(_tmp["MWmedio"], errors="coerce").fillna(0.0)
+
+                        # Compra Cliq: Parte como comprador, contraparte como vendedor
+                        mask_compra = (
+                            (_tmp["SIGLA_PERFIL_COMPRADOR"].str.strip() == parte) &
+                            (_tmp["SIGLA_PERFIL_VENDEDOR"].str.strip() == contraparte) &
+                            (_tmp["SUBMERCADO_ENTREGA"].str.strip() == submercado)
+                        )
+                        compra_cliq += _tmp.loc[mask_compra, "MWmedio"].sum()
+
+                        # Venda Cliq: Parte como vendedor, contraparte como comprador
+                        mask_venda = (
+                            (_tmp["SIGLA_PERFIL_VENDEDOR"].str.strip() == parte) &
+                            (_tmp["SIGLA_PERFIL_COMPRADOR"].str.strip() == contraparte) &
+                            (_tmp["SUBMERCADO_ENTREGA"].str.strip() == submercado)
+                        )
+                        venda_cliq += _tmp.loc[mask_venda, "MWmedio"].sum()
+
+                    return pd.Series({"Compra Cliq (MWm)": compra_cliq, "Venda Cliq (MWm)": venda_cliq})
+
+                cliq_cols = nets_resumo.apply(calcular_cliq_net, axis=1)
+                nets_resumo["Compra Cliq (MWm)"] = cliq_cols["Compra Cliq (MWm)"]
+                nets_resumo["Venda Cliq (MWm)"] = cliq_cols["Venda Cliq (MWm)"]
+
+                # Inicializar estado de checkboxes no session_state
+                if "net_efetivados" not in st.session_state:
+                    st.session_state["net_efetivados"] = {}
+
+                net_keys = list(nets_resumo.apply(
+                    lambda r: f"{r['Parte']}|{r['Contraparte']}|{r['Submercado']}|{r['Tipo de Energia']}", axis=1
+                ))
+                for k in net_keys:
+                    if k not in st.session_state["net_efetivados"]:
+                        st.session_state["net_efetivados"][k] = False
+
+                efetivados_flag = [st.session_state["net_efetivados"].get(k, False) for k in net_keys]
+                nets_resumo["_key"] = net_keys
+                nets_resumo["_efetivado"] = efetivados_flag
+
+                # Status
+                def calcular_status(row):
+                    if not row["_efetivado"]:
+                        return "Não efetivado"
+                    vol_net = row["Volume NET (MWm)"]
+                    compra_cliq = row["Compra Cliq (MWm)"]
+                    venda_cliq = row["Venda Cliq (MWm)"]
+                    tol = 1e-6
+
+                    if abs(compra_cliq - venda_cliq) > tol:
+                        return "🔴 Divergência entre Compra Cliq e Venda Cliq"
+
+                    ajuste = (compra_cliq + venda_cliq) / 2 if abs(compra_cliq - venda_cliq) < tol else compra_cliq
+
+                    if abs(ajuste) < tol and abs(vol_net) > tol:
+                        return "🟡 Aguardando ajuste"
+                    if abs(ajuste - vol_net) < tol:
+                        return "✅ OK"
+                    if ajuste > vol_net + tol:
+                        return "🔴 Volume ajustado maior que o esperado"
+                    if ajuste < vol_net - tol:
+                        if ajuste < tol:
+                            return "🟡 Aguardando ajuste"
+                        return "🟠 Ajuste parcial"
+                    return "✅ OK"
+
+                nets_resumo["Status"] = nets_resumo.apply(calcular_status, axis=1)
+
+                with st.expander("📋 Resumo de NETs", expanded=False):
+                    st.caption(f"{len(nets_resumo)} NET(s) identificado(s)")
+
+                    for idx, row in nets_resumo.iterrows():
+                        key = row["_key"]
+                        col_chk, col_info = st.columns([1, 11])
+                        with col_chk:
+                            novo_val = st.checkbox(
+                                "Efetivado",
+                                value=st.session_state["net_efetivados"].get(key, False),
+                                key=f"net_chk_{key}",
+                                label_visibility="collapsed"
+                            )
+                            if novo_val != st.session_state["net_efetivados"].get(key, False):
+                                st.session_state["net_efetivados"][key] = novo_val
+                                st.rerun()
+
+                    # Montar tabela de exibição
+                    display_nets = nets_resumo[[
+                        "_efetivado", "Parte", "Vendedor", "Comprador",
+                        "Compra (MWm)", "Venda (MWm)", "Volume NET (MWm)",
+                        "Responsável pelo Ajuste", "Compra Cliq (MWm)", "Venda Cliq (MWm)", "Status"
+                    ]].copy()
+                    display_nets.rename(columns={"_efetivado": "Efetivado"}, inplace=True)
+
+                    for col_mwm in ["Compra (MWm)", "Venda (MWm)", "Volume NET (MWm)", "Compra Cliq (MWm)", "Venda Cliq (MWm)"]:
+                        display_nets[col_mwm] = display_nets[col_mwm].map(lambda x: f"{x:.6f}" if isinstance(x, (int, float)) else x)
+
+                    st.dataframe(display_nets, use_container_width=True, hide_index=True)
+
+                # Identificar boletas pertencentes a NETs efetivados para highlight roxo
+                nets_efetivados_keys = {k for k, v in st.session_state["net_efetivados"].items() if v}
+
+            else:
+                nets_efetivados_keys = set()
+                with st.expander("📋 Resumo de NETs", expanded=False):
+                    st.info("Nenhuma possibilidade de NET identificada.")
+
+            st.markdown("---")
+
             col_flag1, col_flag2 = st.columns(2)
             with col_flag1: flag_mesmo_titular = st.toggle("🟡 Ocultar IntraPortifólio Visualmente", value=True)
             with col_flag2: flag_ocultar_zerados = st.toggle("🚫 Ocultar contratos zerados (Volume MWh = 0)", value=False)
@@ -459,8 +635,37 @@ if arquivo is not None:
                 if col in base_exibicao.columns:
                     base_exibicao[col] = base_exibicao[col].astype(str)
 
-            if flag_mesmo_titular:
+            # Highlight roxo para contratos pertencentes a NETs efetivados
+            def highlight_net_efetivado(row):
+                parte = str(row.get("Parte", "")).strip()
+                contraparte = str(row.get("Contraparte", "")).strip()
+                submercado = str(row.get("Submercado", "")).strip()
+                tipo_energia = str(row.get("Tipo de Energia", "")).strip()
+                key = f"{parte}|{contraparte}|{submercado}|{tipo_energia}"
+                if key in nets_efetivados_keys:
+                    return ["background-color: #7B2D8B; color: white"] * len(row)
+                return [""] * len(row)
+
+            if flag_mesmo_titular and nets_efetivados_keys:
+                def highlight_combinado(row):
+                    parte = str(row.get("Parte", "")).strip()
+                    contraparte = str(row.get("Contraparte", "")).strip()
+                    submercado = str(row.get("Submercado", "")).strip()
+                    tipo_energia = str(row.get("Tipo de Energia", "")).strip()
+                    key = f"{parte}|{contraparte}|{submercado}|{tipo_energia}"
+                    if key in nets_efetivados_keys:
+                        return ["background-color: #7B2D8B; color: white"] * len(row)
+                    contraparte_rs = str(row.get("Contraparte Razão Social", "")).strip().upper()
+                    if parte and contraparte_rs and parte.upper() == contraparte_rs:
+                        return ["background-color: #FFD700"] * len(row)
+                    return [""] * len(row)
+                styled = base_exibicao.style.apply(highlight_combinado, axis=1)
+                st.dataframe(styled, use_container_width=True, hide_index=True)
+            elif flag_mesmo_titular:
                 styled = base_exibicao.style.apply(highlight_mesmo_titular, axis=1)
+                st.dataframe(styled, use_container_width=True, hide_index=True)
+            elif nets_efetivados_keys:
+                styled = base_exibicao.style.apply(highlight_net_efetivado, axis=1)
                 st.dataframe(styled, use_container_width=True, hide_index=True)
             else:
                 st.dataframe(base_exibicao, use_container_width=True, hide_index=True)
