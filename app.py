@@ -1,4 +1,4 @@
-# APP_BOOK_ENERGIA_V22 - CORREÇÃO DE ESCOPO DO FILTRO DE NETs
+# APP_BOOK_ENERGIA_V22 - CORREÇÃO DE CHAVES DE BUSCA NET (SIGLAS CCEE)
 import streamlit as st
 import pandas as pd
 import zipfile
@@ -77,14 +77,14 @@ def calcular_nets(base_df, horas_mes):
     if compras.empty or vendas.empty:
         return pd.DataFrame()
     
-    # Mantemos as siglas CCEE no agrupamento para saber exatamente quem mapear no CSV depois
-    compras_agg = compras.groupby(["Parte", "Contraparte", "Submercado", "Vendedor", "Comprador"], as_index=False)[["Volume (MWh)", "Volume MWm"]].sum()
-    compras_agg.rename(columns={"Volume (MWh)": "Compra_MWh", "Volume MWm": "Compra_MWm", "Vendedor": "Sigla_Parte_Vendedora", "Comprador": "Sigla_Parte_Compradora"}, inplace=True)
+    # Agrupamos incluindo as colunas de siglas CCEE (Parte e Contraparte) e a nova coluna "Razão Social"
+    compras_agg = compras.groupby(["Razão Social", "Parte", "Contraparte", "Submercado"], as_index=False)[["Volume (MWh)", "Volume MWm"]].sum()
+    compras_agg.rename(columns={"Volume (MWh)": "Compra_MWh", "Volume MWm": "Compra_MWm"}, inplace=True)
     
-    vendas_agg = vendas.groupby(["Parte", "Contraparte", "Submercado", "Vendedor", "Comprador"], as_index=False)[["Volume (MWh)", "Volume MWm"]].sum()
-    vendas_agg.rename(columns={"Volume (MWh)": "Venda_MWh", "Volume MWm": "Venda_MWm", "Vendedor": "Sigla_Contraparte_Vendedora", "Comprador": "Sigla_Contraparte_Compradora"}, inplace=True)
+    vendas_agg = vendas.groupby(["Razão Social", "Parte", "Contraparte", "Submercado"], as_index=False)[["Volume (MWh)", "Volume MWm"]].sum()
+    vendas_agg.rename(columns={"Volume (MWh)": "Venda_MWh", "Volume MWm": "Venda_MWm"}, inplace=True)
     
-    nets = compras_agg.merge(vendas_agg, on=["Parte", "Contraparte", "Submercado"], how="inner")
+    nets = compras_agg.merge(vendas_agg, on=["Razão Social", "Parte", "Contraparte", "Submercado"], how="inner")
     if nets.empty:
         return pd.DataFrame()
     
@@ -161,9 +161,11 @@ if arquivo is not None:
         base["BOLETA"]                         = df["Codigo_WBC"]
         base["Operação"]                       = df["Movimentacao"]
         base["Tipo de Energia"]                = df["Fonte_Contrato"].map(mapa_energia).fillna(df["Fonte_Contrato"])
-        base["Parte"]                          = df["Parte_razao_social"]
+        base["Razão Social"]                   = df["Parte_razao_social"]
         base["Contraparte Razão Social"]       = df["Contraparte_razao_social"] if "Contraparte_razao_social" in df.columns else "-"
-        base["Contraparte"]                    = df["Sigla_CCEE_Contraparte"]
+        # Nova mapeação: Mapeia o Perfil_CCEE_Parte como a sigla curta da Parte
+        base["Parte"]                          = df["Perfil_CCEE_Parte"].fillna("-").astype(str).str.strip()
+        base["Contraparte"]                    = df["Sigla_CCEE_Contraparte"].fillna("-").astype(str).str.strip()
         base["CP/LP"]                          = cp_lp
         base["CNPJ CONTRAPARTE"]               = df["Contraparte_CNPJ"].apply(formatar_cnpj)
         base["Submercado"]                     = df["Submercado"].astype(str).str.strip().map(mapa_submercado).fillna(df["Submercado"])
@@ -174,8 +176,8 @@ if arquivo is not None:
         base["% Modulação Mínima"]             = df["FlexLimite_modulacaoMin"].fillna("-")
         base["% Modulação Máxima"]             = df["FlexLimite_modulacaoMax"].fillna("-")
         base["Contrato CliqCCEE mês anterior"] = base["BOLETA"].map(mapa_mes_anterior).fillna("-").astype(str)
-        base["Vendedor"]                       = df["Sigla_CCEE_vendedor"].fillna("-").astype(str)
-        base["Comprador"]                      = df["Sigla_CCEE_comprador"].fillna("-").astype(str)
+        base["Vendedor"]                       = df["Sigla_CCEE_vendedor"].fillna("-").astype(str).str.strip()
+        base["Comprador"]                      = df["Sigla_CCEE_comprador"].fillna("-").astype(str).str.strip()
         base["Contrato CliqCCEE"]              = "-"
 
         csvs_disponiveis = any([not df_ccee_matrix.empty, not df_ccee_bismut.empty, not df_ccee_acr.empty])
@@ -186,7 +188,7 @@ if arquivo is not None:
                 try: b_int = int(float(str(row["BOLETA"]).strip()))
                 except: b_int = -1
                 if b_int in BOLETAS_ACR: d_ch, s_ext = idx_a_chave, set_a_ext
-                elif str(row["Parte"]).strip().upper() == BISMUT_NOME_UPPER: d_ch, s_ext = idx_b_chave, set_b_ext
+                elif str(row["Razão Social"]).strip().upper() == BISMUT_NOME_UPPER: d_ch, s_ext = idx_b_chave, set_b_ext
                 else: d_ch, s_ext = idx_m_chave, set_m_ext
                 chave_esp = str(row["Vendedor"]).strip() + str(row["Comprador"]).strip() + str(row["Submercado"]).strip()
                 c_ant = str(row["Contrato CliqCCEE mês anterior"]).strip()
@@ -215,7 +217,7 @@ if arquivo is not None:
                 if cod in ["", "-", "None", "nan", "Verificar"]: return "-"
                 try: b_int = int(float(str(row["BOLETA"]).strip()))
                 except: b_int = -1
-                d_field = dict_a if b_int in BOLETAS_ACR else (dict_b if str(row["Parte"]).strip().upper() == "NEWAVE BISMUT COMERCIALIZADORAERIA S.A." else dict_m)
+                d_field = dict_a if b_int in BOLETAS_ACR else (dict_b if str(row["Razão Social"]).strip().upper() == "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A." else dict_m)
                 return d_field.get(cod, "-")
             base["Modulação Mínima CCEE"] = base.apply(lambda r: buscar_campo_ccee(r, idx_m_min, idx_b_min, idx_a_min), axis=1)
             base["Modulação Máxima CCEE"] = base.apply(lambda r: buscar_campo_ccee(r, idx_m_max, idx_b_max, idx_a_max), axis=1)
@@ -243,7 +245,7 @@ if arquivo is not None:
         base.loc[_diff_vol > _tol, "Check Volume"] = "Book maior"
         base.loc[_diff_vol < -_tol, "Check Volume"] = "CCEE maior"
 
-        # GERAÇÃO DE NETs COM FILTRO ESTRITO DA RELAÇÃO PAR-A-PAR CCEE
+        # GERAÇÃO DE NETs DINÂMICO USANDO AS DUAS SIGLAS CURTAS DA CCEE
         df_nets = calcular_nets(base, horas_mes)
         
         if "nets_aceitos" not in st.session_state:
@@ -255,24 +257,23 @@ if arquivo is not None:
             check_nets_lista = []
             
             for _, net_row in df_nets.iterrows():
+                sigla_parte = str(net_row["Parte"]).strip()
+                sigla_contraparte = str(net_row["Contraparte"]).strip()
                 submercado_net = str(net_row["Submercado"]).strip()
                 saldo_esperado = abs(net_row["Saldo_MWm"])
                 
-                # Resgata as siglas específicas que formaram o Net de Compra e o Net de Venda
-                sigla_parte_compradora = str(net_row["Sigla_Parte_Compradora"]).strip()
-                sigla_contraparte_vendedora = str(net_row["Sigla_Contraparte_Vendedora"]).strip()
-                
                 if not df_ccee_completo.empty:
-                    # FILTRO DE ESCOPO FECHADO: Busca apenas o volume do par exato que faz o net
+                    # Volume Compra Cliq -> Contraparte vende para a Parte
                     v_compra_ccee = df_ccee_completo[
-                        (df_ccee_completo["SIGLA_PERFIL_VENDEDOR"] == sigla_contraparte_vendedora) & 
-                        (df_ccee_completo["SIGLA_PERFIL_COMPRADOR"] == sigla_parte_compradora) &
+                        (df_ccee_completo["SIGLA_PERFIL_VENDEDOR"] == sigla_contraparte) & 
+                        (df_ccee_completo["SIGLA_PERFIL_COMPRADOR"] == sigla_parte) &
                         (df_ccee_completo["SUBMERCADO_ENTREGA"] == submercado_net)
                     ]["MWmedio_num"].sum()
                     
+                    # Volume Venda Cliq -> Parte vende para a Contraparte
                     v_venda_ccee = df_ccee_completo[
-                        (df_ccee_completo["SIGLA_PERFIL_VENDEDOR"] == sigla_contraparte_vendedora) & 
-                        (df_ccee_completo["SIGLA_PERFIL_COMPRADOR"] == sigla_parte_compradora) &
+                        (df_ccee_completo["SIGLA_PERFIL_VENDEDOR"] == sigla_parte) & 
+                        (df_ccee_completo["SIGLA_PERFIL_COMPRADOR"] == sigla_contraparte) &
                         (df_ccee_completo["SUBMERCADO_ENTREGA"] == submercado_net)
                     ]["MWmedio_num"].sum()
                 else:
@@ -286,11 +287,11 @@ if arquivo is not None:
                 if ajuste_resp == "ZERADO":
                     check_nets_lista.append("-")
                 else:
-                    vol_efetivo_cliq = v_compra_ccee if ajuste_resp == net_row["Parte"] else v_venda_ccee
+                    vol_efetivo_cliq = v_compra_ccee if ajuste_resp == sigla_parte else v_venda_ccee
                     diff_net = vol_efetivo_cliq - saldo_esperado
                     if abs(diff_net) < 1e-4: check_nets_lista.append("OK")
                     elif diff_net > 1e-4: check_nets_lista.append("Volume ajustado maior que o esperado")
-                    else: check_nets_lista.append("Volume adjusted menor que o esperado")
+                    else: check_nets_lista.append("Volume ajustado menor que o esperado")
             
             df_nets["Volume Compra Cliq"] = vol_compra_cliq_lista
             df_nets["Volume Venda Cliq"] = vol_venda_cliq_lista
@@ -310,7 +311,7 @@ if arquivo is not None:
             if not df_nets.empty:
                 with st.expander("📋 Resumo de NETs (Clique para Expandir / Recolher)", expanded=True):
                     df_nets_display = df_nets[[
-                        "Parte", "Contraparte", "Submercado", "Compra_MWm", "Venda_MWm", 
+                        "Razão Social", "Parte", "Contraparte", "Submercado", "Compra_MWm", "Venda_MWm", 
                         "Saldo_MWm", "Ajuste Net", "Volume Compra Cliq", "Volume Venda Cliq", "Check Net"
                     ]].copy()
                     
@@ -329,7 +330,7 @@ if arquivo is not None:
                         cols_net[idx + 1].write(f"**{col_name}**")
                     
                     for idx, (_, net_row) in enumerate(df_nets.iterrows()):
-                        chave_net = (net_row["Parte"], net_row["Contraparte"], net_row["Submercado"])
+                        chave_net = (net_row["Razão Social"], net_row["Parte"], net_row["Contraparte"], net_row["Submercado"])
                         cols_data = st.columns(len(df_nets_display.columns) + 1)
                         
                         with cols_data[0]:
@@ -354,14 +355,14 @@ if arquivo is not None:
                 filtro_submercado = col_f3.multiselect("Submercado", options=sorted(base_exibicao["Submercado"].dropna().astype(str).unique()))
 
                 col_f4, col_f5, col_f6 = st.columns(3)
-                filtro_parte = col_f4.text_input("Parte")
+                filtro_razao = col_f4.text_input("Razão Social")
                 filtro_contraparte = col_f5.text_input("Contraparte")
                 filtro_boleta = col_f6.text_input("Boleta")
 
                 if filtro_operacao: base_exibicao = base_exibicao[base_exibicao["Operação"].isin(filtro_operacao)]
                 if filtro_status: base_exibicao = base_exibicao[base_exibicao["Contrato CliqCCEE"].astype(str).isin(filtro_status)]
                 if filtro_submercado: base_exibicao = base_exibicao[base_exibicao["Submercado"].astype(str).isin(filtro_submercado)]
-                if filtro_parte: base_exibicao = base_exibicao[base_exibicao["Parte"].astype(str).str.contains(filtro_parte, case=False, na=False)]
+                if filtro_razao: base_exibicao = base_exibicao[base_exibicao["Razão Social"].astype(str).str.contains(filtro_razao, case=False, na=False)]
                 if filtro_contraparte: base_exibicao = base_exibicao[base_exibicao["Contraparte"].astype(str).str.contains(filtro_contraparte, case=False, na=False)]
                 if filtro_boleta: base_exibicao = base_exibicao[base_exibicao["BOLETA"].astype(str).str.contains(filtro_boleta, case=False, na=False)]
 
@@ -371,10 +372,10 @@ if arquivo is not None:
                 base_exibicao["Volume MWm"]   = base_exibicao["Volume MWm"].map(lambda x: f"{x:.6f}" if isinstance(x, (int, float)) else x)
 
                 def aplicar_estilos(row):
-                    p, c, s = str(row.get("Parte", "")).strip(), str(row.get("Contraparte", "")).strip(), str(row.get("Submercado", "")).strip()
-                    if (p, c, s) in st.session_state.nets_aceitos and st.session_state.nets_aceitos[(p, c, s)]:
+                    rz, p, c, s = str(row.get("Razão Social", "")).strip(), str(row.get("Parte", "")).strip(), str(row.get("Contraparte", "")).strip(), str(row.get("Submercado", "")).strip()
+                    if (rz, p, c, s) in st.session_state.nets_aceitos and st.session_state.nets_aceitos[(rz, p, c, s)]:
                         return ["background-color: #9370DB"] * len(row)
-                    if flag_mesmo_titular and str(row.get("Parte", "")).strip().upper() == str(row.get("Contraparte Razão Social", "")).strip().upper():
+                    if flag_mesmo_titular and str(row.get("Razão Social", "")).strip().upper() == str(row.get("Contraparte Razão Social", "")).strip().upper():
                         return ["background-color: #FFD700"] * len(row)
                     return [""] * len(row)
 
