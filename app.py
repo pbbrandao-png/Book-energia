@@ -276,11 +276,29 @@ if arquivo is not None:
                 else:
                     d_field = dict_m
                 
-                return d_field.get(cod, "-")
+                res_val = d_field.get(cod, "-")
+                # Tratamento para converter strings numéricas vindas com vírgula da CCEE em float puro
+                if isinstance(res_val, str) and res_val != "-":
+                    res_val_clean = res_val.replace(",", ".").strip()
+                    try:
+                        return float(res_val_clean)
+                    except:
+                        return res_val
+                return res_val
 
             base["Modulação Mínima CCEE"] = base.apply(lambda r: buscar_campo_ccee(r, idx_m_min, idx_b_min, idx_a_min), axis=1)
             base["Modulação Máxima CCEE"] = base.apply(lambda r: buscar_campo_ccee(r, idx_m_max, idx_b_max, idx_a_max), axis=1)
-            base["Modulação CCEE"]        = base.apply(lambda r: buscar_campo_ccee(r, idx_m_tipo, idx_b_tipo, idx_a_tipo), axis=1)
+            
+            # Tipo de modulação continua sendo string
+            def buscar_tipo_ccee(row, dict_m, dict_b, dict_a):
+                cod = str(row["Contrato CliqCCEE"]).strip()
+                if cod in ["", "-", "None", "nan", "Verificar"]: return "-"
+                try: b_int = int(float(str(row["BOLETA"]).strip()))
+                except: b_int = -1
+                d_field = dict_a if b_int in BOLETAS_ACR else (dict_b if str(row["Parte"]).strip().upper() == "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A." else dict_m)
+                return d_field.get(cod, "-")
+                
+            base["Modulação CCEE"]        = base.apply(lambda r: buscar_tipo_ccee(r, idx_m_tipo, idx_b_tipo, idx_a_tipo), axis=1)
         else:
             base["Modulação Mínima CCEE"] = "-"
             base["Modulação Máxima CCEE"] = "-"
@@ -290,9 +308,7 @@ if arquivo is not None:
         
         # Check Modulação Mínima
         base["Check Modulação Mínima"] = "-"
-        _mod_min_cc_str = base.loc[_mask_calcular_min, "Modulação Mínima CCEE"].astype(str).str.replace(",", ".", regex=False)
-        _mod_min_cc = pd.to_numeric(_mod_min_cc_str, errors="coerce")
-        
+        _mod_min_cc = pd.to_numeric(base["Modulação Mínima CCEE"], errors="coerce")
         _mask_min_valid = _mask_calcular_min & _mod_min_cc.notna()
         if _mask_min_valid.any():
             _diff_min = pd.to_numeric(base.loc[_mask_min_valid, "Modulação Mínima"]) - _mod_min_cc.loc[_mask_min_valid]
@@ -302,9 +318,7 @@ if arquivo is not None:
 
         # Check Modulação Máxima
         base["Check Modulação Máxima"] = "-"
-        _mod_max_cc_str = base.loc[_mask_calcular_max, "Modulação Máxima CCEE"].astype(str).str.replace(",", ".", regex=False)
-        _mod_max_cc = pd.to_numeric(_mod_max_cc_str, errors="coerce")
-        
+        _mod_max_cc = pd.to_numeric(base["Modulação Máxima CCEE"], errors="coerce")
         _mask_max_valid = _mask_calcular_max & _mod_max_cc.notna()
         if _mask_max_valid.any():
             _diff_max = pd.to_numeric(base.loc[_mask_max_valid, "Modulação Máxima"]) - _mod_max_cc.loc[_mask_max_valid]
@@ -389,7 +403,9 @@ if arquivo is not None:
             base["Volume Global CCEE"] = 0.0
 
         # ── COLUNA: Check Volume Global ──────────────────────────────────────────
-        _diff_global = _vg - _vgc if '_vg' in locals() else pd.to_numeric(base["Volume Global"], errors="coerce").fillna(0.0) - pd.to_numeric(base["Volume Global CCEE"], errors="coerce").fillna(0.0)
+        _vgb = pd.to_numeric(base["Volume Global"], errors="coerce").fillna(0.0)
+        _vgc = pd.to_numeric(base["Volume Global CCEE"], errors="coerce").fillna(0.0)
+        _diff_global = _vgb - _vgc
         base["Check Volume Global"] = "OK"
         base.loc[_diff_global > _tol, "Check Volume Global"] = "Book maior"
         base.loc[_diff_global < -_tol, "Check Volume Global"] = "CCEE maior"
@@ -438,9 +454,10 @@ if arquivo is not None:
             base_exibicao["Volume (MWh)"] = base_exibicao["Volume (MWh)"].map(lambda x: f"{x:.3f}" if isinstance(x, (int, float)) else x)
             base_exibicao["Volume MWm"]   = base_exibicao["Volume MWm"].map(lambda x: f"{x:.6f}" if isinstance(x, (int, float)) else x)
             
-            for c_format in ["Modulação Mínima", "Modulação Máxima"]:
+            # Formatando todos os campos numéricos de modulação para seguir estritamente o formato MWm (6 casas decimais)
+            for c_format in ["Modulação Mínima", "Modulação Máxima", "Modulação Mínima CCEE", "Modulação Máxima CCEE"]:
                 if c_format in base_exibicao.columns:
-                    base_exibicao[c_format] = base_exibicao[c_format].map(lambda x: f"{x:.4f}" if isinstance(x, (int, float)) else x)
+                    base_exibicao[c_format] = base_exibicao[c_format].map(lambda x: f"{x:.6f}" if isinstance(x, (int, float)) else x)
 
             st.caption(f"{len(base_exibicao):,} registros encontrados")
 
