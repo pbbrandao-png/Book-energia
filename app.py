@@ -162,7 +162,7 @@ st.sidebar.markdown("---")
 
 st.title("📊 Book Energia")
 
-arquivo = st.file_uploader("Selecione a RelPers", type=["xlsx", "xlsm"])
+arquivo = st.file_uploader("Selecione a RelPers", type=["xlsx", "xlsx"])
 arquivo_mes_anterior = st.file_uploader("Selecione a planilha Mês Anterior", type=["xlsx"])
 zip_matrix = st.file_uploader("Selecione o ZIP Matrix", type=["zip"])
 zip_bismut = st.file_uploader("Selecione o ZIP Bismut", type=["zip"])
@@ -795,15 +795,15 @@ if arquivo is not None:
 
                 st.session_state["boletas_efetivadas"] = boletas_efetivadas
 
-                # Alterado: Adicionado botão cirúrgico de download do Resumo de Nets em .xlsm
+                # Alterado: Adicionado botão cirúrgico de download do Resumo de Nets em .xlsx
                 st.markdown("---")
                 output_nets = BytesIO()
                 with pd.ExcelWriter(output_nets, engine="openpyxl") as writer:
                     _nets_resumo.to_excel(writer, sheet_name="Resumo de Nets", index=False)
                 st.download_button(
-                    label="📥 Download Resumo de NETs (.xlsm)",
+                    label="📥 Download Resumo de NETs (.xlsx)",
                     data=output_nets.getvalue(),
-                    file_name="Resumo_de_Nets.xlsm",
+                    file_name="Resumo_de_Nets.xlsx",
                     mime="application/vnd.ms-excel.sheet.macroEnabled.12"
                 )
 
