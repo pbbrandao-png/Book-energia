@@ -14,8 +14,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Estilização customizada para os blocos de métricas
-st.markdown("""
+# Estilização customizada usando st.html para evitar o TypeError de validação do Markdown
+st.html("""
 <style>
     [data-testid="stMetricValue"] {
         font-size: 24px;
@@ -25,7 +25,7 @@ st.markdown("""
         color: white;
     }
 </style>
-""", unsafe_with_html=True)
+""")
 
 # ==========================================
 # SIDEBAR - CONFIGURAÇÕES E FLAGS
@@ -139,7 +139,6 @@ if uploaded_file:
             )
 
         with col_dl2:
-            # Alterado o download do Resumo de Nets para .xlsm conforme solicitado
             st.download_button(
                 label="📥 Baixar Resumo de Nets (.xlsm)",
                 data=processed_data, 
