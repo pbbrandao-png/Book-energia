@@ -6,7 +6,7 @@
 # V17: + Contraparte Razão Social | highlight amarelo Parte==Contraparte | flag ocultar zerados
 # V20: + Otimização massiva de performance + Regra de ignorar Intraportfólio/Zerados nas tabelas de erro
 # V21: + Remoção total de rateios (Auto-referência)
-# V22: + Identificação e Filtro de Varejistas (MATRIX VAR / BISMUT VAR) + Correção de Escopo de 'nets'
+# V22: + Identificação e Filtro de Varejistas (MATRIX VAR / BISMUT VAR) + Correção de Escopo de 'nets' + Correção de Sintaxe no rename
 
 import streamlit as st
 import pandas as pd
@@ -21,6 +21,7 @@ pd.set_option("styler.render.max_elements", 2000000)
 BOLETAS_ACR = {
     122387, 122389, 122391, 122393, 122395, 122397, 122399, 122401,
     144795, 144797, 144799, 148084, 148088, 148090, 148092, 148518,
+    149316, 149318, 149320, 149322, 149324,
 }
 
 
@@ -162,7 +163,7 @@ st.sidebar.markdown("---")
 
 st.title("📊 Book Energia")
 
-arquivo = st.file_uploader("Selecione a RelPers", type=["xlsx", "xlsx"])
+arquivo = st.file_uploader("Selecione a RelPers", type=["xlsx"])
 arquivo_mes_anterior = st.file_uploader("Selecione a planilha Mês Anterior", type=["xlsx"])
 zip_matrix = st.file_uploader("Selecione o ZIP Matrix", type=["zip"])
 zip_bismut = st.file_uploader("Selecione o ZIP Bismut", type=["zip"])
@@ -476,8 +477,8 @@ if arquivo is not None:
         base.loc[_diff_global > _tol, "Check Volume Global"] = "Book maior"
         base.loc[_diff_global < -_tol, "Check Volume Global"] = "CCEE maior"
 
-        # ── CRIAÇÃO DO DATAFRAME 'nets' (MOVIDO PARA O ESCOPO GLOBAL DOS MENUS) ──
-        compras_net = base[base["Operação"] == "Compra"].groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume (MWh)"].sum().rename(columns={"Volume (MWh)"]: "Compra (MWh)"})
+        # ── CRIAÇÃO DO DATAFRAME 'nets' (CORRIGIDO E NO ESCOPO GLOBAL) ──
+        compras_net = base[base["Operação"] == "Compra"].groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume (MWh)"].sum().rename(columns={"Volume (MWh)": "Compra (MWh)"})
         vendas_net = base[base["Operação"] == "Venda"].groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume (MWh)"].sum().rename(columns={"Volume (MWh)": "Venda (MWh)"})
         nets = compras_net.merge(vendas_net, on=["Parte", "Contraparte", "Submercado", "Tipo de Energia"], how="inner")
 
