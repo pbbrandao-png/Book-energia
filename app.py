@@ -181,6 +181,10 @@ if arquivo is not None:
             mask_rateio_duplicado = (df["Codigo_WBC"].astype(str).str.strip() == df["Numero_referencia_contrato"].astype(str).str.strip()) & (df["Rateio"].astype(str).str.strip().str.upper() == "SIM")
             df = df[~mask_rateio_duplicado].reset_index(drop=True)
 
+        # ── INCLUSÃO: GARANTIR ORDENAÇÃO CRESCENTE POR BOLETA (NUMÉRICA) ──
+        if "Codigo_WBC" in df.columns:
+            df = df.iloc[pd.to_numeric(df["Codigo_WBC"], errors="coerce").argsort()].reset_index(drop=True)
+
         horas_mes = {
             1: 744, 2: 672, 3: 744, 4: 720, 5: 744, 6: 720,
             7: 744, 8: 744, 9: 720, 10: 744, 11: 720, 12: 744
