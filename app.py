@@ -181,9 +181,12 @@ if arquivo is not None:
             mask_rateio_duplicado = (df["Codigo_WBC"].astype(str).str.strip() == df["Numero_referencia_contrato"].astype(str).str.strip()) & (df["Rateio"].astype(str).str.strip().str.upper() == "SIM")
             df = df[~mask_rateio_duplicado].reset_index(drop=True)
 
-        # ── INCLUSÃO: GARANTIR ORDENAÇÃO CRESCENTE POR BOLETA (NUMÉRICA) ──
+        # ── INCLUSÃO: GARANTIR ORDENAÇÃO CRESCENTE E REMOVER BOLETAS DUPLICADAS ──
         if "Codigo_WBC" in df.columns:
+            # Ordena de forma crescente
             df = df.iloc[pd.to_numeric(df["Codigo_WBC"], errors="coerce").argsort()].reset_index(drop=True)
+            # NOVO: Remove boletas duplicadas mantendo sempre apenas a primeira ocorrência
+            df = df.drop_duplicates(subset=["Codigo_WBC"], keep="first").reset_index(drop=True)
 
         horas_mes = {
             1: 744, 2: 672, 3: 744, 4: 720, 5: 744, 6: 720,
@@ -260,12 +263,12 @@ if arquivo is not None:
             total_vendas = len(base[base['Operação'].str.upper() == 'VENDA'])
 
             col_metric1, col_metric2, col_metric3 = st.columns(3)
-            col_metric1.metric(label="Total de Contratos (Sem Rateios)", value=total_contratos)
+            col_metric1.metric(label="Total de Contratos (Sem Rateios/Duplicadas)", value=total_contratos)
             col_metric2.metric(label="Contratos de Compra 📥", value=total_compras)
             col_metric3.metric(label="Contratos de Venda 📤", value=total_vendas)
             st.markdown("---")
 
-            # Alterado: Bloco unificado de flags, trazendo a flag Zerar InterCompany para cá
+            # Bloco unificado de flags, trazendo a flag Zerar InterCompany para cá
             col_flag1, col_flag2, col_flag3 = st.columns(3)
             with col_flag1: flag_mesmo_titular = st.toggle("🟡 Ocultar IntraPortifólio Visualmente", value=True)
             with col_flag2: flag_ocultar_zerados = st.toggle("🚫 Ocultar contratos zerados (Volume MWh = 0)", value=False)
@@ -799,7 +802,6 @@ if arquivo is not None:
 
                 st.session_state["boletas_efetivadas"] = boletas_efetivadas
 
-                # Alterado: Adicionado botão cirúrgico de download do Resumo de Nets em .xlsx
                 st.markdown("---")
                 output_nets = BytesIO()
                 with pd.ExcelWriter(output_nets, engine="openpyxl") as writer:
