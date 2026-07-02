@@ -6,7 +6,7 @@
 # V17: + Contraparte Razão Social | highlight amarelo Parte==Contraparte | flag ocultar zerados
 # V20: + Otimização massiva de performance + Regra de ignorar Intraportfólio/Zerados nas tabelas de erro
 # V21: + Remoção total de rateios (Auto-referência)
-# V22: + Identificação e Filtro de Varejistas (MATRIX VAR / BISMUT VAR)
+# V22: + Identificação e Filtro de Varejistas (MATRIX VAR / BISMUT VAR) + Correção Bug Comprapor
 
 import streamlit as st
 import pandas as pd
@@ -131,12 +131,11 @@ def aplicar_zerar_intercompany(base: pd.DataFrame):
     Recebe uma cópia da Base Conferência e zera Volume (MWh) e Volume MWm
     dos contratos InterCompany, conforme regra:
 
-    - Parte pertence a _PARTES_INTERCOMPANY
-    - Contraparte (sigla CCEE) começa com "MATRIX"
-    - MAS NÃO começa com "MATRIX VAR"
+    - Parte belongs to _PARTES_INTERCOMPANY
+    - Contraparte (sigla CCEE) starts with "MATRIX"
+    - BUT DOES NOT start with "MATRIX VAR"
 
     Retorna (base_modificada, mask_intercompany).
-    A base original nunca é alterada — passar sempre uma cópia.
     """
     base = base.copy()
 
@@ -184,9 +183,7 @@ if arquivo is not None:
 
         # ── INCLUSÃO: GARANTIR ORDENAÇÃO CRESCENTE E REMOVER BOLETAS DUPLICADAS ──
         if "Codigo_WBC" in df.columns:
-            # Ordena de forma crescente
             df = df.iloc[pd.to_numeric(df["Codigo_WBC"], errors="coerce").argsort()].reset_index(drop=True)
-            # NOVO: Remove boletas duplicadas mantendo sempre apenas a primeira ocorrência
             df = df.drop_duplicates(subset=["Codigo_WBC"], keep="first").reset_index(drop=True)
 
         horas_mes = {
@@ -281,18 +278,15 @@ if arquivo is not None:
             col_metric3.metric(label="Contratos de Venda 📤", value=total_vendas)
             st.markdown("---")
 
-            # Bloco unificado de flags, trazendo a flag Zerar InterCompany para cá
             col_flag1, col_flag2, col_flag3 = st.columns(3)
             with col_flag1: flag_mesmo_titular = st.toggle("🟡 Ocultar IntraPortifólio Visualmente", value=True)
             with col_flag2: flag_ocultar_zerados = st.toggle("🚫 Ocultar contratos zerados (Volume MWh = 0)", value=False)
             with col_flag3: flag_zerar_intercompany = st.toggle("🏢 Zerar InterCompany", value=False)
 
-            # ── ZERAR INTERCOMPANY (opcional) ────────────────────────────────────────
             base_original = base.copy()
             mask_intercompany = pd.Series(False, index=base.index)
             if flag_zerar_intercompany:
                 base, mask_intercompany = aplicar_zerar_intercompany(base)
-            # ── FIM ZERAR INTERCOMPANY ────────────────────────────────────────────────
 
             if csvs_disponiveis:
                 BISMUT_NOME_UPPER = "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A."
@@ -324,7 +318,6 @@ if arquivo is not None:
 
                 base["Contrato CliqCCEE"] = base.apply(calcular_contrato_cliqccee_fast, axis=1).astype(str)
 
-            # ── COLUNA: Volume Book ──────────────────────────────────────────────────
             _vol_mwm_num = pd.to_numeric(base["Volume MWm"], errors="coerce")
             _mask_valido_book = _vol_mwm_num.notna() & (base["Volume MWm"].astype(str).str.strip() != "-")
             _df_book = base[["Contrato CliqCCEE"]].copy()
@@ -332,7 +325,6 @@ if arquivo is not None:
             _soma_book = _df_book.groupby("Contrato CliqCCEE")["_vol_num"].transform("sum")
             base["Volume Book"] = _soma_book
 
-            # ── CÁLCULO DAS COLUNAS DE MODULAÇÃO BOOK E CCEE ──────────────────
             _vol_book_num = pd.to_numeric(base["Volume Book"], errors="coerce").fillna(0.0)
             _num_mod_min = pd.to_numeric(base["% Modulação Mínima"], errors="coerce").fillna(0.0)
             _num_mod_max = pd.to_numeric(base["% Modulação Máxima"], errors="coerce").fillna(0.0)
@@ -526,7 +518,6 @@ if arquivo is not None:
             with col_f5: filtro_contraparte = st.text_input("Contraparte")
             with col_f6: filtro_boleta = st.text_input("Boleta")
 
-            # ── NOVO FILTRO: MULTISELECT PARA VAREJISTA ──
             col_f7, _, _ = st.columns(3)
             with col_f7: filtro_varejista = st.multiselect("Varejista", options=sorted(base_exibicao["Varejista"].unique()), default=[])
 
@@ -586,7 +577,7 @@ if arquivo is not None:
             with pd.ExcelWriter(output, engine="openpyxl") as writer: base_download.to_excel(writer, sheet_name="Base Conferência", index=False)
             st.download_button("📥 Download Base Conferência", data=output.getvalue(), file_name="Base_Conferencia.xlsx")
 
-            # ── RESUMO DE NETs ────────────────────────────────────────────────────────
+            # ── RESUMO DE NETs (AQUI ESTAVA O ERRO DE DIGITAÇÃO DE COMPRAPOR) ───────────────────
             with st.expander("📋 Resumo de NETs", expanded=False):
                 mes_ref_net = int(df["Mes"].dropna().iloc[0])
                 text_horas_net = horas_mes.get(mes_ref_net, 744)
@@ -649,10 +640,11 @@ if arquivo is not None:
 
                 if _dfs_ccee_net:
                     _df_ccee_all = pd.concat(_dfs_ccee_net, ignore_index=True)
+                    # CORRIGIDO: de 'SIGLA_PERFIL_COMPRAPOR' para 'SIGLA_PERFIL_COMPRADOR'
                     _idx_cliq = (
                         _df_ccee_all
                         .groupby(
-                            ["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRAPOR", "SUBMERCADO_ENTREGA"],
+                            ["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA"],
                             as_index=False
                         )["MWmedio"]
                         .sum()
@@ -831,7 +823,7 @@ if arquivo is not None:
                     mime="application/vnd.ms-excel.sheet.macroEnabled.12"
                 )
 
-            # ── CONFERÊNCIA AVANÇADA DE DIVERGÊNCIAS (MÚLTIPLOS CHECKS UNIFICADOS) ──
+            # ── CONFERÊNCIA AVANÇADA DE DIVERGÊNCIAS ──
             if csvs_disponiveis:
                 st.markdown("---")
                 lista_divergencias = []
