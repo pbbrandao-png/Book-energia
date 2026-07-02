@@ -92,6 +92,36 @@ def _extrair_codigo_ponto(valor):
     return m.group(1).strip() if m else None
 
 
+def _ler_planilha_modelagem_ativo(arquivo):
+    """Lê a planilha 'Exportação Solicitação Modelagem Ativo' (equivalente à aba SIGA), detectando
+    automaticamente a linha de cabeçalho (procura pela linha que contém 'Nº do Ativo'), pois esse
+    arquivo é exportado com linhas de título/filtro variáveis antes do cabeçalho real."""
+    nome = getattr(arquivo, "name", "") or ""
+    engine = "xlrd" if nome.lower().endswith(".xls") else None
+
+    try:
+        bruto = pd.read_excel(arquivo, header=None, nrows=30, engine=engine)
+    except Exception:
+        arquivo.seek(0)
+        bruto = pd.read_excel(arquivo, header=None, nrows=30)
+
+    linha_cabecalho = None
+    for i in range(len(bruto)):
+        if bruto.iloc[i].astype(str).str.strip().eq('Nº do Ativo').any():
+            linha_cabecalho = i
+            break
+
+    if linha_cabecalho is None:
+        linha_cabecalho = 0
+
+    arquivo.seek(0)
+    try:
+        return pd.read_excel(arquivo, header=linha_cabecalho, engine=engine)
+    except Exception:
+        arquivo.seek(0)
+        return pd.read_excel(arquivo, header=linha_cabecalho)
+
+
 def carregar_mapa_parcela_carga(arquivo_ponto, arquivo_boletas, arquivo_modelagem_ativo=None):
     """Recria a lógica da coluna 'PARCELA DE CARGA' do Book (VLOOKUP na aba 'varejistas dri'):
     Ponto -> Boleta (via arquivo Boletas, equivalente à aba BILLING) e Boleta -> Cód. Parcela - Carga
@@ -121,15 +151,18 @@ def carregar_mapa_parcela_carga(arquivo_ponto, arquivo_boletas, arquivo_modelage
         df_ponto['_BOLETA'] = df_ponto['_CODIGO_PONTO'].map(dict_billing)
 
         if arquivo_modelagem_ativo is not None and 'Nº Seq Ativo' in df_ponto.columns:
-            df_modelagem = pd.read_excel(arquivo_modelagem_ativo, header=11)
-            if 'Nº do Ativo' in df_modelagem.columns and 'Status' in df_modelagem.columns:
-                ativos_concluidos = set(
-                    pd.to_numeric(
-                        df_modelagem.loc[df_modelagem['Status'].astype(str).str.strip() == 'Concluída', 'Nº do Ativo'],
-                        errors='coerce'
-                    ).dropna()
-                )
-                df_ponto = df_ponto[pd.to_numeric(df_ponto['Nº Seq Ativo'], errors='coerce').isin(ativos_concluidos)]
+            try:
+                df_modelagem = _ler_planilha_modelagem_ativo(arquivo_modelagem_ativo)
+                if df_modelagem is not None and 'Nº do Ativo' in df_modelagem.columns and 'Status' in df_modelagem.columns:
+                    ativos_concluidos = set(
+                        pd.to_numeric(
+                            df_modelagem.loc[df_modelagem['Status'].astype(str).str.strip() == 'Concluída', 'Nº do Ativo'],
+                            errors='coerce'
+                        ).dropna()
+                    )
+                    df_ponto = df_ponto[pd.to_numeric(df_ponto['Nº Seq Ativo'], errors='coerce').isin(ativos_concluidos)]
+            except Exception as e:
+                st.warning(f"Não foi possível aplicar o filtro da planilha Exportação Solicitação Modelagem Ativo (Parcela de Carga seguirá sem esse filtro): {e}")
 
         df_ponto = df_ponto.dropna(subset=['_BOLETA'])
         df_ponto = df_ponto.drop_duplicates(subset=['_BOLETA'], keep='first')
