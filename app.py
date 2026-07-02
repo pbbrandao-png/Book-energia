@@ -186,8 +186,13 @@ def carregar_mapa_situacao_pagamento(arquivo_faturamento):
         if arquivo_faturamento is None:
             return mapa_situacao, mapa_pagamento
 
-        df_fat = pd.read_excel(arquivo_faturamento, header=5)
+        try:
+            df_fat = pd.read_excel(arquivo_faturamento, header=5, usecols="A:L")
+        except Exception:
+            arquivo_faturamento.seek(0)
+            df_fat = pd.read_excel(arquivo_faturamento, header=5)
         df_fat.columns = df_fat.columns.astype(str).str.strip()
+        df_fat = df_fat.loc[:, ~df_fat.columns.str.startswith("Unnamed")]
 
         if 'Boleta' not in df_fat.columns:
             return mapa_situacao, mapa_pagamento
