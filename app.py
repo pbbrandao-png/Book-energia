@@ -1,4 +1,4 @@
-# APP_BOOK_ENERGIA_V21 - VERSÃO DE ALTA PERFORMANCE (OTIMIZADA)
+# APP_BOOK_ENERGIA_V22 - VERSÃO DE ALTA PERFORMANCE (OTIMIZADA)
 # Coluna "Contrato CliqCCEE" via CSVs extraídos dos ZIPs Matrix e Bismut
 # Boletas ACR (lista fixa) → ccear_q (extraído do ZIP Matrix)
 # Matrix (não-Bismut, não-ACR) → cceal_firme + cbr_mercado_proprio (ZIP Matrix)
@@ -6,6 +6,7 @@
 # V17: + Contraparte Razão Social | highlight amarelo Parte==Contraparte | flag ocultar zerados
 # V20: + Otimização massiva de performance + Regra de ignorar Intraportfólio/Zerados nas tabelas de erro
 # V21: + Remoção total de rateios (Auto-referência)
+# V22: + Identificação e Filtro de Varejistas (MATRIX VAR / BISMUT VAR)
 
 import streamlit as st
 import pandas as pd
@@ -254,6 +255,18 @@ if arquivo is not None:
         base["Comprador"]                      = df["Sigla_CCEE_comprador"].fillna("-").astype(str)
         base["Contrato CliqCCEE"]              = "-"
 
+        # ── LOGICA PARA DEFINIR SE É VAREJISTA (MATRIX VAR OU BISMUT VAR) ──
+        p_upper = base["Parte"].astype(str).str.strip().str.upper()
+        c_upper = base["Contraparte"].astype(str).str.strip().str.upper()
+        
+        mask_varejista = (
+            p_upper.str.startswith("MATRIX VAR") | 
+            p_upper.str.startswith("BISMUT VAR") | 
+            c_upper.str.startswith("MATRIX VAR") | 
+            c_upper.str.startswith("BISMUT VAR")
+        )
+        base["Varejista"] = np.where(mask_varejista, "Sim", "Não")
+
         csvs_disponiveis = any([not df_ccee_matrix.empty, not df_ccee_bismut.empty, not df_ccee_acr.empty])
 
         if pagina == "Base Conferência":
@@ -423,7 +436,7 @@ if arquivo is not None:
                 base.loc[_mask_tipo_calc & _mask_div_tipo, "Check Modulação"] = "Divergente"
 
             _ordem_colunas = [
-                "BOLETA", "Operação", "Tipo de Energia", "Parte", "Contraparte Razão Social", "Contraparte",
+                "BOLETA", "Operação", "Varejista", "Tipo de Energia", "Parte", "Contraparte Razão Social", "Contraparte",
                 "CP/LP", "CNPJ CONTRAPARTE", "Submercado", "Volume (MWh)", "Volume MWm", "CliqCCEE Paradigma",
                 "Modulação WBC", "% Modulação Mínima", "Modulação Mínima", "Modulação Mínima CCEE", "Check Modulação Mínima",
                 "% Modulação Máxima", "Modulação Máxima", "Modulação Máxima CCEE", "Check Modulação Máxima",
@@ -513,12 +526,17 @@ if arquivo is not None:
             with col_f5: filtro_contraparte = st.text_input("Contraparte")
             with col_f6: filtro_boleta = st.text_input("Boleta")
 
+            # ── NOVO FILTRO: MULTISELECT PARA VAREJISTA ──
+            col_f7, _, _ = st.columns(3)
+            with col_f7: filtro_varejista = st.multiselect("Varejista", options=sorted(base_exibicao["Varejista"].unique()), default=[])
+
             if filtro_operacao: base_exibicao = base_exibicao[base_exibicao["Operação"].isin(filtro_operacao)]
             if filtro_status: base_exibicao = base_exibicao[base_exibicao["Contrato CliqCCEE"].astype(str).isin(filtro_status)]
             if filtro_submercado: base_exibicao = base_exibicao[base_exibicao["Submercado"].astype(str).isin(filtro_submercado)]
             if filtro_parte: base_exibicao = base_exibicao[base_exibicao["Parte"].astype(str).str.contains(filtro_parte, case=False, na=False)]
             if filtro_contraparte: base_exibicao = base_exibicao[base_exibicao["Contraparte"].astype(str).str.contains(filtro_contraparte, case=False, na=False)]
             if filtro_boleta: base_exibicao = base_exibicao[base_exibicao["BOLETA"].astype(str).str.contains(filtro_boleta, case=False, na=False)]
+            if filtro_varejista: base_exibicao = base_exibicao[base_exibicao["Varejista"].isin(filtro_varejista)]
 
             if flag_ocultar_zerados: base_exibicao = base_exibicao[base_exibicao["Volume (MWh)"] != 0.0]
 
@@ -532,7 +550,7 @@ if arquivo is not None:
             st.caption(f"{len(base_exibicao):,} registros encontrados")
 
             colunas_texto = [
-                "BOLETA", "Operação", "Tipo de Energia", "Parte", "Contraparte Razão Social",
+                "BOLETA", "Operação", "Varejista", "Tipo de Energia", "Parte", "Contraparte Razão Social",
                 "Contraparte", "CP/LP", "CNPJ CONTRAPARTE", "Submercado", "CliqCCEE Paradigma",
                 "Contrato CliqCCEE mês anterior", "Contrato CliqCCEE", "Modulação WBC",
                 "% Modulação Mínima", "% Modulação Máxima", "Modulação Mínima", "Modulação Máxima",
@@ -634,7 +652,7 @@ if arquivo is not None:
                     _idx_cliq = (
                         _df_ccee_all
                         .groupby(
-                            ["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA"],
+                            ["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRAPOR", "SUBMERCADO_ENTREGA"],
                             as_index=False
                         )["MWmedio"]
                         .sum()
