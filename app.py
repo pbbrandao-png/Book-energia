@@ -355,7 +355,7 @@ if arquivo is not None:
 
         # ── PARCELA DE CARGA (equivalente ao VLOOKUP na aba 'varejistas dri' do Book) ──
         base["Parcela de Carga"] = pd.to_numeric(base["BOLETA"], errors="coerce").map(mapa_parcela_carga)
-        base["Parcela de Carga"] = base["Parcela de Carga"].fillna("-")
+        base["Parcela de Carga"] = base["Parcela de Carga"].apply(lambda v: str(int(v)) if pd.notna(v) else "-")
 
         # ── LOGICA PARA DEFINIR SE É VAREJISTA (MATRIX VAR OU BISMUT VAR) ──
         p_upper = base["Parte"].astype(str).str.strip().str.upper()
