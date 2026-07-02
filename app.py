@@ -176,6 +176,50 @@ def carregar_mapa_parcela_carga(arquivo_ponto, arquivo_boletas, arquivo_modelage
     return mapa
 
 
+def carregar_mapa_situacao_pagamento(arquivo_faturamento):
+    """Recria a lógica das colunas 'Situação pagamento' e 'Pagamento' do Book (VLOOKUP na 'MAPA FINANCEIRO'),
+    usando a planilha 'Faturamento em Aberto' como fonte: BOLETA -> Situação pagamento (Pago / Em Aberto)
+    e BOLETA -> Pagamento (Data Vencimento)."""
+    mapa_situacao = {}
+    mapa_pagamento = {}
+    try:
+        if arquivo_faturamento is None:
+            return mapa_situacao, mapa_pagamento
+
+        try:
+            df_fat = pd.read_excel(arquivo_faturamento, header=5, usecols="A:L")
+        except Exception:
+            arquivo_faturamento.seek(0)
+            df_fat = pd.read_excel(arquivo_faturamento, header=5)
+        df_fat.columns = df_fat.columns.astype(str).str.strip()
+        df_fat = df_fat.loc[:, ~df_fat.columns.str.startswith("Unnamed")]
+
+        if 'Boleta' not in df_fat.columns:
+            return mapa_situacao, mapa_pagamento
+
+        df_fat = df_fat.dropna(subset=['Boleta'])
+        df_fat['Boleta'] = pd.to_numeric(df_fat['Boleta'], errors='coerce')
+        df_fat = df_fat.dropna(subset=['Boleta'])
+
+        if 'Saldo Parcela' in df_fat.columns:
+            saldo_num = pd.to_numeric(df_fat['Saldo Parcela'], errors='coerce').fillna(0.0)
+        else:
+            saldo_num = pd.Series(0.0, index=df_fat.index)
+
+        df_fat['_SITUACAO'] = np.where(saldo_num > 0, 'Em Aberto', 'Pago')
+
+        df_fat = df_fat.drop_duplicates(subset=['Boleta'], keep='last')
+
+        mapa_situacao = dict(zip(df_fat['Boleta'], df_fat['_SITUACAO']))
+
+        if 'Data Vencimento' in df_fat.columns:
+            mapa_pagamento = dict(zip(df_fat['Boleta'], df_fat['Data Vencimento']))
+    except Exception:
+        mapa_situacao = {}
+        mapa_pagamento = {}
+    return mapa_situacao, mapa_pagamento
+
+
 def combiner_dfs(lista):
     validos = [df for df in lista if df is not None and not df.empty]
     if not validos:
@@ -252,7 +296,7 @@ def aplicar_zerar_intercompany(base: pd.DataFrame):
 # ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Book Energia", layout="wide")
 
-pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético", "Arquivos CCEE"])
+pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético"])
 st.sidebar.markdown("---")
 
 st.title("📊 Book Energia")
@@ -264,6 +308,7 @@ zip_bismut = st.file_uploader("Selecione o ZIP Bismut", type=["zip"])
 arquivo_ponto_medicao = st.file_uploader("Selecione a planilha Ponto de Medição - MATRIX", type=["xlsx", "xls"])
 arquivo_boletas = st.file_uploader("Selecione a planilha Boletas", type=["xlsx", "xls"])
 arquivo_modelagem_ativo = st.file_uploader("Selecione a planilha Exportação Solicitação Modelagem Ativo", type=["xlsx", "xls"])
+arquivo_faturamento_aberto = st.file_uploader("Selecione a planilha Faturamento em Aberto", type=["xlsx", "xls"])
 
 if arquivo is not None:
     try:
@@ -297,6 +342,9 @@ if arquivo is not None:
 
         # Carrega o mapa BOLETA -> Parcela de Carga a partir das planilhas auxiliares na pasta "anexos"
         mapa_parcela_carga = carregar_mapa_parcela_carga(arquivo_ponto_medicao, arquivo_boletas, arquivo_modelagem_ativo)
+
+        # Carrega os mapas BOLETA -> Situação pagamento / Pagamento a partir da planilha Faturamento em Aberto
+        mapa_situacao_pagamento, mapa_pagamento = carregar_mapa_situacao_pagamento(arquivo_faturamento_aberto)
 
         # Extração e Combinação super rápida
         csvs_matrix = extrair_csvs_zip(zip_matrix)
@@ -357,6 +405,12 @@ if arquivo is not None:
         base["Parcela de Carga"] = pd.to_numeric(base["BOLETA"], errors="coerce").map(mapa_parcela_carga)
         base["Parcela de Carga"] = base["Parcela de Carga"].apply(lambda v: str(int(v)) if pd.notna(v) else "-")
 
+        # ── SITUAÇÃO PAGAMENTO E PAGAMENTO (equivalente ao VLOOKUP na 'MAPA FINANCEIRO' do Book) ──
+        _boleta_num = pd.to_numeric(base["BOLETA"], errors="coerce")
+        base["Situação pagamento"] = _boleta_num.map(mapa_situacao_pagamento).fillna("Pago")
+        base["Pagamento"] = _boleta_num.map(mapa_pagamento)
+        base["Pagamento"] = base["Pagamento"].apply(lambda v: v.strftime("%d/%m/%Y") if isinstance(v, (pd.Timestamp,)) else ("-" if pd.isna(v) else str(v)))
+
         # ── LOGICA PARA DEFINIR SE É VAREJISTA (MATRIX VAR OU BISMUT VAR) ──
         p_upper = base["Parte"].astype(str).str.strip().str.upper()
         c_upper = base["Contraparte"].astype(str).str.strip().str.upper()
@@ -407,6 +461,13 @@ if arquivo is not None:
         _df_book["_vol_num"] = _vol_mwm_num.where(_mask_valido_book, 0.0)
         _soma_book = _df_book.groupby("Contrato CliqCCEE")["_vol_num"].transform("sum")
         base["Volume Book"] = _soma_book
+
+        # ── SITUAÇÃO PGTO (equivalente a =IF(SUMIFS(N:N,V:V,V10,CC:CC,"Pago")=BY10,"Pago","-") do Book) ──
+        _df_pgto = base[["Contrato CliqCCEE", "Situação pagamento"]].copy()
+        _df_pgto["_vol_num"] = _vol_mwm_num.where(_mask_valido_book, 0.0)
+        _df_pgto["_vol_pago"] = _df_pgto["_vol_num"].where(_df_pgto["Situação pagamento"] == "Pago", 0.0)
+        _soma_pago = _df_pgto.groupby("Contrato CliqCCEE")["_vol_pago"].transform("sum")
+        base["SITUAÇÃO PGTO"] = np.where(np.isclose(_soma_pago, base["Volume Book"], atol=1e-6), "Pago", "-")
 
         _vol_book_num = pd.to_numeric(base["Volume Book"], errors="coerce").fillna(0.0)
         _num_mod_min = pd.to_numeric(base["% Modulação Mínima"], errors="coerce").fillna(0.0)
@@ -518,7 +579,7 @@ if arquivo is not None:
             "Modulação CCEE", "Check Modulação",
             "Contrato CliqCCEE mês anterior", "Vendedor", "Comprador", "Contrato CliqCCEE",
             "Volume Book", "Volume CCEE", "Check Volume", "Volume Global", "Volume Global CCEE", "Check Volume Global",
-            "Parcela de Carga"
+            "Parcela de Carga", "SITUAÇÃO PGTO", "Situação pagamento", "Pagamento"
         ]
         base = base[[c for c in _ordem_colunas if c in base.columns]]
 
@@ -618,8 +679,10 @@ if arquivo is not None:
             with col_f5: filtro_contraparte = st.text_input("Contraparte")
             with col_f6: filtro_boleta = st.text_input("Boleta")
 
-            col_f7, _, _ = st.columns(3)
+            col_f7, col_f8, col_f9 = st.columns(3)
             with col_f7: filtro_varejista = st.multiselect("Varejista", options=sorted(base_exibicao["Varejista"].unique()), default=[])
+            with col_f8: filtro_situacao_pgto = st.multiselect("SITUAÇÃO PGTO", options=sorted(base_exibicao["SITUAÇÃO PGTO"].dropna().astype(str).unique()), default=[])
+            with col_f9: filtro_pagamento = st.multiselect("Pagamento", options=sorted(base_exibicao["Pagamento"].dropna().astype(str).unique()), default=[])
 
             # Aplicação dinâmica dos filtros
             if filtro_operacao: base_exibicao = base_exibicao[base_exibicao["Operação"].isin(filtro_operacao)]
@@ -629,6 +692,8 @@ if arquivo is not None:
             if filtro_contraparte: base_exibicao = base_exibicao[base_exibicao["Contraparte"].astype(str).str.contains(filtro_contraparte, case=False, na=False)]
             if filtro_boleta: base_exibicao = base_exibicao[base_exibicao["BOLETA"].astype(str).str.contains(filtro_boleta, case=False, na=False)]
             if filtro_varejista: base_exibicao = base_exibicao[base_exibicao["Varejista"].isin(filtro_varejista)]
+            if filtro_situacao_pgto: base_exibicao = base_exibicao[base_exibicao["SITUAÇÃO PGTO"].astype(str).isin(filtro_situacao_pgto)]
+            if filtro_pagamento: base_exibicao = base_exibicao[base_exibicao["Pagamento"].astype(str).isin(filtro_pagamento)]
 
             if flag_ocultar_zerados: base_exibicao = base_exibicao[base_exibicao["Volume (MWh)"] != 0.0]
 
@@ -659,7 +724,8 @@ if arquivo is not None:
                 "Contrato CliqCCEE mês anterior", "Contrato CliqCCEE", "Modulação WBC",
                 "% Modulação Mínima", "% Modulação Máxima", "Modulação Mínima", "Modulação Máxima",
                 "Modulação Mínima CCEE", "Modulação Máxima CCEE", "Check Modulação Mínima",
-                "Check Modulação Máxima", "Modulação CCEE", "Check Modulação", "Vendedor", "Comprador"
+                "Check Modulação Máxima", "Modulação CCEE", "Check Modulação", "Vendedor", "Comprador",
+                "SITUAÇÃO PGTO", "Situação pagamento", "Pagamento"
             ]
             for col in colunas_texto:
                 if col in base_exibicao.columns:
