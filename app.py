@@ -252,7 +252,8 @@ def aplicar_zerar_intercompany(base: pd.DataFrame):
 # ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Book Energia", layout="wide")
 
-pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético", "Arquivos CCEE"])
+# Aba "Arquivos CCEE" removida da lista abaixo
+pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético"])
 st.sidebar.markdown("---")
 
 st.title("📊 Book Energia")
@@ -911,7 +912,7 @@ if arquivo is not None:
                     _cols[9].write(_row["_quem_ajusta_nome"])
                     _cols[10].write(f"{_row['_compra_cliq']:.6f}")
                     _cols[11].write(f"{_row['_venda_cliq']:.6f}")
-                    _cols[12].write(f"{_status_icon} {_status}")
+                    _cols[12].write(_status_icon} {_status}")
 
                     if _novo_ef:
                         _mask_ef = (
