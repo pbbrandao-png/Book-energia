@@ -252,8 +252,7 @@ def aplicar_zerar_intercompany(base: pd.DataFrame):
 # ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Book Energia", layout="wide")
 
-# Menu de navegação sem a aba "Arquivos CCEE"
-pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético"])
+pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético", "Arquivos CCEE"])
 st.sidebar.markdown("---")
 
 st.title("📊 Book Energia")
@@ -296,7 +295,7 @@ if arquivo is not None:
         else:
             mapa_mes_anterior = {}
 
-        # Carrega o mapa BOLETA -> Parcela de Carga a partir das planilhas auxiliares
+        # Carrega o mapa BOLETA -> Parcela de Carga a partir das planilhas auxiliares na pasta "anexos"
         mapa_parcela_carga = carregar_mapa_parcela_carga(arquivo_ponto_medicao, arquivo_boletas, arquivo_modelagem_ativo)
 
         # Extração e Combinação super rápida
@@ -912,7 +911,7 @@ if arquivo is not None:
                     _cols[9].write(_row["_quem_ajusta_nome"])
                     _cols[10].write(f"{_row['_compra_cliq']:.6f}")
                     _cols[11].write(f"{_row['_venda_cliq']:.6f}")
-                    _cols[12].write(f"{_status_icon} {_status}")  # <-- Corrigido o erro de sintaxe anterior
+                    _cols[12].write(f"{_status_icon} {_status}")
 
                     if _novo_ef:
                         _mask_ef = (
