@@ -176,6 +176,44 @@ def carregar_mapa_parcela_carga(arquivo_ponto, arquivo_boletas, arquivo_modelage
     return mapa
 
 
+def carregar_mapa_relpers_301(zip_relpers):
+    """Extrai a planilha 'EXP301 (WBC)' do ZIP RelPers 301 e monta os mapas BOLETA -> Situacao_ERP e
+    BOLETA -> Data_Vencimento_ordem, equivalente à aba 'MAPA FINANCEIRO' do Book."""
+    mapa_situacao = {}
+    mapa_pagamento = {}
+    if zip_relpers is None:
+        return mapa_situacao, mapa_pagamento
+    try:
+        with zipfile.ZipFile(zip_relpers) as zf:
+            nome_xlsx = None
+            for nome in zf.namelist():
+                if nome.lower().endswith('.xlsx'):
+                    nome_xlsx = nome
+                    break
+            if nome_xlsx is None:
+                return mapa_situacao, mapa_pagamento
+            with zf.open(nome_xlsx) as f:
+                df_301 = pd.read_excel(BytesIO(f.read()))
+        df_301.columns = df_301.columns.astype(str).str.strip()
+
+        if 'Codigo_WBC' not in df_301.columns:
+            return mapa_situacao, mapa_pagamento
+
+        df_301 = df_301.dropna(subset=['Codigo_WBC'])
+        df_301['Codigo_WBC'] = pd.to_numeric(df_301['Codigo_WBC'], errors='coerce')
+        df_301 = df_301.dropna(subset=['Codigo_WBC'])
+        df_301 = df_301.drop_duplicates(subset=['Codigo_WBC'], keep='last')
+
+        if 'Situacao_ERP' in df_301.columns:
+            mapa_situacao = dict(zip(df_301['Codigo_WBC'], df_301['Situacao_ERP']))
+        if 'Data_Vencimento_ordem' in df_301.columns:
+            mapa_pagamento = dict(zip(df_301['Codigo_WBC'], df_301['Data_Vencimento_ordem']))
+    except Exception:
+        mapa_situacao = {}
+        mapa_pagamento = {}
+    return mapa_situacao, mapa_pagamento
+
+
 def carregar_mapa_situacao_pagamento(arquivo_faturamento):
     """Recria a lógica das colunas 'Situação pagamento' e 'Pagamento' do Book (VLOOKUP na 'MAPA FINANCEIRO'),
     usando a planilha 'Faturamento em Aberto' como fonte: BOLETA -> Situação pagamento (Pago / Em Aberto)
@@ -309,6 +347,7 @@ arquivo_ponto_medicao = st.file_uploader("Selecione a planilha Ponto de Mediçã
 arquivo_boletas = st.file_uploader("Selecione a planilha Boletas", type=["xlsx", "xls"])
 arquivo_modelagem_ativo = st.file_uploader("Selecione a planilha Exportação Solicitação Modelagem Ativo", type=["xlsx", "xls"])
 arquivo_faturamento_aberto = st.file_uploader("Selecione a planilha Faturamento em Aberto", type=["xlsx", "xls"])
+zip_relpers_301 = st.file_uploader("Selecione o ZIP RelPers 301 (Mapa Financeiro)", type=["zip"])
 
 if arquivo is not None:
     try:
@@ -345,6 +384,12 @@ if arquivo is not None:
 
         # Carrega os mapas BOLETA -> Situação pagamento / Pagamento a partir da planilha Faturamento em Aberto
         mapa_situacao_pagamento, mapa_pagamento = carregar_mapa_situacao_pagamento(arquivo_faturamento_aberto)
+
+        # Carrega os mapas BOLETA -> Situacao_ERP / Data_Vencimento_ordem a partir do ZIP RelPers 301 (Mapa Financeiro)
+        # e sobrepõe ao mapa do Faturamento em Aberto, já que o RelPers 301 é a fonte oficial (equivalente à aba MAPA FINANCEIRO)
+        mapa_situacao_301, mapa_pagamento_301 = carregar_mapa_relpers_301(zip_relpers_301)
+        mapa_situacao_pagamento.update(mapa_situacao_301)
+        mapa_pagamento.update(mapa_pagamento_301)
 
         # Extração e Combinação super rápida
         csvs_matrix = extrair_csvs_zip(zip_matrix)
