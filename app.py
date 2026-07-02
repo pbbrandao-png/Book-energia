@@ -486,15 +486,6 @@ if arquivo is not None:
 
         if pagina == "Base Conferência":
             st.subheader("Base Conferência")
-            total_contratos = len(base)
-            total_compras = len(base[base['Operação'].str.upper() == 'COMPRA'])
-            total_vendas = len(base[base['Operação'].str.upper() == 'VENDA'])
-
-            col_metric1, col_metric2, col_metric3 = st.columns(3)
-            col_metric1.metric(label="Total de Contratos (Sem Rateios/Duplicadas)", value=total_contratos)
-            col_metric2.metric(label="Contratos de Compra 📥", value=total_compras)
-            col_metric3.metric(label="Contratos de Venda 📤", value=total_vendas)
-            st.markdown("---")
 
             col_flag1, col_flag2, col_flag3 = st.columns(3)
             with col_flag1: flag_mesmo_titular = st.toggle("🟡 Ocultar IntraPortifólio Visualmente", value=True)
@@ -525,6 +516,7 @@ if arquivo is not None:
             col_f7, _, _ = st.columns(3)
             with col_f7: filtro_varejista = st.multiselect("Varejista", options=sorted(base_exibicao["Varejista"].unique()), default=[])
 
+            # Aplicação dinâmica dos filtros
             if filtro_operacao: base_exibicao = base_exibicao[base_exibicao["Operação"].isin(filtro_operacao)]
             if filtro_status: base_exibicao = base_exibicao[base_exibicao["Contrato CliqCCEE"].astype(str).isin(filtro_status)]
             if filtro_submercado: base_exibicao = base_exibicao[base_exibicao["Submercado"].astype(str).isin(filtro_submercado)]
@@ -534,6 +526,18 @@ if arquivo is not None:
             if filtro_varejista: base_exibicao = base_exibicao[base_exibicao["Varejista"].isin(filtro_varejista)]
 
             if flag_ocultar_zerados: base_exibicao = base_exibicao[base_exibicao["Volume (MWh)"] != 0.0]
+
+            # ── ATUALIZAÇÃO DOS CONTADORES DE ACORDO COM O FILTRO ──
+            st.markdown("---")
+            total_contratos = len(base_exibicao)
+            total_compras = len(base_exibicao[base_exibicao['Operação'].str.upper() == 'COMPRA'])
+            total_vendas = len(base_exibicao[base_exibicao['Operação'].str.upper() == 'VENDA'])
+
+            col_metric1, col_metric2, col_metric3 = st.columns(3)
+            col_metric1.metric(label="Total de Contratos Filtrados", value=total_contratos)
+            col_metric2.metric(label="Contratos de Compra 📥", value=total_compras)
+            col_metric3.metric(label="Contratos de Venda 📤", value=total_vendas)
+            st.markdown("---")
 
             base_exibicao["Volume (MWh)"] = base_exibicao["Volume (MWh)"].map(lambda x: f"{x:.3f}" if isinstance(x, (int, float)) else x)
             base_exibicao["Volume MWm"]   = base_exibicao["Volume MWm"].map(lambda x: f"{x:.6f}" if isinstance(x, (int, float)) else x)
