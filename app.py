@@ -12,6 +12,7 @@ import streamlit as st
 import pandas as pd
 import zipfile
 import numpy as np
+import re
 from io import BytesIO
 
 # Configura o limite do Pandas Styler para evitar o erro de estouro de células devido ao aumento de colunas
@@ -80,6 +81,66 @@ def extrair_csvs_zip(zip_file):
     except Exception as e:
         st.warning(f"Erro ao ler ZIP: {e}")
     return result
+
+
+def _extrair_codigo_ponto(valor):
+    """Extrai o código do Ponto de Medição de dentro do texto 'Conteúdo Expressão Contábil Processada',
+    ex: 'MAX((ACL(GOBBVLENTR101));0)' -> 'GOBBVLENTR101' (mesma lógica da coluna N da aba 'varejistas dri')."""
+    if pd.isna(valor):
+        return None
+    m = re.search(r'ACL\((.*?)\)', str(valor))
+    return m.group(1).strip() if m else None
+
+
+def carregar_mapa_parcela_carga(arquivo_ponto, arquivo_boletas, arquivo_modelagem_ativo=None):
+    """Recria a lógica da coluna 'PARCELA DE CARGA' do Book (VLOOKUP na aba 'varejistas dri'):
+    Ponto -> Boleta (via arquivo Boletas, equivalente à aba BILLING) e Boleta -> Cód. Parcela - Carga
+    (via arquivo Ponto de Medição - MATRIX). Se o arquivo de Exportação Solicitação Modelagem Ativo
+    (equivalente à aba SIGA) for informado, usa-o para validar apenas os Ativos com solicitação
+    'Concluída', igual ao cruzamento feito no Book. Retorna um dicionário {BOLETA: Cód. Parcela - Carga}."""
+    mapa = {}
+    try:
+        if arquivo_ponto is None or arquivo_boletas is None:
+            return mapa
+
+        df_ponto = pd.read_excel(arquivo_ponto)
+        df_boletas = pd.read_excel(arquivo_boletas)
+
+        if 'Conteúdo Expressão Contábil Processada' not in df_ponto.columns or 'Cód. Parcela - Carga' not in df_ponto.columns:
+            return mapa
+        if 'Ponto de Medição' not in df_boletas.columns or 'Código' not in df_boletas.columns:
+            return mapa
+
+        dict_billing = dict(zip(
+            df_boletas['Ponto de Medição'].astype(str).str.strip(),
+            pd.to_numeric(df_boletas['Código'], errors='coerce')
+        ))
+
+        df_ponto = df_ponto.copy()
+        df_ponto['_CODIGO_PONTO'] = df_ponto['Conteúdo Expressão Contábil Processada'].apply(_extrair_codigo_ponto)
+        df_ponto['_BOLETA'] = df_ponto['_CODIGO_PONTO'].map(dict_billing)
+
+        if arquivo_modelagem_ativo is not None and 'Nº Seq Ativo' in df_ponto.columns:
+            df_modelagem = pd.read_excel(arquivo_modelagem_ativo, header=11)
+            if 'Nº do Ativo' in df_modelagem.columns and 'Status' in df_modelagem.columns:
+                ativos_concluidos = set(
+                    pd.to_numeric(
+                        df_modelagem.loc[df_modelagem['Status'].astype(str).str.strip() == 'Concluída', 'Nº do Ativo'],
+                        errors='coerce'
+                    ).dropna()
+                )
+                df_ponto = df_ponto[pd.to_numeric(df_ponto['Nº Seq Ativo'], errors='coerce').isin(ativos_concluidos)]
+
+        df_ponto = df_ponto.dropna(subset=['_BOLETA'])
+        df_ponto = df_ponto.drop_duplicates(subset=['_BOLETA'], keep='first')
+
+        mapa = dict(zip(
+            pd.to_numeric(df_ponto['_BOLETA'], errors='coerce'),
+            df_ponto['Cód. Parcela - Carga']
+        ))
+    except Exception:
+        mapa = {}
+    return mapa
 
 
 def combiner_dfs(lista):
@@ -167,6 +228,9 @@ arquivo = st.file_uploader("Selecione a RelPers", type=["xlsx"])
 arquivo_mes_anterior = st.file_uploader("Selecione a planilha Mês Anterior", type=["xlsx"])
 zip_matrix = st.file_uploader("Selecione o ZIP Matrix", type=["zip"])
 zip_bismut = st.file_uploader("Selecione o ZIP Bismut", type=["zip"])
+arquivo_ponto_medicao = st.file_uploader("Selecione a planilha Ponto de Medição - MATRIX", type=["xlsx", "xls"])
+arquivo_boletas = st.file_uploader("Selecione a planilha Boletas", type=["xlsx", "xls"])
+arquivo_modelagem_ativo = st.file_uploader("Selecione a planilha Exportação Solicitação Modelagem Ativo", type=["xlsx", "xls"])
 
 if arquivo is not None:
     try:
@@ -197,6 +261,9 @@ if arquivo is not None:
             mapa_mes_anterior = dict(zip(df_mes_anterior["BOLETA"], df_mes_anterior["Codigo_CCEE"]))
         else:
             mapa_mes_anterior = {}
+
+        # Carrega o mapa BOLETA -> Parcela de Carga a partir das planilhas auxiliares na pasta "anexos"
+        mapa_parcela_carga = carregar_mapa_parcela_carga(arquivo_ponto_medicao, arquivo_boletas, arquivo_modelagem_ativo)
 
         # Extração e Combinação super rápida
         csvs_matrix = extrair_csvs_zip(zip_matrix)
@@ -252,6 +319,10 @@ if arquivo is not None:
         base["Vendedor"]                       = df["Sigla_CCEE_vendedor"].fillna("-").astype(str)
         base["Comprador"]                      = df["Sigla_CCEE_comprador"].fillna("-").astype(str)
         base["Contrato CliqCCEE"]              = "-"
+
+        # ── PARCELA DE CARGA (equivalente ao VLOOKUP na aba 'varejistas dri' do Book) ──
+        base["Parcela de Carga"] = pd.to_numeric(base["BOLETA"], errors="coerce").map(mapa_parcela_carga)
+        base["Parcela de Carga"] = base["Parcela de Carga"].fillna("-")
 
         # ── LOGICA PARA DEFINIR SE É VAREJISTA (MATRIX VAR OU BISMUT VAR) ──
         p_upper = base["Parte"].astype(str).str.strip().str.upper()
@@ -413,7 +484,8 @@ if arquivo is not None:
             "% Modulação Máxima", "Modulação Máxima", "Modulação Máxima CCEE", "Check Modulação Máxima",
             "Modulação CCEE", "Check Modulação",
             "Contrato CliqCCEE mês anterior", "Vendedor", "Comprador", "Contrato CliqCCEE",
-            "Volume Book", "Volume CCEE", "Check Volume", "Volume Global", "Volume Global CCEE", "Check Volume Global"
+            "Volume Book", "Volume CCEE", "Check Volume", "Volume Global", "Volume Global CCEE", "Check Volume Global",
+            "Parcela de Carga"
         ]
         base = base[[c for c in _ordem_colunas if c in base.columns]]
 
