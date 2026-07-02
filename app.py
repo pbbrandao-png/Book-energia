@@ -6,7 +6,7 @@
 # V17: + Contraparte Razão Social | highlight amarelo Parte==Contraparte | flag ocultar zerados
 # V20: + Otimização massiva de performance + Regra de ignorar Intraportfólio/Zerados nas tabelas de erro
 # V21: + Remoção total de rateios (Auto-referência)
-# V22: + Identificação e Filtro de Varejistas (MATRIX VAR / BISMUT VAR) + Correção Bug Comprapor
+# V22: + Identificação e Filtro de Varejistas (MATRIX VAR / BISMUT VAR) + Correção de Escopo de 'nets'
 
 import streamlit as st
 import pandas as pd
@@ -21,7 +21,6 @@ pd.set_option("styler.render.max_elements", 2000000)
 BOLETAS_ACR = {
     122387, 122389, 122391, 122393, 122395, 122397, 122399, 122401,
     144795, 144797, 144799, 148084, 148088, 148090, 148092, 148518,
-    149316, 149318, 149320, 149322, 149324,
 }
 
 
@@ -267,6 +266,223 @@ if arquivo is not None:
 
         csvs_disponiveis = any([not df_ccee_matrix.empty, not df_ccee_bismut.empty, not df_ccee_acr.empty])
 
+        if csvs_disponiveis:
+            BISMUT_NOME_UPPER = "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A."
+            
+            def calcular_contrato_cliqccee_fast(row):
+                try:
+                    b_int = int(float(str(row["BOLETA"]).strip()))
+                except:
+                    b_int = -1
+                
+                if b_int in BOLETAS_ACR:
+                    d_ch, s_ext = idx_a_chave, set_a_ext
+                elif str(row["Parte"]).strip().upper() == BISMUT_NOME_UPPER:
+                    d_ch, s_ext = idx_b_chave, set_b_ext
+                else:
+                    d_ch, s_ext = idx_m_chave, set_m_ext
+                
+                chave_esp = str(row["Vendedor"]).strip() + str(row["Comprador"]).strip() + str(row["Submercado"]).strip()
+                
+                c_ant = str(row["Contrato CliqCCEE mês anterior"]).strip()
+                if c_ant in s_ext:
+                    return c_ant if d_ch.get(c_ant) == chave_esp else 'Verificar'
+                
+                c_par = str(row["CliqCCEE Paradigma"]).strip()
+                if c_par in s_ext:
+                    return c_par if d_ch.get(c_par) == chave_esp else 'Verificar'
+                
+                return '-'
+
+            base["Contrato CliqCCEE"] = base.apply(calcular_contrato_cliqccee_fast, axis=1).astype(str)
+
+        _vol_mwm_num = pd.to_numeric(base["Volume MWm"], errors="coerce")
+        _mask_valido_book = _vol_mwm_num.notna() & (base["Volume MWm"].astype(str).str.strip() != "-")
+        _df_book = base[["Contrato CliqCCEE"]].copy()
+        _df_book["_vol_num"] = _vol_mwm_num.where(_mask_valido_book, 0.0)
+        _soma_book = _df_book.groupby("Contrato CliqCCEE")["_vol_num"].transform("sum")
+        base["Volume Book"] = _soma_book
+
+        _vol_book_num = pd.to_numeric(base["Volume Book"], errors="coerce").fillna(0.0)
+        _num_mod_min = pd.to_numeric(base["% Modulação Mínima"], errors="coerce").fillna(0.0)
+        _num_mod_max = pd.to_numeric(base["% Modulação Máxima"], errors="coerce").fillna(0.0)
+
+        _mask_tem_contrato = ~base["Contrato CliqCCEE"].astype(str).str.strip().isin(["", "-", "None", "nan", "Verificar"])
+        _mask_calcular_min = _mask_tem_contrato & (_num_mod_min > 0.0)
+        _mask_calcular_max = _mask_tem_contrato & (_num_mod_max > 0.0)
+
+        base["Modulação Mínima"] = (_vol_book_num * (1 - (_num_mod_min / 100))).where(_mask_calcular_min, "-")
+        base["Modulação Máxima"] = (_vol_book_num * (1 + (_num_mod_max / 100))).where(_mask_calcular_max, "-")
+
+        if csvs_disponiveis:
+            def buscar_campo_ccee(row, dict_m, dict_b, dict_a):
+                cod = str(row["Contrato CliqCCEE"]).strip()
+                if cod in ["", "-", "None", "nan", "Verificar"]:
+                    return "-"
+                try:
+                    b_int = int(float(str(row["BOLETA"]).strip()))
+                except:
+                    b_int = -1
+                
+                if b_int in BOLETAS_ACR:
+                    d_field = dict_a
+                elif str(row["Parte"]).strip().upper() == "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A.":
+                    d_field = dict_b
+                else:
+                    d_field = dict_m
+                
+                res_val = d_field.get(cod, "-")
+                
+                if pd.isna(res_val) or str(res_val).strip().lower() in ["nan", "none", ""]:
+                    return "-"
+
+                if isinstance(res_val, str) and res_val != "-":
+                    res_val_clean = res_val.replace(",", ".").strip()
+                    try:
+                        return float(res_val_clean)
+                    except:
+                        return res_val
+                return res_val
+
+            base["Modulação Mínima CCEE"] = base.apply(lambda r: buscar_campo_ccee(r, idx_m_min, idx_b_min, idx_a_min), axis=1)
+            base["Modulação Máxima CCEE"] = base.apply(lambda r: buscar_campo_ccee(r, idx_m_max, idx_b_max, idx_a_max), axis=1)
+            
+            def buscar_tipo_ccee(row, dict_m, dict_b, dict_a):
+                cod = str(row["Contrato CliqCCEE"]).strip()
+                if cod in ["", "-", "None", "nan", "Verificar"]: return "-"
+                try: b_int = int(float(str(row["BOLETA"]).strip()))
+                except: b_int = -1
+                d_field = dict_a if b_int in BOLETAS_ACR else (dict_b if str(row["Parte"]).strip().upper() == "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A." else dict_m)
+                res_tipo = d_field.get(cod, "-")
+                if pd.isna(res_tipo) or str(res_tipo).strip().lower() in ["nan", "none", ""]:
+                    return "-"
+                return res_tipo
+                
+            base["Modulação CCEE"]        = base.apply(lambda r: buscar_tipo_ccee(r, idx_m_tipo, idx_b_tipo, idx_a_tipo), axis=1)
+        else:
+            base["Modulação Mínima CCEE"] = "-"
+            base["Modulação Máxima CCEE"] = "-"
+            base["Modulação CCEE"]        = "-"
+
+        _tol_mod = 1e-4
+        
+        base["Check Modulação Mínima"] = "-"
+        _mod_min_cc = pd.to_numeric(base["Modulação Mínima CCEE"], errors="coerce")
+        _mask_min_valid = _mask_calcular_min & _mod_min_cc.notna()
+        
+        _mask_ambos_traco_min = (base["Modulação Mínima"].astype(str).str.strip() == "-") & (base["Modulação Mínima CCEE"].astype(str).str.strip() == "-")
+        base.loc[_mask_ambos_traco_min, "Check Modulação Mínima"] = "OK"
+
+        if _mask_min_valid.any():
+            _diff_min = pd.to_numeric(base.loc[_mask_min_valid, "Modulação Mínima"]) - _mod_min_cc.loc[_mask_min_valid]
+            _mask_min_calc = _mask_min_valid & (base["Check Modulação Mínima"] != "OK")
+            base.loc[_mask_min_calc, "Check Modulação Mínima"] = "OK"
+            base.loc[_mask_min_calc & (_diff_min > _tol_mod), "Check Modulação Mínima"] = "Book maior"
+            base.loc[_mask_min_calc & (_diff_min < -_tol_mod), "Check Modulação Mínima"] = "CCEE maior"
+
+        base["Check Modulação Máxima"] = "-"
+        _mod_max_cc = pd.to_numeric(base["Modulação Máxima CCEE"], errors="coerce")
+        _mask_max_valid = _mask_calcular_max & _mod_max_cc.notna()
+        
+        _mask_ambos_traco_max = (base["Modulação Máxima"].astype(str).str.strip() == "-") & (base["Modulação Máxima CCEE"].astype(str).str.strip() == "-")
+        base.loc[_mask_ambos_traco_max, "Check Modulação Máxima"] = "OK"
+
+        if _mask_max_valid.any():
+            _diff_max = pd.to_numeric(base.loc[_mask_max_valid, "Modulação Máxima"]) - _mod_max_cc.loc[_mask_max_valid]
+            _mask_max_calc = _mask_max_valid & (base["Check Modulação Máxima"] != "OK")
+            base.loc[_mask_max_calc, "Check Modulação Máxima"] = "OK"
+            base.loc[_mask_max_calc & (_diff_max > _tol_mod), "Check Modulação Máxima"] = "Book maior"
+            base.loc[_mask_max_calc & (_diff_max < -_tol_mod), "Check Modulação Máxima"] = "CCEE maior"
+
+        base["Check Modulação"] = "-"
+        _mask_ambos_traco_tipo = (base["Modulação WBC"].astype(str).str.strip() == "-") & (base["Modulação CCEE"].astype(str).str.strip() == "-")
+        base.loc[_mask_ambos_traco_tipo, "Check Modulação"] = "OK"
+
+        _mask_tipo_valid = _mask_tem_contrato & (~base["Modulação CCEE"].astype(str).str.strip().isin(["", "-", "None", "nan"]))
+        if _mask_tipo_valid.any():
+            _mask_div_tipo = base["Modulação WBC"].astype(str).str.strip().str.upper() != base["Modulação CCEE"].astype(str).str.strip().str.upper()
+            _mask_tipo_calc = _mask_tipo_valid & (base["Check Modulação"] != "OK")
+            base.loc[_mask_tipo_calc, "Check Modulação"] = "OK"
+            base.loc[_mask_tipo_calc & _mask_div_tipo, "Check Modulação"] = "Divergente"
+
+        _ordem_colunas = [
+            "BOLETA", "Operação", "Varejista", "Tipo de Energia", "Parte", "Contraparte Razão Social", "Contraparte",
+            "CP/LP", "CNPJ CONTRAPARTE", "Submercado", "Volume (MWh)", "Volume MWm", "CliqCCEE Paradigma",
+            "Modulação WBC", "% Modulação Mínima", "Modulação Mínima", "Modulação Mínima CCEE", "Check Modulação Mínima",
+            "% Modulação Máxima", "Modulação Máxima", "Modulação Máxima CCEE", "Check Modulação Máxima",
+            "Modulação CCEE", "Check Modulação",
+            "Contrato CliqCCEE mês anterior", "Vendedor", "Comprador", "Contrato CliqCCEE",
+            "Volume Book", "Volume CCEE", "Check Volume", "Volume Global", "Volume Global CCEE", "Check Volume Global"
+        ]
+        base = base[[c for c in _ordem_colunas if c in base.columns]]
+
+        if csvs_disponiveis:
+            _lista_dfs_ccee_vol = []
+            for _df_src in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
+                if _df_src is not None and not _df_src.empty and "CODIGO_CONTRATO" in _df_src.columns and "MWmedio" in _df_src.columns:
+                    _tmp = _df_src[["CODIGO_CONTRATO", "MWmedio"]].copy()
+                    _tmp["MWmedio"] = _tmp["MWmedio"].astype(str).str.strip().str.replace(",", ".", regex=False)
+                    _tmp["MWmedio"] = pd.to_numeric(_tmp["MWmedio"], errors="coerce").fillna(0.0)
+                    _lista_dfs_ccee_vol.append(_tmp)
+            if _lista_dfs_ccee_vol:
+                _df_ccee_vol = pd.concat(_lista_dfs_ccee_vol, ignore_index=True)
+                _vol_ccee_por_contrato = _df_ccee_vol.groupby("CODIGO_CONTRATO")["MWmedio"].sum()
+                base["Volume CCEE"] = base["Contrato CliqCCEE"].map(_vol_ccee_por_contrato).fillna(0.0)
+            else:
+                base["Volume CCEE"] = 0.0
+        else:
+            base["Volume CCEE"] = 0.0
+
+        _tol = 1e-6
+        _vb = pd.to_numeric(base["Volume Book"], errors="coerce").fillna(0.0)
+        _vc = pd.to_numeric(base["Volume CCEE"], errors="coerce").fillna(0.0)
+        _diff_vol = _vb - _vc
+        base["Check Volume"] = "OK"
+        base.loc[_diff_vol > _tol, "Check Volume"] = "Book maior"
+        base.loc[_diff_vol < -_tol, "Check Volume"] = "CCEE maior"
+
+        _df_global = base[["Vendedor", "Comprador", "Submercado"]].copy()
+        _df_global["_vol_num"] = _vol_mwm_num.where(_mask_valido_book, 0.0)
+        _soma_global = _df_global.groupby(["Vendedor", "Comprador", "Submercado"])["_vol_num"].transform("sum")
+        base["Volume Global"] = _soma_global
+
+        if csvs_disponiveis:
+            _lista_dfs_global_ccee = []
+            for _df_src in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
+                if _df_src is not None and not _df_src.empty and "MWmedio" in _df_src.columns:
+                    _cols_need = ["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA", "MWmedio"]
+                    if all(c in _df_src.columns for c in _cols_need):
+                        _tmp2 = _df_src[_cols_need].copy()
+                        _tmp2["MWmedio"] = _tmp2["MWmedio"].astype(str).str.strip().str.replace(",", ".", regex=False)
+                        _tmp2["MWmedio"] = pd.to_numeric(_tmp2["MWmedio"], errors="coerce").fillna(0.0)
+                        _lista_dfs_global_ccee.append(_tmp2)
+            if _lista_dfs_global_ccee:
+                _df_gc = pd.concat(_lista_dfs_global_ccee, ignore_index=True)
+                _gc_sum = _df_gc.groupby(["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA"])["MWmedio"].sum()
+                _gc_sum.index.names = ["Vendedor", "Comprador", "Submercado"]
+                _gc_sum = _gc_sum.reset_index()
+                base = base.merge(_gc_sum, on=["Vendedor", "Comprador", "Submercado"], how="left")
+                base.rename(columns={"MWmedio": "Volume Global CCEE"}, inplace=True)
+                base["Volume Global CCEE"] = base["Volume Global CCEE"].fillna(0.0)
+            else:
+                base["Volume Global CCEE"] = 0.0
+        else:
+            base["Volume Global CCEE"] = 0.0
+
+        _vgb = pd.to_numeric(base["Volume Global"], errors="coerce").fillna(0.0)
+        _vgc = pd.to_numeric(base["Volume Global CCEE"], errors="coerce").fillna(0.0)
+        _diff_global = _vgb - _vgc
+        base["Check Volume Global"] = "OK"
+        base.loc[_diff_global > _tol, "Check Volume Global"] = "Book maior"
+        base.loc[_diff_global < -_tol, "Check Volume Global"] = "CCEE maior"
+
+        # ── CRIAÇÃO DO DATAFRAME 'nets' (MOVIDO PARA O ESCOPO GLOBAL DOS MENUS) ──
+        compras_net = base[base["Operação"] == "Compra"].groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume (MWh)"].sum().rename(columns={"Volume (MWh)"]: "Compra (MWh)"})
+        vendas_net = base[base["Operação"] == "Venda"].groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume (MWh)"].sum().rename(columns={"Volume (MWh)": "Venda (MWh)"})
+        nets = compras_net.merge(vendas_net, on=["Parte", "Contraparte", "Submercado", "Tipo de Energia"], how="inner")
+
+        # ── SELEÇÃO DE PÁGINAS DO MENU ─────────────────────────────────────────
+
         if pagina == "Base Conferência":
             st.subheader("Base Conferência")
             total_contratos = len(base)
@@ -288,220 +504,6 @@ if arquivo is not None:
             mask_intercompany = pd.Series(False, index=base.index)
             if flag_zerar_intercompany:
                 base, mask_intercompany = aplicar_zerar_intercompany(base)
-
-            if csvs_disponiveis:
-                BISMUT_NOME_UPPER = "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A."
-                
-                def calcular_contrato_cliqccee_fast(row):
-                    try:
-                        b_int = int(float(str(row["BOLETA"]).strip()))
-                    except:
-                        b_int = -1
-                    
-                    if b_int in BOLETAS_ACR:
-                        d_ch, s_ext = idx_a_chave, set_a_ext
-                    elif str(row["Parte"]).strip().upper() == BISMUT_NOME_UPPER:
-                        d_ch, s_ext = idx_b_chave, set_b_ext
-                    else:
-                        d_ch, s_ext = idx_m_chave, set_m_ext
-                    
-                    chave_esp = str(row["Vendedor"]).strip() + str(row["Comprador"]).strip() + str(row["Submercado"]).strip()
-                    
-                    c_ant = str(row["Contrato CliqCCEE mês anterior"]).strip()
-                    if c_ant in s_ext:
-                        return c_ant if d_ch.get(c_ant) == chave_esp else 'Verificar'
-                    
-                    c_par = str(row["CliqCCEE Paradigma"]).strip()
-                    if c_par in s_ext:
-                        return c_par if d_ch.get(c_par) == chave_esp else 'Verificar'
-                    
-                    return '-'
-
-                base["Contrato CliqCCEE"] = base.apply(calcular_contrato_cliqccee_fast, axis=1).astype(str)
-
-            _vol_mwm_num = pd.to_numeric(base["Volume MWm"], errors="coerce")
-            _mask_valido_book = _vol_mwm_num.notna() & (base["Volume MWm"].astype(str).str.strip() != "-")
-            _df_book = base[["Contrato CliqCCEE"]].copy()
-            _df_book["_vol_num"] = _vol_mwm_num.where(_mask_valido_book, 0.0)
-            _soma_book = _df_book.groupby("Contrato CliqCCEE")["_vol_num"].transform("sum")
-            base["Volume Book"] = _soma_book
-
-            _vol_book_num = pd.to_numeric(base["Volume Book"], errors="coerce").fillna(0.0)
-            _num_mod_min = pd.to_numeric(base["% Modulação Mínima"], errors="coerce").fillna(0.0)
-            _num_mod_max = pd.to_numeric(base["% Modulação Máxima"], errors="coerce").fillna(0.0)
-
-            _mask_tem_contrato = ~base["Contrato CliqCCEE"].astype(str).str.strip().isin(["", "-", "None", "nan", "Verificar"])
-            _mask_calcular_min = _mask_tem_contrato & (_num_mod_min > 0.0)
-            _mask_calcular_max = _mask_tem_contrato & (_num_mod_max > 0.0)
-
-            base["Modulação Mínima"] = (_vol_book_num * (1 - (_num_mod_min / 100))).where(_mask_calcular_min, "-")
-            base["Modulação Máxima"] = (_vol_book_num * (1 + (_num_mod_max / 100))).where(_mask_calcular_max, "-")
-
-            if csvs_disponiveis:
-                def buscar_campo_ccee(row, dict_m, dict_b, dict_a):
-                    cod = str(row["Contrato CliqCCEE"]).strip()
-                    if cod in ["", "-", "None", "nan", "Verificar"]:
-                        return "-"
-                    try:
-                        b_int = int(float(str(row["BOLETA"]).strip()))
-                    except:
-                        b_int = -1
-                    
-                    if b_int in BOLETAS_ACR:
-                        d_field = dict_a
-                    elif str(row["Parte"]).strip().upper() == "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A.":
-                        d_field = dict_b
-                    else:
-                        d_field = dict_m
-                    
-                    res_val = d_field.get(cod, "-")
-                    
-                    if pd.isna(res_val) or str(res_val).strip().lower() in ["nan", "none", ""]:
-                        return "-"
-
-                    if isinstance(res_val, str) and res_val != "-":
-                        res_val_clean = res_val.replace(",", ".").strip()
-                        try:
-                            return float(res_val_clean)
-                        except:
-                            return res_val
-                    return res_val
-
-                base["Modulação Mínima CCEE"] = base.apply(lambda r: buscar_campo_ccee(r, idx_m_min, idx_b_min, idx_a_min), axis=1)
-                base["Modulação Máxima CCEE"] = base.apply(lambda r: buscar_campo_ccee(r, idx_m_max, idx_b_max, idx_a_max), axis=1)
-                
-                def buscar_tipo_ccee(row, dict_m, dict_b, dict_a):
-                    cod = str(row["Contrato CliqCCEE"]).strip()
-                    if cod in ["", "-", "None", "nan", "Verificar"]: return "-"
-                    try: b_int = int(float(str(row["BOLETA"]).strip()))
-                    except: b_int = -1
-                    d_field = dict_a if b_int in BOLETAS_ACR else (dict_b if str(row["Parte"]).strip().upper() == "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A." else dict_m)
-                    res_tipo = d_field.get(cod, "-")
-                    if pd.isna(res_tipo) or str(res_tipo).strip().lower() in ["nan", "none", ""]:
-                        return "-"
-                    return res_tipo
-                    
-                base["Modulação CCEE"]        = base.apply(lambda r: buscar_tipo_ccee(r, idx_m_tipo, idx_b_tipo, idx_a_tipo), axis=1)
-            else:
-                base["Modulação Mínima CCEE"] = "-"
-                base["Modulação Máxima CCEE"] = "-"
-                base["Modulação CCEE"]        = "-"
-
-            _tol_mod = 1e-4
-            
-            base["Check Modulação Mínima"] = "-"
-            _mod_min_cc = pd.to_numeric(base["Modulação Mínima CCEE"], errors="coerce")
-            _mask_min_valid = _mask_calcular_min & _mod_min_cc.notna()
-            
-            _mask_ambos_traco_min = (base["Modulação Mínima"].astype(str).str.strip() == "-") & (base["Modulação Mínima CCEE"].astype(str).str.strip() == "-")
-            base.loc[_mask_ambos_traco_min, "Check Modulação Mínima"] = "OK"
-
-            if _mask_min_valid.any():
-                _diff_min = pd.to_numeric(base.loc[_mask_min_valid, "Modulação Mínima"]) - _mod_min_cc.loc[_mask_min_valid]
-                _mask_min_calc = _mask_min_valid & (base["Check Modulação Mínima"] != "OK")
-                base.loc[_mask_min_calc, "Check Modulação Mínima"] = "OK"
-                base.loc[_mask_min_calc & (_diff_min > _tol_mod), "Check Modulação Mínima"] = "Book maior"
-                base.loc[_mask_min_calc & (_diff_min < -_tol_mod), "Check Modulação Mínima"] = "CCEE maior"
-
-            base["Check Modulação Máxima"] = "-"
-            _mod_max_cc = pd.to_numeric(base["Modulação Máxima CCEE"], errors="coerce")
-            _mask_max_valid = _mask_calcular_max & _mod_max_cc.notna()
-            
-            _mask_ambos_traco_max = (base["Modulação Máxima"].astype(str).str.strip() == "-") & (base["Modulação Máxima CCEE"].astype(str).str.strip() == "-")
-            base.loc[_mask_ambos_traco_max, "Check Modulação Máxima"] = "OK"
-
-            if _mask_max_valid.any():
-                _diff_max = pd.to_numeric(base.loc[_mask_max_valid, "Modulação Máxima"]) - _mod_max_cc.loc[_mask_max_valid]
-                _mask_max_calc = _mask_max_valid & (base["Check Modulação Máxima"] != "OK")
-                base.loc[_mask_max_calc, "Check Modulação Máxima"] = "OK"
-                base.loc[_mask_max_calc & (_diff_max > _tol_mod), "Check Modulação Máxima"] = "Book maior"
-                base.loc[_mask_max_calc & (_diff_max < -_tol_mod), "Check Modulação Máxima"] = "CCEE maior"
-
-            base["Check Modulação"] = "-"
-            _mask_ambos_traco_tipo = (base["Modulação WBC"].astype(str).str.strip() == "-") & (base["Modulação CCEE"].astype(str).str.strip() == "-")
-            base.loc[_mask_ambos_traco_tipo, "Check Modulação"] = "OK"
-
-            _mask_tipo_valid = _mask_tem_contrato & (~base["Modulação CCEE"].astype(str).str.strip().isin(["", "-", "None", "nan"]))
-            if _mask_tipo_valid.any():
-                _mask_div_tipo = base["Modulação WBC"].astype(str).str.strip().str.upper() != base["Modulação CCEE"].astype(str).str.strip().str.upper()
-                _mask_tipo_calc = _mask_tipo_valid & (base["Check Modulação"] != "OK")
-                base.loc[_mask_tipo_calc, "Check Modulação"] = "OK"
-                base.loc[_mask_tipo_calc & _mask_div_tipo, "Check Modulação"] = "Divergente"
-
-            _ordem_colunas = [
-                "BOLETA", "Operação", "Varejista", "Tipo de Energia", "Parte", "Contraparte Razão Social", "Contraparte",
-                "CP/LP", "CNPJ CONTRAPARTE", "Submercado", "Volume (MWh)", "Volume MWm", "CliqCCEE Paradigma",
-                "Modulação WBC", "% Modulação Mínima", "Modulação Mínima", "Modulação Mínima CCEE", "Check Modulação Mínima",
-                "% Modulação Máxima", "Modulação Máxima", "Modulação Máxima CCEE", "Check Modulação Máxima",
-                "Modulação CCEE", "Check Modulação",
-                "Contrato CliqCCEE mês anterior", "Vendedor", "Comprador", "Contrato CliqCCEE",
-                "Volume Book", "Volume CCEE", "Check Volume", "Volume Global", "Volume Global CCEE", "Check Volume Global"
-            ]
-            base = base[[c for c in _ordem_colunas if c in base.columns]]
-
-            if csvs_disponiveis:
-                _lista_dfs_ccee_vol = []
-                for _df_src in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
-                    if _df_src is not None and not _df_src.empty and "CODIGO_CONTRATO" in _df_src.columns and "MWmedio" in _df_src.columns:
-                        _tmp = _df_src[["CODIGO_CONTRATO", "MWmedio"]].copy()
-                        _tmp["MWmedio"] = _tmp["MWmedio"].astype(str).str.strip().str.replace(",", ".", regex=False)
-                        _tmp["MWmedio"] = pd.to_numeric(_tmp["MWmedio"], errors="coerce").fillna(0.0)
-                        _lista_dfs_ccee_vol.append(_tmp)
-                if _lista_dfs_ccee_vol:
-                    _df_ccee_vol = pd.concat(_lista_dfs_ccee_vol, ignore_index=True)
-                    _vol_ccee_por_contrato = _df_ccee_vol.groupby("CODIGO_CONTRATO")["MWmedio"].sum()
-                    base["Volume CCEE"] = base["Contrato CliqCCEE"].map(_vol_ccee_por_contrato).fillna(0.0)
-                else:
-                    base["Volume CCEE"] = 0.0
-            else:
-                base["Volume CCEE"] = 0.0
-
-            _tol = 1e-6
-            _vb = pd.to_numeric(base["Volume Book"], errors="coerce").fillna(0.0)
-            _vc = pd.to_numeric(base["Volume CCEE"], errors="coerce").fillna(0.0)
-            _diff_vol = _vb - _vc
-            base["Check Volume"] = "OK"
-            base.loc[_diff_vol > _tol, "Check Volume"] = "Book maior"
-            base.loc[_diff_vol < -_tol, "Check Volume"] = "CCEE maior"
-
-            _df_global = base[["Vendedor", "Comprador", "Submercado"]].copy()
-            _df_global["_vol_num"] = _vol_mwm_num.where(_mask_valido_book, 0.0)
-            _soma_global = _df_global.groupby(["Vendedor", "Comprador", "Submercado"])["_vol_num"].transform("sum")
-            base["Volume Global"] = _soma_global
-
-            if csvs_disponiveis:
-                _lista_dfs_global_ccee = []
-                for _df_src in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
-                    if _df_src is not None and not _df_src.empty and "MWmedio" in _df_src.columns:
-                        _cols_need = ["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA", "MWmedio"]
-                        if all(c in _df_src.columns for c in _cols_need):
-                            _tmp2 = _df_src[_cols_need].copy()
-                            _tmp2["MWmedio"] = _tmp2["MWmedio"].astype(str).str.strip().str.replace(",", ".", regex=False)
-                            _tmp2["MWmedio"] = pd.to_numeric(_tmp2["MWmedio"], errors="coerce").fillna(0.0)
-                            _lista_dfs_global_ccee.append(_tmp2)
-                if _lista_dfs_global_ccee:
-                    _df_gc = pd.concat(_lista_dfs_global_ccee, ignore_index=True)
-                    _gc_sum = _df_gc.groupby(["SIGLA_PERFIL_VENDEDOR", "SIGLA_PERFIL_COMPRADOR", "SUBMERCADO_ENTREGA"])["MWmedio"].sum()
-                    _gc_sum.index.names = ["Vendedor", "Comprador", "Submercado"]
-                    _gc_sum = _gc_sum.reset_index()
-                    base = base.merge(_gc_sum, on=["Vendedor", "Comprador", "Submercado"], how="left")
-                    base.rename(columns={"MWmedio": "Volume Global CCEE"}, inplace=True)
-                    base["Volume Global CCEE"] = base["Volume Global CCEE"].fillna(0.0)
-                else:
-                    base["Volume Global CCEE"] = 0.0
-            else:
-                base["Volume Global CCEE"] = 0.0
-
-            _vgb = pd.to_numeric(base["Volume Global"], errors="coerce").fillna(0.0)
-            _vgc = pd.to_numeric(base["Volume Global CCEE"], errors="coerce").fillna(0.0)
-            _diff_global = _vgb - _vgc
-            base["Check Volume Global"] = "OK"
-            base.loc[_diff_global > _tol, "Check Volume Global"] = "Book maior"
-            base.loc[_diff_global < -_tol, "Check Volume Global"] = "CCEE maior"
-
-            compras_net = base[base["Operação"] == "Compra"].groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume (MWh)"].sum().rename(columns={"Volume (MWh)": "Compra (MWh)"})
-            vendas_net = base[base["Operação"] == "Venda"].groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume (MWh)"].sum().rename(columns={"Volume (MWh)": "Venda (MWh)"})
-            nets = compras_net.merge(vendas_net, on=["Parte", "Contraparte", "Submercado", "Tipo de Energia"], how="inner")
 
             if flag_zerar_intercompany:
                 n_ic = int(mask_intercompany.sum())
@@ -578,7 +580,7 @@ if arquivo is not None:
             with pd.ExcelWriter(output, engine="openpyxl") as writer: base_download.to_excel(writer, sheet_name="Base Conferência", index=False)
             st.download_button("📥 Download Base Conferência", data=output.getvalue(), file_name="Base_Conferencia.xlsx")
 
-            # ── RESUMO DE NETs (AQUI ESTAVA O ERRO DE DIGITAÇÃO DE COMPRAPOR) ───────────────────
+            # ── RESUMO DE NETs ───────────────────
             with st.expander("📋 Resumo de NETs", expanded=False):
                 mes_ref_net = int(df["Mes"].dropna().iloc[0])
                 text_horas_net = horas_mes.get(mes_ref_net, 744)
@@ -641,7 +643,6 @@ if arquivo is not None:
 
                 if _dfs_ccee_net:
                     _df_ccee_all = pd.concat(_dfs_ccee_net, ignore_index=True)
-                    # CORRIGIDO: de 'SIGLA_PERFIL_COMPRAPOR' para 'SIGLA_PERFIL_COMPRADOR'
                     _idx_cliq = (
                         _df_ccee_all
                         .groupby(
