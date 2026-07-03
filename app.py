@@ -40,6 +40,7 @@ def formatar_cnpj(valor):
     )
 
 
+@st.cache_data(show_spinner=False)
 def ler_csv_ccee(bytes_csv):
     """Lê bytes de um CSV CCEE e limpa colunas."""
     df = pd.read_csv(BytesIO(bytes_csv), sep='\t', encoding='latin1', skiprows=1, dtype=str)
@@ -61,6 +62,7 @@ def ler_csv_ccee(bytes_csv):
     return df
 
 
+@st.cache_data(show_spinner="Lendo ZIP e extraindo CSVs...")
 def extrair_csvs_zip(zip_file):
     result = {'cceal': None, 'cbr': None, 'ccear_q': None}
     if zip_file is None:
@@ -122,6 +124,7 @@ def _ler_planilha_modelagem_ativo(arquivo):
         return pd.read_excel(arquivo, header=linha_cabecalho)
 
 
+@st.cache_data(show_spinner="Processando Parcela de Carga...")
 def carregar_mapa_parcela_carga(arquivo_ponto, arquivo_boletas, arquivo_modelagem_ativo=None):
     """Recria a lógica da coluna 'PARCELA DE CARGA' do Book (VLOOKUP na aba 'varejistas dri'):
     Ponto -> Boleta (via arquivo Boletas, equivalente à aba BILLING) e Boleta -> Cód. Parcela - Carga
@@ -176,6 +179,7 @@ def carregar_mapa_parcela_carga(arquivo_ponto, arquivo_boletas, arquivo_modelage
     return mapa
 
 
+@st.cache_data(show_spinner="Processando RelPers 301 (Mapa Financeiro)...")
 def carregar_mapa_relpers_301(zip_relpers):
     """Extrai a planilha 'EXP301 (WBC)' do ZIP RelPers 301 e monta os mapas BOLETA -> Situacao_ERP e
     BOLETA -> Data_Vencimento_ordem, equivalente à aba 'MAPA FINANCEIRO' do Book."""
@@ -214,6 +218,7 @@ def carregar_mapa_relpers_301(zip_relpers):
     return mapa_situacao, mapa_pagamento
 
 
+@st.cache_data(show_spinner="Processando Faturamento em Aberto...")
 def carregar_mapa_situacao_pagamento(arquivo_faturamento):
     """Recria a lógica das colunas 'Situação pagamento' e 'Pagamento' do Book (VLOOKUP na 'MAPA FINANCEIRO'),
     usando a planilha 'Faturamento em Aberto' como fonte: BOLETA -> Situação pagamento (Pago / Em Aberto)
