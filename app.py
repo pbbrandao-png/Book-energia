@@ -111,7 +111,7 @@ def _ler_planilha_modelagem_ativo(arquivo):
             linha_cabecalho = i
             break
 
-    if linha_cabecalho is None:
+    if línea_cabecalho is None:
         linha_cabecalho = 0
 
     arquivo.seek(0)
@@ -208,50 +208,6 @@ def carregar_mapa_relpers_301(zip_relpers):
             mapa_situacao = dict(zip(df_301['Codigo_WBC'], df_301['Situacao_ERP']))
         if 'Data_Vencimento_ordem' in df_301.columns:
             mapa_pagamento = dict(zip(df_301['Codigo_WBC'], df_301['Data_Vencimento_ordem']))
-    except Exception:
-        mapa_situacao = {}
-        mapa_pagamento = {}
-    return mapa_situacao, mapa_pagamento
-
-
-def carregar_mapa_situacao_pagamento(arquivo_faturamento):
-    """Recria a lógica das colunas 'Situação pagamento' e 'Pagamento' do Book (VLOOKUP na 'MAPA FINANCEIRO'),
-    usando a planilha 'Faturamento em Aberto' como fonte: BOLETA -> Situação pagamento (Pago / Em Aberto)
-    e BOLETA -> Pagamento (Data Vencimento)."""
-    mapa_situacao = {}
-    mapa_pagamento = {}
-    try:
-        if arquivo_faturamento is None:
-            return mapa_situacao, mapa_pagamento
-
-        try:
-            df_fat = pd.read_excel(arquivo_faturamento, header=5, usecols="A:L")
-        except Exception:
-            arquivo_faturamento.seek(0)
-            df_fat = pd.read_excel(arquivo_faturamento, header=5)
-        df_fat.columns = df_fat.columns.astype(str).str.strip()
-        df_fat = df_fat.loc[:, ~df_fat.columns.str.startswith("Unnamed")]
-
-        if 'Boleta' not in df_fat.columns:
-            return mapa_situacao, mapa_pagamento
-
-        df_fat = df_fat.dropna(subset=['Boleta'])
-        df_fat['Boleta'] = pd.to_numeric(df_fat['Boleta'], errors='coerce')
-        df_fat = df_fat.dropna(subset=['Boleta'])
-
-        if 'Saldo Parcela' in df_fat.columns:
-            saldo_num = pd.to_numeric(df_fat['Saldo Parcela'], errors='coerce').fillna(0.0)
-        else:
-            saldo_num = pd.Series(0.0, index=df_fat.index)
-
-        df_fat['_SITUACAO'] = np.where(saldo_num > 0, 'Em Aberto', 'Pago')
-
-        df_fat = df_fat.drop_duplicates(subset=['Boleta'], keep='last')
-
-        mapa_situacao = dict(zip(df_fat['Boleta'], df_fat['_SITUACAO']))
-
-        if 'Data Vencimento' in df_fat.columns:
-            mapa_pagamento = dict(zip(df_fat['Boleta'], df_fat['Data Vencimento']))
     except Exception:
         mapa_situacao = {}
         mapa_pagamento = {}
@@ -784,7 +740,7 @@ if arquivo is not None:
             df_styled = (
                 df_exibir.style
                 .apply(highlight_mesmo_titular, axis=1)
-                .applymap(aplicar_estilo_ok_verificar, subset=[c for c in ["Check Volume ", "Check Modulação", "Limites Modulação", "Conferência Geral"] if c in df_exibir.columns])
+                .map(aplicar_estilo_ok_verificar, subset=[c for c in ["Check Volume ", "Check Modulação", "Limites Modulação", "Conferência Geral"] if c in df_exibir.columns])
                 .format(subset=["Volume (MWh)"], formatter="{:.3f}")
                 .format(subset=["Volume MWm"], formatter="{:.6f}")
             )
