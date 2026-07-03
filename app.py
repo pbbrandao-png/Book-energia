@@ -25,6 +25,8 @@ BOLETAS_ACR = {
     149316, 149318, 149320, 149322, 149324,
 }
 
+BISMUT_RAZAO_SOCIAL = "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A."
+
 
 def formatar_cnpj(valor):
     if pd.isna(valor):
@@ -389,6 +391,16 @@ def criar_indices_busca(df_ccee):
     return dict_chave, dict_vend, dict_comp, dict_sub, set_existentes, dict_lim_min, dict_lim_max, dict_tipo_mod
 
 
+def construir_mapa_chave_para_codigos(dict_chave):
+    """Inverte o dicionário CODIGO_CONTRATO -> chave (Vendedor+Comprador+Submercado) num dicionário
+    chave -> lista de códigos, para permitir listar todos os contratos candidatos que batem com uma
+    determinada combinação Vendedor+Comprador+Submercado."""
+    mapa = {}
+    for codigo, chave in dict_chave.items():
+        mapa.setdefault(chave, []).append(codigo)
+    return mapa
+
+
 def highlight_mesmo_titular(row):
     parte = str(row.get("Parte", "")).strip().upper()
     contraparte_rs = str(row.get("Contraparte Razão Social", "")).strip().upper()
@@ -518,6 +530,12 @@ if arquivo is not None:
         idx_m_chave, idx_m_v, idx_m_c, idx_m_s, set_m_ext, idx_m_min, idx_m_max, idx_m_tipo = criar_indices_busca(df_ccee_matrix)
         idx_b_chave, idx_b_v, idx_b_c, idx_b_s, set_b_ext, idx_b_min, idx_b_max, idx_b_tipo = criar_indices_busca(df_ccee_bismut)
         idx_a_chave, idx_a_v, idx_a_c, idx_a_s, set_a_ext, idx_a_min, idx_a_max, idx_a_tipo = criar_indices_busca(df_ccee_acr)
+
+        # Mapas invertidos (chave Vendedor+Comprador+Submercado -> lista de códigos candidatos),
+        # usados no buscador de "Contratos disponíveis para uma boleta"
+        rev_m_chave = construir_mapa_chave_para_codigos(idx_m_chave)
+        rev_b_chave = construir_mapa_chave_para_codigos(idx_b_chave)
+        rev_a_chave = construir_mapa_chave_para_codigos(idx_a_chave)
 
         mapa_energia = {
             "Incentivada 50%": "Incentivada-I5", "Cogeração Qualificada 50%": "Incentivada-CQ5",
@@ -837,6 +855,35 @@ if arquivo is not None:
         vendas_net = base[base["Operação"] == "Venda"].groupby(["Parte", "Contraparte", "Submercado", "Tipo de Energia"], as_index=False)["Volume (MWh)"].sum().rename(columns={"Volume (MWh)": "Venda (MWh)"})
         nets = compras_net.merge(vendas_net, on=["Parte", "Contraparte", "Submercado", "Tipo de Energia"], how="inner")
 
+        def _obter_candidatos_cliqccee(boleta_valor):
+            """Dada uma BOLETA, retorna (lista_de_codigos_candidatos, linha_da_base) — os candidatos são
+            todos os códigos de contrato do CSV da CCEE (Matrix/Bismut/ACR, conforme a regra da boleta)
+            cuja combinação Vendedor+Comprador+Submercado bate com a da boleta na Base Conferência,
+            mesmo que não sejam iguais ao 'mês anterior' nem ao 'Paradigma'."""
+            chave_lookup = _boleta_para_chave(boleta_valor)
+            if chave_lookup is None:
+                return [], None
+            _match = base[base["BOLETA"].apply(_boleta_para_chave) == chave_lookup]
+            if _match.empty:
+                return [], None
+            row = _match.iloc[0]
+
+            try:
+                b_int = int(float(str(row["BOLETA"]).strip()))
+            except Exception:
+                b_int = -1
+
+            if b_int in BOLETAS_ACR:
+                rev_chave = rev_a_chave
+            elif str(row["Parte"]).strip().upper() == BISMUT_RAZAO_SOCIAL:
+                rev_chave = rev_b_chave
+            else:
+                rev_chave = rev_m_chave
+
+            chave_esp = str(row["Vendedor"]).strip() + str(row["Comprador"]).strip() + str(row["Submercado"]).strip()
+            candidatos = sorted(set(rev_chave.get(chave_esp, [])))
+            return candidatos, row
+
         # ── SELEÇÃO DE PÁGINAS DO MENU ─────────────────────────────────────────
 
         if pagina == "Base Conferência":
@@ -992,6 +1039,36 @@ if arquivo is not None:
             else:
                 styled = base_exibicao.style.apply(_highlight_tabela, axis=1)
                 st.dataframe(styled, use_container_width=True, hide_index=True)
+
+            with st.expander("🔍 Ver Contratos CliqCCEE disponíveis para uma boleta"):
+                st.caption(
+                    "Use aqui quando a boleta ficar como 'Verificar' ou '-': o app procura, no CSV da CCEE, "
+                    "todos os contratos cuja combinação Vendedor + Comprador + Submercado bate com a boleta, "
+                    "mesmo que o código não seja igual ao 'mês anterior' nem ao 'Paradigma'."
+                )
+                boleta_busca = st.text_input("Boleta", key="busca_boleta_candidatos")
+                if boleta_busca:
+                    candidatos, linha_encontrada = _obter_candidatos_cliqccee(boleta_busca)
+                    if linha_encontrada is None:
+                        st.warning("Boleta não encontrada na Base Conferência.")
+                    else:
+                        st.write(
+                            f"Vendedor: **{linha_encontrada['Vendedor']}** | "
+                            f"Comprador: **{linha_encontrada['Comprador']}** | "
+                            f"Submercado: **{linha_encontrada['Submercado']}**"
+                        )
+                        st.write(f"Contrato CliqCCEE atual: **{linha_encontrada['Contrato CliqCCEE']}**")
+                        if not candidatos:
+                            st.info("Nenhum contrato no CSV da CCEE bate com essa combinação Vendedor + Comprador + Submercado no momento.")
+                        else:
+                            escolhido = st.selectbox("Contratos disponíveis", options=candidatos, key="select_candidato_cliqccee")
+                            if st.button("✅ Aplicar esse contrato para essa boleta"):
+                                boleta_key_aplicar = _boleta_para_chave(boleta_busca)
+                                _novo_dict_cand = dict(correcoes_editor_dict)
+                                _novo_dict_cand.setdefault(boleta_key_aplicar, {})["Contrato CliqCCEE"] = escolhido
+                                st.session_state["correcoes_editor_dict"] = _novo_dict_cand
+                                st.success(f"Contrato {escolhido} aplicado à boleta {boleta_key_aplicar}. Atualizando...")
+                                st.rerun()
 
             base_download = base.copy()
             if flag_ocultar_zerados: base_download = base_download[base_download["Volume (MWh)"] != 0.0]
