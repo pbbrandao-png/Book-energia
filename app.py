@@ -449,11 +449,11 @@ def aplicar_zerar_intercompany(base: pd.DataFrame):
 st.set_page_config(page_title="Book Energia", layout="wide")
 
 pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético"])
-st.sidebar.markdown("---")
-flag_ocultar_intraportfolio = st.sidebar.toggle("🟡 Ocultar IntraPortifólio (Parte = Contraparte)", value=True)
-st.sidebar.markdown("---")
 
 st.title("📊 Book Energia")
+
+flag_ocultar_intraportfolio = st.toggle("🟡 Ocultar IntraPortifólio (Parte = Contraparte)", value=True)
+st.markdown("---")
 
 arquivo = st.file_uploader("Selecione a RelPers", type=["xlsx"])
 arquivo_mes_anterior = st.file_uploader("Selecione a planilha Mês Anterior", type=["xlsx"])
@@ -480,10 +480,9 @@ if arquivo is not None:
     try:
         df = pd.read_excel(arquivo, header=8)
 
-        # ── EXCLUSÃO DOS RATEIOS (PRÓPRIA REFERÊNCIA / INTRA-PORTFÓLIO) — controlada pela flag "Ocultar IntraPortifólio" ──
-        if flag_ocultar_intraportfolio and "Parte_razao_social" in df.columns and "Contraparte_razao_social" in df.columns:
-            mask_rateio_interno = df["Parte_razao_social"].astype(str).str.strip().str.upper() == df["Contraparte_razao_social"].astype(str).str.strip().str.upper()
-            df = df[~mask_rateio_interno].reset_index(drop=True)
+        # (A exclusão de IntraPortifólio agora é feita por ZERAGEM de Volume, não por remoção de linha —
+        # ver bloco "ZERAR INTRAPORTFÓLIO" logo após a montagem da 'base', controlado pela mesma flag
+        # "flag_ocultar_intraportfolio". Use a flag "Ocultar contratos zerados" para escondê-las da tela.)
 
         # ── EXCLUSÃO DE RATEIOS COM Codigo_WBC == Numero_referencia_contrato E Rateio == "SIM" ──
         if "Codigo_WBC" in df.columns and "Numero_referencia_contrato" in df.columns and "Rateio" in df.columns:
@@ -610,6 +609,18 @@ if arquivo is not None:
             c_upper.str.startswith("BISMUT VAR")
         )
         base["Varejista"] = np.where(mask_varejista, "Sim", "Não")
+
+        # ── ZERAR INTRAPORTFÓLIO (PARTE = CONTRAPARTE) — controlada pela flag "Ocultar IntraPortifólio" ──
+        # Antes essas linhas eram removidas da base inteira; agora elas continuam existindo (aparecem
+        # destacadas em amarelo) mas com Volume (MWh)/Volume MWm zerados. Use a flag separada "Ocultar
+        # contratos zerados" (na página Base Conferência) se quiser escondê-las da tabela.
+        mask_intraportfolio = (
+            base["Parte"].astype(str).str.strip().str.upper()
+            == base["Contraparte Razão Social"].astype(str).str.strip().str.upper()
+        )
+        if flag_ocultar_intraportfolio:
+            base.loc[mask_intraportfolio, "Volume (MWh)"] = 0.0
+            base.loc[mask_intraportfolio, "Volume MWm"] = 0.0
 
         csvs_disponiveis = any([not df_ccee_matrix.empty, not df_ccee_bismut.empty, not df_ccee_acr.empty])
 
