@@ -84,8 +84,6 @@ def extrair_csvs_zip(zip_file):
 
 
 def _extrair_codigo_ponto(valor):
-    """Extrai o código do Ponto de Medição de dentro do texto 'Conteúdo Expressão Contábil Processada',
-    ex: 'MAX((ACL(GOBBVLENTR101));0)' -> 'GOBBVLENTR101' (mesma lógica da coluna N da aba 'varejistas dri')."""
     if pd.isna(valor):
         return None
     m = re.search(r'ACL\((.*?)\)', str(valor))
@@ -93,9 +91,6 @@ def _extrair_codigo_ponto(valor):
 
 
 def _ler_planilha_modelagem_ativo(arquivo):
-    """Lê a planilha 'Exportação Solicitação Modelagem Ativo' (equivalente à aba SIGA), detectando
-    automaticamente a linha de cabeçalho (procura pela linha que contém 'Nº do Ativo'), pois esse
-    arquivo é exportado com linhas de título/filtro variáveis antes do cabeçalho real."""
     nome = getattr(arquivo, "name", "") or ""
     engine = "xlrd" if nome.lower().endswith(".xls") else None
 
@@ -111,7 +106,7 @@ def _ler_planilha_modelagem_ativo(arquivo):
             linha_cabecalho = i
             break
 
-    if inline_cabecalho is None:
+    if linha_cabecalho is None:
         linha_cabecalho = 0
 
     arquivo.seek(0)
@@ -123,11 +118,6 @@ def _ler_planilha_modelagem_ativo(arquivo):
 
 
 def carregar_mapa_parcela_carga(arquivo_ponto, arquivo_boletas, arquivo_modelagem_ativo=None):
-    """Recria a lógica da coluna 'PARCELA DE CARGA' do Book (VLOOKUP na aba 'varejistas dri'):
-    Ponto -> Boleta (via arquivo Boletas, equivalente à aba BILLING) e Boleta -> Cód. Parcela - Carga
-    (via arquivo Ponto de Medição - MATRIX). Se o arquivo de Exportação Solicitação Modelagem Ativo
-    (equivalente à aba SIGA) for informado, usa-o para validar apenas os Ativos com solicitação
-    'Concluída', igual ao cruzamento feito no Book. Retorna um dicionário {BOLETA: Cód. Parcela - Carga}."""
     mapa = {}
     try:
         if arquivo_ponto is None or arquivo_boletas is None:
@@ -162,7 +152,7 @@ def carregar_mapa_parcela_carga(arquivo_ponto, arquivo_boletas, arquivo_modelage
                     )
                     df_ponto = df_ponto[pd.to_numeric(df_ponto['Nº Seq Ativo'], errors='coerce').isin(ativos_concluidos)]
             except Exception as e:
-                st.warning(f"Não foi possível aplicar o filtro da planilha Exportação Solicitação Modelagem Ativo (Parcela de Carga seguirá sem esse filtro): {e}")
+                st.warning(f"Não foi possível aplicar o filtro da planilha Exportação Solicitação Modelagem Ativo: {e}")
 
         df_ponto = df_ponto.dropna(subset=['_BOLETA'])
         df_ponto = df_ponto.drop_duplicates(subset=['_BOLETA'], keep='first')
@@ -177,8 +167,6 @@ def carregar_mapa_parcela_carga(arquivo_ponto, arquivo_boletas, arquivo_modelage
 
 
 def carregar_mapa_relpers_301(zip_relpers):
-    """Extrai a planilha 'EXP301 (WBC)' do ZIP RelPers 301 e monta os mapas BOLETA -> Situacao_ERP e
-    BOLETA -> Data_Vencimento_ordem, equivalente à aba 'MAPA FINANCEIRO' do Book."""
     mapa_situacao = {}
     mapa_pagamento = {}
     if zip_relpers is None:
@@ -215,9 +203,6 @@ def carregar_mapa_relpers_301(zip_relpers):
 
 
 def carregar_mapa_situacao_pagamento(arquivo_faturamento):
-    """Recria a lógica das colunas 'Situação pagamento' e 'Pagamento' do Book (VLOOKUP na 'MAPA FINANCEIRO'),
-    usando a planilha 'Faturamento em Aberto' como fonte: BOLETA -> Situação pagamento (Pago / Em Aberto)
-    e BOLETA -> Pagamento (Data Vencimento)."""
     mapa_situacao = {}
     mapa_pagamento = {}
     try:
@@ -245,7 +230,6 @@ def carregar_mapa_situacao_pagamento(arquivo_faturamento):
             saldo_num = pd.Series(0.0, index=df_fat.index)
 
         df_fat['_SITUACAO'] = np.where(saldo_num > 0, 'Em Aberto', 'Pago')
-
         df_fat = df_fat.drop_duplicates(subset=['Boleta'], keep='last')
 
         mapa_situacao = dict(zip(df_fat['Boleta'], df_fat['_SITUACAO']))
@@ -266,11 +250,9 @@ def combiner_dfs(lista):
 
 
 def criar_indices_busca(df_ccee):
-    """Mapeia os códigos da CCEE em dicionários para busca em tempo de execução O(1)."""
     if df_ccee.empty:
         return {}, {}, {}, {}, {}, {}, {}, {}
     
-    # Remove duplicados mantendo o primeiro registro válido
     df_limpo = df_ccee.drop_duplicates(subset=['CODIGO_CONTRATO'])
     
     dict_chave = dict(zip(df_limpo['CODIGO_CONTRATO'], df_limpo['_CHAVE']))
@@ -281,7 +263,6 @@ def criar_indices_busca(df_ccee):
     dict_lim_max = dict(zip(df_limpo['CODIGO_CONTRATO'], df_limpo.get('LIMITE_MAXIMO_MODULACAO_MW', '-')))
     dict_tipo_mod = dict(zip(df_limpo['CODIGO_CONTRATO'], df_limpo.get('TIPO_MODULACAO', '-')))
     
-    # Conjunto para checar existência imediata
     set_existentes = set(df_limpo['CODIGO_CONTRATO'])
     
     return dict_chave, dict_vend, dict_comp, dict_sub, set_existentes, dict_lim_min, dict_lim_max, dict_tipo_mod
@@ -295,7 +276,6 @@ def highlight_mesmo_titular(row):
     return [""] * len(row)
 
 
-# Partes elegíveis para a regra InterCompany
 _PARTES_INTERCOMPANY = {
     "NEWAVE BISMUT COMERCIALIZADORA DE ENERGIA S.A.",
     "GET COMERCIALIZADORA DE ENERGIA S.A.",
@@ -304,18 +284,7 @@ _PARTES_INTERCOMPANY = {
 
 
 def aplicar_zerar_intercompany(base: pd.DataFrame):
-    """
-    Recebe uma cópia da Base Conferência e zera Volume (MWh) e Volume MWm
-    dos contratos InterCompany, conforme regra:
-
-    - Parte belongs to _PARTES_INTERCOMPANY
-    - Contraparte (sigla CCEE) starts with "MATRIX"
-    - BUT DOES NOT start with "MATRIX VAR"
-
-    Retorna (base_modificada, mask_intercompany).
-    """
     base = base.copy()
-
     parte_upper = base["Parte"].astype(str).str.strip().str.upper()
     contra_upper = base["Contraparte"].astype(str).str.strip().str.upper()
 
@@ -336,19 +305,12 @@ st.set_page_config(page_title="Book Energia", layout="wide")
 
 pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético"])
 st.sidebar.markdown("---")
+flag_ocultar_intraportfolio = st.sidebar.toggle("🟡 Ocultar IntraPortifólio (Parte = Contraparte)", value=True)
+st.sidebar.markdown("---")
 
 st.title("📊 Book Energia")
 
-# Criando colunas no topo do conteúdo principal para abrigar o seletor da RelPers e a flag juntos
-col_upload, col_flag = st.columns([2, 1])
-
-with col_upload:
-    arquivo = st.file_uploader("Selecione a RelPers", type=["xlsx"])
-
-with col_flag:
-    st.markdown("<br>", unsafe_allow_html=True) # Alinhamento sutil para ficar no nível do upload
-    flag_ocultar_intraportfolio = st.toggle("🟡 Ocultar IntraPortifólio (Parte = Contraparte)", value=True)
-
+arquivo = st.file_uploader("Selecione a RelPers", type=["xlsx"])
 arquivo_mes_anterior = st.file_uploader("Selecione a planilha Mês Anterior", type=["xlsx"])
 zip_matrix = st.file_uploader("Selecione o ZIP Matrix", type=["zip"])
 zip_bismut = st.file_uploader("Selecione o ZIP Bismut", type=["zip"])
@@ -362,17 +324,14 @@ if arquivo is not None:
     try:
         df = pd.read_excel(arquivo, header=8)
 
-        # ── EXCLUSÃO DOS RATEIOS (PRÓPRIA REFERÊNCIA / INTRA-PORTFÓLIO) — controlada pela flag "Ocultar IntraPortifólio" ──
         if flag_ocultar_intraportfolio and "Parte_razao_social" in df.columns and "Contraparte_razao_social" in df.columns:
             mask_rateio_interno = df["Parte_razao_social"].astype(str).str.strip().str.upper() == df["Contraparte_razao_social"].astype(str).str.strip().str.upper()
             df = df[~mask_rateio_interno].reset_index(drop=True)
 
-        # ── EXCLUSÃO DE RATEIOS COM Codigo_WBC == Numero_referencia_contrato E Rateio == "SIM" ──
         if "Codigo_WBC" in df.columns and "Numero_referencia_contrato" in df.columns and "Rateio" in df.columns:
             mask_rateio_duplicado = (df["Codigo_WBC"].astype(str).str.strip() == df["Numero_referencia_contrato"].astype(str).str.strip()) & (df["Rateio"].astype(str).str.strip().str.upper() == "SIM")
             df = df[~mask_rateio_duplicado].reset_index(drop=True)
 
-        # ── INCLUSÃO: GARANTIR ORDENAÇÃO CRESCENTE E REMOVER BOLETAS DUPLICADAS ──
         if "Codigo_WBC" in df.columns:
             df = df.iloc[pd.to_numeric(df["Codigo_WBC"], errors="coerce").argsort()].reset_index(drop=True)
             df = df.drop_duplicates(subset=["Codigo_WBC"], keep="first").reset_index(drop=True)
@@ -388,19 +347,13 @@ if arquivo is not None:
         else:
             mapa_mes_anterior = {}
 
-        # Carrega o mapa BOLETA -> Parcela de Carga a partir das planilhas auxiliares na pasta "anexos"
         mapa_parcela_carga = carregar_mapa_parcela_carga(arquivo_ponto_medicao, arquivo_boletas, arquivo_modelagem_ativo)
-
-        # Carrega os mapas BOLETA -> Situação pagamento / Pagamento a partir da planilha Faturamento em Aberto
         mapa_situacao_pagamento, mapa_pagamento = carregar_mapa_situacao_pagamento(arquivo_faturamento_aberto)
 
-        # Carrega os mapas BOLETA -> Situacao_ERP / Data_Vencimento_ordem a partir do ZIP RelPers 301 (Mapa Financeiro)
-        # e sobrepõe ao mapa do Faturamento em Aberto, já que o RelPers 301 é a fonte oficial (equivalente à aba MAPA FINANCEIRO)
         mapa_situacao_301, mapa_pagamento_301 = carregar_mapa_relpers_301(zip_relpers_301)
         mapa_situacao_pagamento.update(mapa_situacao_301)
         mapa_pagamento.update(mapa_pagamento_301)
 
-        # Extração e Combinação super rápida
         csvs_matrix = extrair_csvs_zip(zip_matrix)
         csvs_bismut = extrair_csvs_zip(zip_bismut)
 
@@ -408,7 +361,6 @@ if arquivo is not None:
         df_ccee_bismut = combiner_dfs([csvs_bismut['cceal']])
         df_ccee_acr = combiner_dfs([csvs_matrix['ccear_q']])
 
-        # CRIAÇÃO DOS ÍNDICES DE AGILIDADE
         idx_m_chave, idx_m_v, idx_m_c, idx_m_s, set_m_ext, idx_m_min, idx_m_max, idx_m_tipo = criar_indices_busca(df_ccee_matrix)
         idx_b_chave, idx_b_v, idx_b_c, idx_b_s, set_b_ext, idx_b_min, idx_b_max, idx_b_tipo = criar_indices_busca(df_ccee_bismut)
         idx_a_chave, idx_a_v, idx_a_c, idx_a_s, set_a_ext, idx_a_min, idx_a_max, idx_a_tipo = criar_indices_busca(df_ccee_acr)
@@ -428,7 +380,6 @@ if arquivo is not None:
         horas_por_linha = df["Mes"].map(horas_mes)
         volume_mwm = (df["QuantAtualizada"] / horas_por_linha).round(6)
 
-        # Converter Codigo_CCEE para string antes de usar
         codigo_ccee_str = df["Codigo_CCEE"].fillna("").astype(str).str.strip()
         codigo_ccee_str = codigo_ccee_str.replace("nan", "-")
         codigo_ccee_str = codigo_ccee_str.replace("", "-")
@@ -455,17 +406,14 @@ if arquivo is not None:
         base["Comprador"]                      = df["Sigla_CCEE_comprador"].fillna("-").astype(str)
         base["Contrato CliqCCEE"]              = "-"
 
-        # ── PARCELA DE CARGA (equivalente ao VLOOKUP na aba 'varejistas dri' do Book) ──
         base["Parcela de Carga"] = pd.to_numeric(base["BOLETA"], errors="coerce").map(mapa_parcela_carga)
         base["Parcela de Carga"] = base["Parcela de Carga"].apply(lambda v: str(int(v)) if pd.notna(v) else "-")
 
-        # ── SITUAÇÃO PAGAMENTO E PAGAMENTO (equivalente ao VLOOKUP na 'MAPA FINANCEIRO' do Book) ──
         _boleta_num = pd.to_numeric(base["BOLETA"], errors="coerce")
         base["Situação pagamento"] = _boleta_num.map(mapa_situacao_pagamento).fillna("Pago")
         base["Pagamento"] = _boleta_num.map(mapa_pagamento)
         base["Pagamento"] = base["Pagamento"].apply(lambda v: v.strftime("%d/%m/%Y") if isinstance(v, (pd.Timestamp,)) else ("-" if pd.isna(v) else str(v)))
 
-        # ── LOGICA PARA DEFINIR SE É VAREJISTA (MATRIX VAR OU BISMUT VAR) ──
         p_upper = base["Parte"].astype(str).str.strip().str.upper()
         c_upper = base["Contraparte"].astype(str).str.strip().str.upper()
         
@@ -516,7 +464,6 @@ if arquivo is not None:
         _soma_book = _df_book.groupby("Contrato CliqCCEE")["_vol_num"].transform("sum")
         base["Volume Book"] = _soma_book
 
-        # ── SITUAÇÃO PGTO (equivalente a =IF(SUMIFS(N:N,V:V,V10,CC:CC,"Pago")=BY10,"Pago","-") do Book) ──
         _df_pgto = base[["Contrato CliqCCEE", "Situação pagamento"]].copy()
         _df_pgto["_vol_num"] = _vol_mwm_num.where(_mask_valido_book, 0.0)
         _df_pgto["_vol_pago"] = _df_pgto["_vol_num"].where(_df_pgto["Situação pagamento"] == "Pago", 0.0)
@@ -552,7 +499,6 @@ if arquivo is not None:
                     d_field = dict_m
                 
                 res_val = d_field.get(cod, "-")
-                
                 if pd.isna(res_val) or str(res_val).strip().lower() in ["nan", "none", ""]:
                     return "-"
 
@@ -584,4 +530,69 @@ if arquivo is not None:
             base["Modulação Máxima CCEE"] = "-"
             base["Modulação CCEE"]        = "-"
 
-        # O restante do código de processamento e tabelas continua inalterado daqui para baixo...
+        _tol_mod = 1e-4
+        
+        base["Check Modulação Mínima"] = "-"
+        _mod_min_cc = pd.to_numeric(base["Modulação Mínima CCEE"], errors="coerce")
+        _mask_min_valid = _mask_calcular_min & _mod_min_cc.notna()
+        _mask_ambos_traco_min = (base["Modulação Mínima"].astype(str).str.strip() == "-") & (base["Modulação Mínima CCEE"].astype(str).str.strip() == "-")
+        base.loc[_mask_ambos_traco_min, "Check Modulação Mínima"] = "OK"
+        if _mask_min_valid.any():
+            _diff_min = pd.to_numeric(base.loc[_mask_min_valid, "Modulação Mínima"]) - _mod_min_cc.loc[_mask_min_valid]
+            _mask_min_calc = _mask_min_valid & (base["Check Modulação Mínima"] != "OK")
+            base.loc[_mask_min_calc, "Check Modulação Mínima"] = "OK"
+            base.loc[_mask_min_calc & (_diff_min > _tol_mod), "Check Modulação Mínima"] = "Book maior"
+            base.loc[_mask_min_calc & (_diff_min < -_tol_mod), "Check Modulação Mínima"] = "CCEE maior"
+
+        base["Check Modulação Máxima"] = "-"
+        _mod_max_cc = pd.to_numeric(base["Modulação Máxima CCEE"], errors="coerce")
+        _mask_max_valid = _mask_calcular_max & _mod_max_cc.notna()
+        _mask_ambos_traco_max = (base["Modulação Máxima"].astype(str).str.strip() == "-") & (base["Modulação Máxima CCEE"].astype(str).str.strip() == "-")
+        base.loc[_mask_ambos_traco_max, "Check Modulação Máxima"] = "OK"
+        if _mask_max_valid.any():
+            _diff_max = pd.to_numeric(base.loc[_mask_max_valid, "Modulação Máxima"]) - _mod_max_cc.loc[_mask_max_valid]
+            _mask_max_calc = _mask_max_valid & (base["Check Modulação Máxima"] != "OK")
+            base.loc[_mask_max_calc, "Check Modulação Máxima"] = "OK"
+            base.loc[_mask_max_calc & (_diff_max > _tol_mod), "Check Modulação Máxima"] = "Book maior"
+            base.loc[_mask_max_calc & (_diff_max < -_tol_mod), "Check Modulação Máxima"] = "CCEE maior"
+
+        base["Check Modulação"] = "-"
+        _mask_ambos_traco_tipo = (base["Modulação WBC"].astype(str).str.strip() == "-") & (base["Modulação CCEE"].astype(str).str.strip() == "-")
+        base.loc[_mask_ambos_traco_tipo, "Check Modulação"] = "OK"
+        _mask_tipo_valid = _mask_tem_contrato & (~base["Modulação CCEE"].astype(str).str.strip().isin(["", "-", "None", "nan"]))
+        if _mask_tipo_valid.any():
+            _mask_div_tipo = base["Modulação WBC"].astype(str).str.strip().str.upper() != base["Modulação CCEE"].astype(str).str.strip().str.upper()
+            _mask_tipo_calc = _mask_tipo_valid & (base["Check Modulação"] != "OK")
+            base.loc[_mask_tipo_calc, "Check Modulação"] = "OK"
+            base.loc[_mask_tipo_calc & _mask_div_tipo, "Check Modulação"] = "Divergente"
+
+        _valores_divergentes_mod = ("Book maior", "CCEE maior")
+        base["Limites Modulação"] = "OK"
+        _mask_limites_verificar = (
+            base["Check Modulação Mínima"].isin(_valores_divergentes_mod) |
+            base["Check Modulação Máxima"].isin(_valores_divergentes_mod)
+        )
+        base.loc[_mask_limites_verificar, "Limites Modulação"] = "Verificar"
+
+        if csvs_disponiveis:
+            _lista_dfs_ccee_vol = []
+            for _df_src in [df_ccee_matrix, df_ccee_bismut, df_ccee_acr]:
+                if _df_src is not None and not _df_src.empty and "CODIGO_CONTRATO" in _df_src.columns and "MWmedio" in _df_src.columns:
+                    _tmp = _df_src[["CODIGO_CONTRATO", "MWmedio"]].copy()
+                    _tmp["MWmedio"] = _tmp["MWmedio"].astype(str).str.strip().str.replace(",", ".", regex=False)
+                    _tmp["MWmedio"] = pd.to_numeric(_tmp["MWmedio"], errors="coerce").fillna(0.0)
+                    _lista_dfs_ccee_vol.append(_tmp)
+            if _lista_dfs_ccee_vol:
+                _df_ccee_vol = pd.concat(_lista_dfs_ccee_vol, ignore_index=True)
+                _vol_ccee_por_contrato = _df_ccee_vol.groupby("CODIGO_CONTRATO")["MWmedio"].sum()
+                base["Volume CCEE"] = base["Contrato CliqCCEE"].map(_vol_ccee_por_contrato).fillna(0.0)
+            else:
+                base["Volume CCEE"] = 0.0
+        else:
+            base["Volume CCEE"] = 0.0
+
+    except Exception as e:
+        st.error(f"Erro ao processar os dados da RelPers: {e}")
+
+    # ──────────────────────────────────────────────────────────────────────────────
+    # O restante do código de processamento e tabelas continua inalterado daqui para baixo...
