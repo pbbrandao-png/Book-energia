@@ -336,6 +336,8 @@ st.set_page_config(page_title="Book Energia", layout="wide")
 
 pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético"])
 st.sidebar.markdown("---")
+flag_ocultar_intraportfolio = st.sidebar.toggle("🟡 Ocultar IntraPortifólio (Parte = Contraparte)", value=True)
+st.sidebar.markdown("---")
 
 st.title("📊 Book Energia")
 
@@ -353,8 +355,8 @@ if arquivo is not None:
     try:
         df = pd.read_excel(arquivo, header=8)
 
-        # ── EXCLUSÃO TOTAL DOS RATEIOS (PRÓPRIA REFERÊNCIA / INTRA-PORTFÓLIO) ──
-        if "Parte_razao_social" in df.columns and "Contraparte_razao_social" in df.columns:
+        # ── EXCLUSÃO DOS RATEIOS (PRÓPRIA REFERÊNCIA / INTRA-PORTFÓLIO) — controlada pela flag "Ocultar IntraPortifólio" ──
+        if flag_ocultar_intraportfolio and "Parte_razao_social" in df.columns and "Contraparte_razao_social" in df.columns:
             mask_rateio_interno = df["Parte_razao_social"].astype(str).str.strip().str.upper() == df["Contraparte_razao_social"].astype(str).str.strip().str.upper()
             df = df[~mask_rateio_interno].reset_index(drop=True)
 
@@ -616,14 +618,24 @@ if arquivo is not None:
             base.loc[_mask_tipo_calc, "Check Modulação"] = "OK"
             base.loc[_mask_tipo_calc & _mask_div_tipo, "Check Modulação"] = "Divergente"
 
+        # ── LIMITES MODULAÇÃO: resumo de Check Modulação Mínima + Check Modulação Máxima ──
+        _valores_divergentes_mod = ("Book maior", "CCEE maior")
+        base["Limites Modulação"] = "OK"
+        _mask_limites_verificar = (
+            base["Check Modulação Mínima"].isin(_valores_divergentes_mod)
+            | base["Check Modulação Máxima"].isin(_valores_divergentes_mod)
+        )
+        base.loc[_mask_limites_verificar, "Limites Modulação"] = "Verificar"
+
         _ordem_colunas = [
-            "BOLETA", "Operação", "Varejista", "Tipo de Energia", "Parte", "Contraparte Razão Social", "Contraparte",
+            "BOLETA", "Conferência Geral", "Operação", "Varejista", "Tipo de Energia", "Parte", "Contraparte Razão Social", "Contraparte",
             "CP/LP", "CNPJ CONTRAPARTE", "Submercado", "Volume (MWh)", "Volume MWm", "CliqCCEE Paradigma",
-            "Modulação WBC", "% Modulação Mínima", "Modulação Mínima", "Modulação Mínima CCEE", "Check Modulação Mínima",
-            "% Modulação Máxima", "Modulação Máxima", "Modulação Máxima CCEE", "Check Modulação Máxima",
+            "Modulação WBC", "% Modulação Mínima", "Modulação Mínima", "Modulação Mínima CCEE",
+            "% Modulação Máxima", "Modulação Máxima", "Modulação Máxima CCEE", "Limites Modulação",
+            "Check Modulação Mínima", "Check Modulação Máxima",
             "Modulação CCEE", "Check Modulação",
             "Contrato CliqCCEE mês anterior", "Vendedor", "Comprador", "Contrato CliqCCEE",
-            "Volume Book", "Volume CCEE", "Check Volume", "Volume Global", "Volume Global CCEE", "Check Volume Global",
+            "Volume Book", "Volume CCEE", "Check Volume", "Check Volume Detalhado", "Volume Global", "Volume Global CCEE", "Check Volume Global",
             "Parcela de Carga", "SITUAÇÃO PGTO", "Situação pagamento", "Pagamento"
         ]
         base = base[[c for c in _ordem_colunas if c in base.columns]]
@@ -698,10 +710,10 @@ if arquivo is not None:
         if pagina == "Base Conferência":
             st.subheader("Base Conferência")
 
-            col_flag1, col_flag2, col_flag3 = st.columns(3)
-            with col_flag1: flag_mesmo_titular = st.toggle("🟡 Ocultar IntraPortifólio Visualmente", value=True)
-            with col_flag2: flag_ocultar_zerados = st.toggle("🚫 Ocultar contratos zerados (Volume MWh = 0)", value=False)
-            with col_flag3: flag_zerar_intercompany = st.toggle("🏢 Zerar InterCompany", value=False)
+            col_flag1, col_flag2 = st.columns(2)
+            with col_flag1: flag_ocultar_zerados = st.toggle("🚫 Ocultar contratos zerados (Volume MWh = 0)", value=False)
+            with col_flag2: flag_zerar_intercompany = st.toggle("🏢 Zerar InterCompany", value=False)
+            flag_mesmo_titular = flag_ocultar_intraportfolio
 
             base_original = base.copy()
             mask_intercompany = pd.Series(False, index=base.index)
