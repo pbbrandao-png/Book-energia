@@ -40,6 +40,108 @@ def formatar_cnpj(valor):
     )
 
 
+def _boleta_para_chave(valor):
+    """Converte qualquer representação de BOLETA (int, float, string com espaço/decimal/vírgula) numa
+    chave string canônica (ex: 123456), para casar com a coluna BOLETA da Base Conferência independente
+    de como o número foi digitado ou veio da planilha."""
+    if valor is None:
+        return None
+    if isinstance(valor, float) and pd.isna(valor):
+        return None
+    texto = str(valor).strip()
+    if texto == "" or texto.lower() in ("nan", "none", "-", "nat"):
+        return None
+    texto = texto.replace(" ", "")
+    try:
+        return str(int(float(texto.replace(",", "."))))
+    except (ValueError, TypeError):
+        return None
+
+
+def _normalizar_texto_correcao(valor):
+    """Normaliza um valor de correção (Vendedor/Comprador/Contrato CliqCCEE) vindo de planilha ou do
+    editor manual, tratando NaN/None/'-'/string vazia como 'não informado' (ou seja, não corrige)."""
+    if valor is None:
+        return None
+    if isinstance(valor, float) and pd.isna(valor):
+        return None
+    texto = str(valor).strip()
+    if texto == "" or texto.lower() in ("nan", "none", "-", "nat"):
+        return None
+    return texto
+
+
+def _extrair_correcoes_de_dataframe(df_bruto):
+    """Recebe um DataFrame (planilha enviada ou tabela editada manualmente no app) e devolve um
+    dicionário {BOLETA (str): {"Vendedor": ..., "Comprador": ..., "Contrato CliqCCEE": ...}}, contendo
+    apenas os campos realmente preenchidos. Tolera variações de maiúsculas/minúsculas e espaços extras
+    nos cabeçalhos, e tolera BOLETA vinda como texto, número inteiro, número decimal ou com vírgula."""
+    correcoes = {}
+    if df_bruto is None or len(df_bruto) == 0:
+        return correcoes
+
+    mapa_colunas = {}
+    for col in df_bruto.columns:
+        chave = str(col).strip().upper()
+        if chave in ("BOLETA", "BOLETAS", "CÓDIGO", "CODIGO", "CODIGO_WBC", "COD. WBC", "COD WBC", "CÓD. WBC"):
+            mapa_colunas[col] = "BOLETA"
+        elif chave in ("CONTRATO CLIQCCEE", "CONTRATO CLIQ CCEE", "CLIQCCEE", "CLIQ CCEE", "CÓDIGO CCEE", "CODIGO CCEE", "CONTRATO CCEE"):
+            mapa_colunas[col] = "Contrato CliqCCEE"
+        elif chave in ("COMPRADOR", "SIGLA COMPRADOR", "SIGLA_CCEE_COMPRADOR"):
+            mapa_colunas[col] = "Comprador"
+        elif chave in ("VENDEDOR", "SIGLA VENDEDOR", "SIGLA_CCEE_VENDEDOR"):
+            mapa_colunas[col] = "Vendedor"
+
+    df_bruto = df_bruto.rename(columns=mapa_colunas)
+
+    if "BOLETA" not in df_bruto.columns:
+        return correcoes
+
+    for _, linha in df_bruto.iterrows():
+        boleta_key = _boleta_para_chave(linha.get("BOLETA"))
+        if boleta_key is None:
+            continue
+
+        campos = {}
+        for col_destino in ("Contrato CliqCCEE", "Comprador", "Vendedor"):
+            if col_destino in df_bruto.columns:
+                valor = _normalizar_texto_correcao(linha.get(col_destino))
+                if valor is not None:
+                    campos[col_destino] = valor
+
+        if campos:
+            correcoes.setdefault(boleta_key, {}).update(campos)
+
+    return correcoes
+
+
+def carregar_correcoes_manuais(arquivo_planilha, df_editor):
+    """Combina as correções vindas da planilha enviada com as digitadas manualmente na tabela do app.
+    Em caso de conflito (mesma BOLETA e mesma coluna preenchida nos dois lugares), a edição feita
+    diretamente no app tem prioridade sobre a planilha."""
+    correcoes = {}
+
+    if arquivo_planilha is not None:
+        try:
+            try:
+                df_corr = pd.read_excel(arquivo_planilha, dtype=str)
+            except Exception:
+                arquivo_planilha.seek(0)
+                df_corr = pd.read_excel(arquivo_planilha, dtype=str, engine="openpyxl")
+            df_corr.columns = [str(c).strip() for c in df_corr.columns]
+            correcoes_planilha = _extrair_correcoes_de_dataframe(df_corr)
+            for boleta_key, campos in correcoes_planilha.items():
+                correcoes.setdefault(boleta_key, {}).update(campos)
+        except Exception as e:
+            st.warning(f"⚠️ Não foi possível ler a planilha de Correções ({e}). Confira se as colunas BOLETA / Contrato CliqCCEE / Comprador / Vendedor estão corretas.")
+
+    correcoes_editor = _extrair_correcoes_de_dataframe(df_editor)
+    for boleta_key, campos in correcoes_editor.items():
+        correcoes.setdefault(boleta_key, {}).update(campos)
+
+    return correcoes
+
+
 @st.cache_data(show_spinner=False)
 def ler_csv_ccee(bytes_csv):
     """Lê bytes de um CSV CCEE e limpa colunas."""
@@ -363,6 +465,33 @@ arquivo_modelagem_ativo = st.file_uploader("Selecione a planilha Exportação So
 arquivo_faturamento_aberto = st.file_uploader("Selecione a planilha Faturamento em Aberto", type=["xlsx", "xls"])
 zip_relpers_301 = st.file_uploader("Selecione o ZIP RelPers 301 (Mapa Financeiro)", type=["zip"])
 
+st.markdown("### ✏️ Correções Manuais (Contrato CliqCCEE / Comprador / Vendedor)")
+st.caption(
+    "Preencha aqui pontualmente (linhas na tabela abaixo) ou suba uma planilha com as colunas "
+    "BOLETA, Contrato CliqCCEE, Comprador e Vendedor — preencha só o que precisar corrigir, não precisa "
+    "preencher as 3 colunas. O sistema refaz todos os checks usando o valor que você informou, e as "
+    "linhas corrigidas aparecem destacadas em roxo na Base Conferência."
+)
+
+arquivo_correcoes = st.file_uploader(
+    "Planilha de Correções (colunas: BOLETA, Contrato CliqCCEE, Comprador, Vendedor)",
+    type=["xlsx", "xls"],
+    key="upload_correcoes",
+)
+
+df_editor_correcoes = st.data_editor(
+    pd.DataFrame(columns=["BOLETA", "Contrato CliqCCEE", "Comprador", "Vendedor"]),
+    num_rows="dynamic",
+    use_container_width=True,
+    hide_index=True,
+    key="editor_correcoes",
+)
+
+correcoes_manuais = carregar_correcoes_manuais(arquivo_correcoes, df_editor_correcoes)
+if correcoes_manuais:
+    st.success(f"✅ {len(correcoes_manuais)} boleta(s) com correção manual identificada(s).")
+st.markdown("---")
+
 if arquivo is not None:
     try:
         df = pd.read_excel(arquivo, header=8)
@@ -460,6 +589,16 @@ if arquivo is not None:
         base["Comprador"]                      = df["Sigla_CCEE_comprador"].fillna("-").astype(str)
         base["Contrato CliqCCEE"]              = "-"
 
+        # ── CORREÇÕES MANUAIS: aplica Vendedor/Comprador ANTES do cálculo automático do Contrato
+        # CliqCCEE, para que o "match" com o CSV CCEE já use o valor corrigido ──
+        _boleta_key_base = base["BOLETA"].apply(_boleta_para_chave)
+        if correcoes_manuais:
+            for _col_corr in ("Vendedor", "Comprador"):
+                _mapa_corr = {k: v[_col_corr] for k, v in correcoes_manuais.items() if _col_corr in v}
+                if _mapa_corr:
+                    _override = _boleta_key_base.map(_mapa_corr)
+                    base[_col_corr] = _override.where(_override.notna(), base[_col_corr])
+
         # ── PARCELA DE CARGA (equivalente ao VLOOKUP na aba 'varejistas dri' do Book) ──
         base["Parcela de Carga"] = pd.to_numeric(base["BOLETA"], errors="coerce").map(mapa_parcela_carga)
         base["Parcela de Carga"] = base["Parcela de Carga"].apply(lambda v: str(int(v)) if pd.notna(v) else "-")
@@ -513,6 +652,15 @@ if arquivo is not None:
                 return '-'
 
             base["Contrato CliqCCEE"] = base.apply(calcular_contrato_cliqccee_fast, axis=1).astype(str)
+
+        # ── CORREÇÕES MANUAIS: sobrepõe o Contrato CliqCCEE calculado automaticamente pelo valor
+        # informado manualmente/pela planilha (quando houver), para as boletas corrigidas ──
+        mapa_contrato_corr = {k: v["Contrato CliqCCEE"] for k, v in correcoes_manuais.items() if "Contrato CliqCCEE" in v}
+        if mapa_contrato_corr:
+            _override_contrato = _boleta_key_base.map(mapa_contrato_corr)
+            base["Contrato CliqCCEE"] = _override_contrato.where(_override_contrato.notna(), base["Contrato CliqCCEE"])
+
+        base["Corrigido Manualmente"] = np.where(_boleta_key_base.isin(correcoes_manuais.keys()), "Sim", "Não")
 
         _vol_mwm_num = pd.to_numeric(base["Volume MWm"], errors="coerce")
         _mask_valido_book = _vol_mwm_num.notna() & (base["Volume MWm"].astype(str).str.strip() != "-")
@@ -646,7 +794,7 @@ if arquivo is not None:
             "% Modulação Máxima", "Modulação Máxima", "Modulação Máxima CCEE", "Limites Modulação",
             "Check Modulação Mínima", "Check Modulação Máxima",
             "Modulação CCEE", "Check Modulação",
-            "Contrato CliqCCEE mês anterior", "Vendedor", "Comprador", "Contrato CliqCCEE",
+            "Contrato CliqCCEE mês anterior", "Vendedor", "Comprador", "Contrato CliqCCEE", "Corrigido Manualmente",
             "Volume Book", "Volume CCEE", "Check Volume", "Check Volume Detalhado", "Volume Global", "Volume Global CCEE", "Check Volume Global",
             "Parcela de Carga", "SITUAÇÃO PGTO", "Situação pagamento", "Pagamento"
         ]
@@ -787,7 +935,7 @@ if arquivo is not None:
             colunas_texto = [
                 "BOLETA", "Operação", "Varejista", "Tipo de Energia", "Parte", "Contraparte Razão Social",
                 "Contraparte", "CP/LP", "CNPJ CONTRAPARTE", "Submercado", "CliqCCEE Paradigma",
-                "Contrato CliqCCEE mês anterior", "Contrato CliqCCEE", "Modulação WBC",
+                "Contrato CliqCCEE mês anterior", "Contrato CliqCCEE", "Corrigido Manualmente", "Modulação WBC",
                 "% Modulação Mínima", "% Modulação Máxima", "Modulação Mínima", "Modulação Máxima",
                 "Modulação Mínima CCEE", "Modulação Máxima CCEE", "Check Modulação Mínima",
                 "Check Modulação Máxima", "Modulação CCEE", "Check Modulação", "Vendedor", "Comprador",
@@ -801,6 +949,8 @@ if arquivo is not None:
             _idx_intercompany = set(base.index[mask_intercompany].tolist()) if flag_zerar_intercompany else set()
 
             def _highlight_tabela(row):
+                if str(row.get("Corrigido Manualmente", "Não")).strip() == "Sim":
+                    return ["background-color: #9B59B6; color: white"] * len(row)
                 boleta_str = str(row.get("BOLETA", "")).strip()
                 if boleta_str in _boletas_ef_set:
                     return ["background-color: #7B2D8B; color: white"] * len(row)
