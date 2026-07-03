@@ -16,7 +16,7 @@ import re
 from io import BytesIO
 
 # Configura o limite do Pandas Styler para evitar o erro de estouro de células devido ao aumento de colunas
-pd.set_option("styler.render.max_elements\", 2000000)
+pd.set_option("styler.render.max_elements", 2000000)
 
 # Boletas que devem buscar no CSV ccear_q em vez do cceal_firme
 BOLETAS_ACR = {
