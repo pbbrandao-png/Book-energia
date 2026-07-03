@@ -42,7 +42,7 @@ def formatar_cnpj(valor):
 
 def _boleta_para_chave(valor):
     """Converte qualquer representação de BOLETA (int, float, string com espaço/decimal/vírgula) numa
-    chave string canônica (ex: 123456), para casar com a coluna BOLETA da Base Conferência independente
+    chave string canônica (ex: '123456'), para casar com a coluna BOLETA da Base Conferência independente
     de como o número foi digitado ou veio da planilha."""
     if valor is None:
         return None
@@ -59,8 +59,8 @@ def _boleta_para_chave(valor):
 
 
 def _normalizar_texto_correcao(valor):
-    """Normaliza um valor de correção (Vendedor/Comprador/Contrato CliqCCEE) vindo de planilha ou do
-    editor manual, tratando NaN/None/'-'/string vazia como 'não informado' (ou seja, não corrige)."""
+    """Normaliza um valor de correção (Vendedor/Comprador/Contrato CliqCCEE) vindo de planilha ou da
+    edição direta na tabela, tratando NaN/None/'-'/string vazia como 'não informado' (ou seja, não corrige)."""
     if valor is None:
         return None
     if isinstance(valor, float) and pd.isna(valor):
@@ -71,11 +71,11 @@ def _normalizar_texto_correcao(valor):
     return texto
 
 
-def _extrair_correcoes_de_dataframe(df_bruto):
-    """Recebe um DataFrame (planilha enviada ou tabela editada manualmente no app) e devolve um
-    dicionário {BOLETA (str): {"Vendedor": ..., "Comprador": ..., "Contrato CliqCCEE": ...}}, contendo
-    apenas os campos realmente preenchidos. Tolera variações de maiúsculas/minúsculas e espaços extras
-    nos cabeçalhos, e tolera BOLETA vinda como texto, número inteiro, número decimal ou com vírgula."""
+def _extrair_correcoes_de_planilha(df_bruto):
+    """Recebe a planilha de correções enviada pelo usuário e devolve um dicionário
+    {BOLETA (str): {"Vendedor": ..., "Comprador": ..., "Contrato CliqCCEE": ...}}, contendo apenas os
+    campos realmente preenchidos. Tolera variações de maiúsculas/minúsculas e espaços extras nos
+    cabeçalhos, e tolera BOLETA vinda como texto, número inteiro, número decimal ou com vírgula."""
     correcoes = {}
     if df_bruto is None or len(df_bruto) == 0:
         return correcoes
@@ -115,10 +115,11 @@ def _extrair_correcoes_de_dataframe(df_bruto):
     return correcoes
 
 
-def carregar_correcoes_manuais(arquivo_planilha, df_editor):
-    """Combina as correções vindas da planilha enviada com as digitadas manualmente na tabela do app.
-    Em caso de conflito (mesma BOLETA e mesma coluna preenchida nos dois lugares), a edição feita
-    diretamente no app tem prioridade sobre a planilha."""
+def carregar_correcoes_manuais(arquivo_planilha, correcoes_editor_dict):
+    """Combina as correções vindas da planilha enviada com as digitadas diretamente na tabela principal
+    do app (dicionário {BOLETA: {coluna: valor}} já pronto). Em caso de conflito (mesma BOLETA e mesma
+    coluna preenchida nos dois lugares), a edição feita diretamente na tabela tem prioridade sobre a
+    planilha."""
     correcoes = {}
 
     if arquivo_planilha is not None:
@@ -129,20 +130,18 @@ def carregar_correcoes_manuais(arquivo_planilha, df_editor):
                 arquivo_planilha.seek(0)
                 df_corr = pd.read_excel(arquivo_planilha, dtype=str, engine="openpyxl")
             df_corr.columns = [str(c).strip() for c in df_corr.columns]
-            correcoes_planilha = _extrair_correcoes_de_dataframe(df_corr)
+            correcoes_planilha = _extrair_correcoes_de_planilha(df_corr)
             for boleta_key, campos in correcoes_planilha.items():
                 correcoes.setdefault(boleta_key, {}).update(campos)
         except Exception as e:
             st.warning(f"⚠️ Não foi possível ler a planilha de Correções ({e}). Confira se as colunas BOLETA / Contrato CliqCCEE / Comprador / Vendedor estão corretas.")
 
-    correcoes_editor = _extrair_correcoes_de_dataframe(df_editor)
-    for boleta_key, campos in correcoes_editor.items():
+    for boleta_key, campos in (correcoes_editor_dict or {}).items():
         correcoes.setdefault(boleta_key, {}).update(campos)
 
     return correcoes
 
 
-@st.cache_data(show_spinner=False)
 def ler_csv_ccee(bytes_csv):
     """Lê bytes de um CSV CCEE e limpa colunas."""
     df = pd.read_csv(BytesIO(bytes_csv), sep='\t', encoding='latin1', skiprows=1, dtype=str)
@@ -164,7 +163,6 @@ def ler_csv_ccee(bytes_csv):
     return df
 
 
-@st.cache_data(show_spinner="Lendo ZIP e extraindo CSVs...")
 def extrair_csvs_zip(zip_file):
     result = {'cceal': None, 'cbr': None, 'ccear_q': None}
     if zip_file is None:
@@ -226,7 +224,6 @@ def _ler_planilha_modelagem_ativo(arquivo):
         return pd.read_excel(arquivo, header=linha_cabecalho)
 
 
-@st.cache_data(show_spinner="Processando Parcela de Carga...")
 def carregar_mapa_parcela_carga(arquivo_ponto, arquivo_boletas, arquivo_modelagem_ativo=None):
     """Recria a lógica da coluna 'PARCELA DE CARGA' do Book (VLOOKUP na aba 'varejistas dri'):
     Ponto -> Boleta (via arquivo Boletas, equivalente à aba BILLING) e Boleta -> Cód. Parcela - Carga
@@ -281,7 +278,6 @@ def carregar_mapa_parcela_carga(arquivo_ponto, arquivo_boletas, arquivo_modelage
     return mapa
 
 
-@st.cache_data(show_spinner="Processando RelPers 301 (Mapa Financeiro)...")
 def carregar_mapa_relpers_301(zip_relpers):
     """Extrai a planilha 'EXP301 (WBC)' do ZIP RelPers 301 e monta os mapas BOLETA -> Situacao_ERP e
     BOLETA -> Data_Vencimento_ordem, equivalente à aba 'MAPA FINANCEIRO' do Book."""
@@ -320,7 +316,6 @@ def carregar_mapa_relpers_301(zip_relpers):
     return mapa_situacao, mapa_pagamento
 
 
-@st.cache_data(show_spinner="Processando Faturamento em Aberto...")
 def carregar_mapa_situacao_pagamento(arquivo_faturamento):
     """Recria a lógica das colunas 'Situação pagamento' e 'Pagamento' do Book (VLOOKUP na 'MAPA FINANCEIRO'),
     usando a planilha 'Faturamento em Aberto' como fonte: BOLETA -> Situação pagamento (Pago / Em Aberto)
@@ -442,18 +437,11 @@ def aplicar_zerar_intercompany(base: pd.DataFrame):
 st.set_page_config(page_title="Book Energia", layout="wide")
 
 pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético"])
+st.sidebar.markdown("---")
+flag_ocultar_intraportfolio = st.sidebar.toggle("🟡 Ocultar IntraPortifólio (Parte = Contraparte)", value=True)
+st.sidebar.markdown("---")
 
 st.title("📊 Book Energia")
-
-st.markdown("### ⚙️ Flags")
-col_flag1, col_flag2, col_flag3 = st.columns(3)
-with col_flag1:
-    flag_ocultar_intraportfolio = st.toggle("🟡 Ocultar IntraPortifólio (Parte = Contraparte)", value=True)
-with col_flag2:
-    flag_ocultar_zerados = st.toggle("🚫 Ocultar contratos zerados (Volume MWh = 0)", value=False)
-with col_flag3:
-    flag_zerar_intercompany = st.toggle("🏢 Zerar InterCompany", value=False)
-st.markdown("---")
 
 arquivo = st.file_uploader("Selecione a RelPers", type=["xlsx"])
 arquivo_mes_anterior = st.file_uploader("Selecione a planilha Mês Anterior", type=["xlsx"])
@@ -464,33 +452,17 @@ arquivo_boletas = st.file_uploader("Selecione a planilha Boletas", type=["xlsx",
 arquivo_modelagem_ativo = st.file_uploader("Selecione a planilha Exportação Solicitação Modelagem Ativo", type=["xlsx", "xls"])
 arquivo_faturamento_aberto = st.file_uploader("Selecione a planilha Faturamento em Aberto", type=["xlsx", "xls"])
 zip_relpers_301 = st.file_uploader("Selecione o ZIP RelPers 301 (Mapa Financeiro)", type=["zip"])
-
-st.markdown("### ✏️ Correções Manuais (Contrato CliqCCEE / Comprador / Vendedor)")
-st.caption(
-    "Preencha aqui pontualmente (linhas na tabela abaixo) ou suba uma planilha com as colunas "
-    "BOLETA, Contrato CliqCCEE, Comprador e Vendedor — preencha só o que precisar corrigir, não precisa "
-    "preencher as 3 colunas. O sistema refaz todos os checks usando o valor que você informou, e as "
-    "linhas corrigidas aparecem destacadas em roxo na Base Conferência."
-)
-
 arquivo_correcoes = st.file_uploader(
-    "Planilha de Correções (colunas: BOLETA, Contrato CliqCCEE, Comprador, Vendedor)",
+    "Planilha de Correções (opcional — colunas: BOLETA, Contrato CliqCCEE, Comprador, Vendedor)",
     type=["xlsx", "xls"],
     key="upload_correcoes",
 )
 
-df_editor_correcoes = st.data_editor(
-    pd.DataFrame(columns=["BOLETA", "Contrato CliqCCEE", "Comprador", "Vendedor"]),
-    num_rows="dynamic",
-    use_container_width=True,
-    hide_index=True,
-    key="editor_correcoes",
-)
-
-correcoes_manuais = carregar_correcoes_manuais(arquivo_correcoes, df_editor_correcoes)
+# Correções digitadas direto na tabela principal (Base Conferência) em reruns anteriores
+correcoes_editor_dict = st.session_state.get("correcoes_editor_dict", {})
+correcoes_manuais = carregar_correcoes_manuais(arquivo_correcoes, correcoes_editor_dict)
 if correcoes_manuais:
-    st.success(f"✅ {len(correcoes_manuais)} boleta(s) com correção manual identificada(s).")
-st.markdown("---")
+    st.caption(f"✏️ {len(correcoes_manuais)} boleta(s) com correção manual ativa (planilha e/ou edição direta na tabela).")
 
 if arquivo is not None:
     try:
@@ -870,6 +842,9 @@ if arquivo is not None:
         if pagina == "Base Conferência":
             st.subheader("Base Conferência")
 
+            col_flag1, col_flag2 = st.columns(2)
+            with col_flag1: flag_ocultar_zerados = st.toggle("🚫 Ocultar contratos zerados (Volume MWh = 0)", value=False)
+            with col_flag2: flag_zerar_intercompany = st.toggle("🏢 Zerar InterCompany", value=False)
             flag_mesmo_titular = flag_ocultar_intraportfolio
 
             base_original = base.copy()
@@ -949,9 +924,9 @@ if arquivo is not None:
             _idx_intercompany = set(base.index[mask_intercompany].tolist()) if flag_zerar_intercompany else set()
 
             def _highlight_tabela(row):
+                boleta_str = str(row.get("BOLETA", "")).strip()
                 if str(row.get("Corrigido Manualmente", "Não")).strip() == "Sim":
                     return ["background-color: #9B59B6; color: white"] * len(row)
-                boleta_str = str(row.get("BOLETA", "")).strip()
                 if boleta_str in _boletas_ef_set:
                     return ["background-color: #7B2D8B; color: white"] * len(row)
                 if flag_zerar_intercompany and row.name in _idx_intercompany:
@@ -963,8 +938,60 @@ if arquivo is not None:
                         return ["background-color: #FFD700"] * len(row)
                 return [""] * len(row)
 
-            styled = base_exibicao.style.apply(_highlight_tabela, axis=1)
-            st.dataframe(styled, use_container_width=True, hide_index=True)
+            flag_editar_tabela = st.toggle(
+                "✏️ Editar Vendedor / Comprador / Contrato CliqCCEE direto na tabela",
+                value=False,
+                help="Ao ativar, a tabela abaixo fica editável nessas 3 colunas. As correções são "
+                     "reaplicadas automaticamente (inclusive nos checks) assim que você editar uma célula "
+                     "e a tabela recarregar. Desative para voltar à visualização colorida normal.",
+            )
+
+            if flag_editar_tabela:
+                st.caption(
+                    "As colunas Vendedor, Comprador e Contrato CliqCCEE estão editáveis. As demais são "
+                    "somente leitura. Boletas com correção manual ficam marcadas como 'Sim' na coluna "
+                    "'Corrigido Manualmente'. Para desfazer uma correção, apague o campo e deixe '-'."
+                )
+                _colunas_editaveis = ["Vendedor", "Comprador", "Contrato CliqCCEE"]
+                _config_colunas = {
+                    col: st.column_config.Column(disabled=(col not in _colunas_editaveis))
+                    for col in base_exibicao.columns
+                }
+                base_editada = st.data_editor(
+                    base_exibicao,
+                    use_container_width=True,
+                    hide_index=True,
+                    num_rows="fixed",
+                    column_config=_config_colunas,
+                    key="editor_base_principal",
+                )
+
+                _novo_dict = dict(correcoes_editor_dict)
+                _houve_mudanca = False
+                for idx in base_exibicao.index:
+                    boleta_key = _boleta_para_chave(base_exibicao.at[idx, "BOLETA"])
+                    if boleta_key is None:
+                        continue
+                    for _col in _colunas_editaveis:
+                        valor_antigo = base_exibicao.at[idx, _col]
+                        valor_novo = base_editada.at[idx, _col]
+                        if str(valor_novo).strip() == str(valor_antigo).strip():
+                            continue
+                        _houve_mudanca = True
+                        valor_norm = _normalizar_texto_correcao(valor_novo)
+                        if valor_norm is None:
+                            _novo_dict.get(boleta_key, {}).pop(_col, None)
+                            if boleta_key in _novo_dict and not _novo_dict[boleta_key]:
+                                _novo_dict.pop(boleta_key, None)
+                        else:
+                            _novo_dict.setdefault(boleta_key, {})[_col] = valor_norm
+
+                if _houve_mudanca:
+                    st.session_state["correcoes_editor_dict"] = _novo_dict
+                    st.rerun()
+            else:
+                styled = base_exibicao.style.apply(_highlight_tabela, axis=1)
+                st.dataframe(styled, use_container_width=True, hide_index=True)
 
             base_download = base.copy()
             if flag_ocultar_zerados: base_download = base_download[base_download["Volume (MWh)"] != 0.0]
