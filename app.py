@@ -817,7 +817,7 @@ if arquivo is not None:
         else:
             base["Volume CCEE"] = 0.0
 
-        _tol = 1e-6
+        _tol = 0.000005
         _vb = pd.to_numeric(base["Volume Book"], errors="coerce").fillna(0.0)
         _vc = pd.to_numeric(base["Volume CCEE"], errors="coerce").fillna(0.0)
         _diff_vol = _vb - _vc
