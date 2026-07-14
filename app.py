@@ -26,6 +26,60 @@ BOLETAS_ACR = {
 }
 
 
+def _ler_excel_flex(arquivo, **kwargs):
+    """Lê um arquivo Excel (.xlsx/.xls) de forma tolerante a diferentes formatos, para evitar o erro
+    '`Import xlrd` failed' quando o xlrd não está instalado no ambiente e/ou quando o arquivo .xls
+    exportado por algum sistema é, na prática, uma tabela HTML salva com extensão .xls (formato comum
+    em exportações de relatórios). Tenta, nesta ordem: openpyxl (xlsx/xlsm), xlrd (xls binário de
+    verdade) e, por fim, leitura como HTML (xls "falso"). Repassa kwargs (header, usecols, nrows, etc.)
+    para pd.read_excel quando aplicável."""
+    nome = (getattr(arquivo, "name", "") or "").lower()
+    erros = []
+
+    if not nome.endswith(".xls"):
+        try:
+            arquivo.seek(0)
+            return pd.read_excel(arquivo, engine="openpyxl", **kwargs)
+        except Exception as e:
+            erros.append(e)
+
+    try:
+        arquivo.seek(0)
+        return pd.read_excel(arquivo, engine="xlrd", **kwargs)
+    except Exception as e:
+        erros.append(e)
+
+    try:
+        arquivo.seek(0)
+        return pd.read_excel(arquivo, **kwargs)
+    except Exception as e:
+        erros.append(e)
+
+    # Última tentativa: o arquivo .xls é, na verdade, uma tabela HTML (comum em relatórios exportados
+    # de sistemas como CCEE/ERP que salvam HTML com extensão .xls).
+    try:
+        arquivo.seek(0)
+        conteudo = arquivo.read()
+        header_kw = kwargs.get("header", 0)
+        tabelas = pd.read_html(BytesIO(conteudo), header=header_kw if isinstance(header_kw, int) else 0)
+        if tabelas:
+            df_html = tabelas[0]
+            nrows_kw = kwargs.get("nrows")
+            if nrows_kw is not None:
+                df_html = df_html.head(nrows_kw)
+            usecols_kw = kwargs.get("usecols")
+            if usecols_kw is not None:
+                try:
+                    df_html = df_html.loc[:, usecols_kw] if not isinstance(usecols_kw, str) else df_html
+                except Exception:
+                    pass
+            return df_html
+    except Exception as e:
+        erros.append(e)
+
+    raise erros[-1] if erros else RuntimeError("Não foi possível ler o arquivo Excel enviado.")
+
+
 def formatar_cnpj(valor):
     if pd.isna(valor):
         return ""
@@ -123,11 +177,7 @@ def carregar_correcoes_manuais(arquivo_planilha, df_editor):
 
     if arquivo_planilha is not None:
         try:
-            try:
-                df_corr = pd.read_excel(arquivo_planilha, dtype=str)
-            except Exception:
-                arquivo_planilha.seek(0)
-                df_corr = pd.read_excel(arquivo_planilha, dtype=str, engine="openpyxl")
+            df_corr = _ler_excel_flex(arquivo_planilha, dtype=str)
             df_corr.columns = [str(c).strip() for c in df_corr.columns]
             correcoes_planilha = _extrair_correcoes_de_dataframe(df_corr)
             for boleta_key, campos in correcoes_planilha.items():
@@ -200,14 +250,7 @@ def _ler_planilha_modelagem_ativo(arquivo):
     """Lê a planilha 'Exportação Solicitação Modelagem Ativo' (equivalente à aba SIGA), detectando
     automaticamente a linha de cabeçalho (procura pela linha que contém 'Nº do Ativo'), pois esse
     arquivo é exportado com linhas de título/filtro variáveis antes do cabeçalho real."""
-    nome = getattr(arquivo, "name", "") or ""
-    engine = "xlrd" if nome.lower().endswith(".xls") else None
-
-    try:
-        bruto = pd.read_excel(arquivo, header=None, nrows=30, engine=engine)
-    except Exception:
-        arquivo.seek(0)
-        bruto = pd.read_excel(arquivo, header=None, nrows=30)
+    bruto = _ler_excel_flex(arquivo, header=None, nrows=30)
 
     linha_cabecalho = None
     for i in range(len(bruto)):
@@ -218,12 +261,7 @@ def _ler_planilha_modelagem_ativo(arquivo):
     if linha_cabecalho is None:
         linha_cabecalho = 0
 
-    arquivo.seek(0)
-    try:
-        return pd.read_excel(arquivo, header=linha_cabecalho, engine=engine)
-    except Exception:
-        arquivo.seek(0)
-        return pd.read_excel(arquivo, header=linha_cabecalho)
+    return _ler_excel_flex(arquivo, header=linha_cabecalho)
 
 
 @st.cache_data(show_spinner="Processando Parcela de Carga...")
@@ -238,8 +276,8 @@ def carregar_mapa_parcela_carga(arquivo_ponto, arquivo_boletas, arquivo_modelage
         if arquivo_ponto is None or arquivo_boletas is None:
             return mapa
 
-        df_ponto = pd.read_excel(arquivo_ponto)
-        df_boletas = pd.read_excel(arquivo_boletas)
+        df_ponto = _ler_excel_flex(arquivo_ponto)
+        df_boletas = _ler_excel_flex(arquivo_boletas)
 
         if 'Conteúdo Expressão Contábil Processada' not in df_ponto.columns or 'Cód. Parcela - Carga' not in df_ponto.columns:
             return mapa
@@ -332,10 +370,9 @@ def carregar_mapa_situacao_pagamento(arquivo_faturamento):
             return mapa_situacao, mapa_pagamento
 
         try:
-            df_fat = pd.read_excel(arquivo_faturamento, header=5, usecols="A:L")
+            df_fat = _ler_excel_flex(arquivo_faturamento, header=5, usecols="A:L")
         except Exception:
-            arquivo_faturamento.seek(0)
-            df_fat = pd.read_excel(arquivo_faturamento, header=5)
+            df_fat = _ler_excel_flex(arquivo_faturamento, header=5)
         df_fat.columns = df_fat.columns.astype(str).str.strip()
         df_fat = df_fat.loc[:, ~df_fat.columns.str.startswith("Unnamed")]
 
@@ -363,6 +400,48 @@ def carregar_mapa_situacao_pagamento(arquivo_faturamento):
         mapa_situacao = {}
         mapa_pagamento = {}
     return mapa_situacao, mapa_pagamento
+
+
+@st.cache_data(show_spinner="Processando planilha de Garantias (Report)...")
+def carregar_mapa_garantia(arquivo_garantia):
+    """Recria a lógica da coluna 'Garantia Monday' do Book, usando como fonte auxiliar a planilha
+    'report' (relatório de Garantias exportado, ex: report....xls — muitas vezes é, na prática, uma
+    tabela HTML salva com extensão .xls). Monta o mapa BOLETA -> Status a partir da coluna 'Status
+    Detalhado' (coluna F da planilha report). Aceita variações de nome de coluna e de BOLETA, e cai
+    para a posição da coluna F (6ª coluna) caso o cabeçalho não seja reconhecido pelo nome."""
+    mapa_garantia = {}
+    try:
+        if arquivo_garantia is None:
+            return mapa_garantia
+
+        df_gar = _ler_excel_flex(arquivo_garantia)
+        df_gar.columns = [str(c).strip() for c in df_gar.columns]
+
+        col_boleta = None
+        col_status = None
+        for col in df_gar.columns:
+            chave = col.strip().upper()
+            if chave in ("BOLETA", "BOLETAS", "CÓDIGO", "CODIGO", "CODIGO_WBC", "COD. WBC", "COD WBC"):
+                col_boleta = col
+            elif "STATUS" in chave and ("DETALH" in chave or chave == "STATUS"):
+                col_status = col
+
+        # Fallback: se o cabeçalho de Status não foi reconhecido pelo nome, usa a coluna F (posição 6),
+        # que é onde o 'Status Detalhado' vem na planilha report.
+        if col_status is None and len(df_gar.columns) >= 6:
+            col_status = df_gar.columns[5]
+
+        if col_boleta is None or col_status is None:
+            return mapa_garantia
+
+        df_gar["_BOLETA_KEY"] = df_gar[col_boleta].apply(_boleta_para_chave)
+        df_gar = df_gar.dropna(subset=["_BOLETA_KEY"])
+        df_gar = df_gar.drop_duplicates(subset=["_BOLETA_KEY"], keep="last")
+
+        mapa_garantia = dict(zip(df_gar["_BOLETA_KEY"], df_gar[col_status]))
+    except Exception:
+        mapa_garantia = {}
+    return mapa_garantia
 
 
 def combiner_dfs(lista):
@@ -464,13 +543,14 @@ arquivo_boletas = st.file_uploader("Selecione a planilha Boletas", type=["xlsx",
 arquivo_modelagem_ativo = st.file_uploader("Selecione a planilha Exportação Solicitação Modelagem Ativo", type=["xlsx", "xls"])
 arquivo_faturamento_aberto = st.file_uploader("Selecione a planilha Faturamento em Aberto", type=["xlsx", "xls"])
 zip_relpers_301 = st.file_uploader("Selecione o ZIP RelPers 301 (Mapa Financeiro)", type=["zip"])
+arquivo_garantia = st.file_uploader("Selecione a planilha de Garantias (Report)", type=["xlsx", "xls"])
 
 st.markdown("### ✏️ Correções Manuais (Contrato CliqCCEE / Comprador / Vendedor)")
 st.caption(
-    "Preencha aqui pontualmente (linhas na tabela abaixo) ou suba uma planilha com as colunas "
-    "BOLETA, Contrato CliqCCEE, Comprador e Vendedor — preencha só o que precisar corrigir, não precisa "
-    "preencher as 3 colunas. O sistema refaz todos os checks usando o valor que você informou, e as "
-    "linhas corrigidas aparecem destacadas em roxo na Base Conferência."
+    "Suba aqui uma planilha com as colunas BOLETA, Contrato CliqCCEE, Comprador e Vendedor — preencha "
+    "só o que precisar corrigir, não precisa preencher as 3 colunas — ou edite os campos diretamente na "
+    "tabela principal da Base Conferência (mais abaixo, depois de processar a planilha). O sistema "
+    "refaz todos os checks usando o valor informado, e as linhas corrigidas aparecem destacadas em roxo."
 )
 
 arquivo_correcoes = st.file_uploader(
@@ -479,12 +559,11 @@ arquivo_correcoes = st.file_uploader(
     key="upload_correcoes",
 )
 
-df_editor_correcoes = st.data_editor(
-    pd.DataFrame(columns=["BOLETA", "Contrato CliqCCEE", "Comprador", "Vendedor"]),
-    num_rows="dynamic",
-    use_container_width=True,
-    hide_index=True,
-    key="editor_correcoes",
+# As correções feitas diretamente na tabela principal (editor da Base Conferência) ficam guardadas no
+# session_state entre uma execução e outra, e são combinadas aqui com a planilha de correções.
+_dados_editor_principal = st.session_state.get("_correcoes_editor_principal_dados")
+df_editor_correcoes = pd.DataFrame(_dados_editor_principal) if _dados_editor_principal else pd.DataFrame(
+    columns=["BOLETA", "Contrato CliqCCEE", "Comprador", "Vendedor"]
 )
 
 correcoes_manuais = carregar_correcoes_manuais(arquivo_correcoes, df_editor_correcoes)
@@ -533,6 +612,10 @@ if arquivo is not None:
         mapa_situacao_301, mapa_pagamento_301 = carregar_mapa_relpers_301(zip_relpers_301)
         mapa_situacao_pagamento.update(mapa_situacao_301)
         mapa_pagamento.update(mapa_pagamento_301)
+
+        # Carrega o mapa BOLETA -> Garantia a partir da planilha de Garantias (Report), equivalente à
+        # coluna 'Garantia Monday' do Book
+        mapa_garantia = carregar_mapa_garantia(arquivo_garantia)
 
         # Extração e Combinação super rápida
         csvs_matrix = extrair_csvs_zip(zip_matrix)
@@ -608,6 +691,9 @@ if arquivo is not None:
         base["Situação pagamento"] = _boleta_num.map(mapa_situacao_pagamento).fillna("Pago")
         base["Pagamento"] = _boleta_num.map(mapa_pagamento)
         base["Pagamento"] = base["Pagamento"].apply(lambda v: v.strftime("%d/%m/%Y") if isinstance(v, (pd.Timestamp,)) else ("-" if pd.isna(v) else str(v)))
+
+        # ── GARANTIA (equivalente à coluna 'Garantia Monday' do Book, com a planilha de Garantias/Report como auxiliar) ──
+        base["Garantia"] = _boleta_key_base.map(mapa_garantia).fillna("-")
 
         # ── LOGICA PARA DEFINIR SE É VAREJISTA (MATRIX VAR OU BISMUT VAR) ──
         p_upper = base["Parte"].astype(str).str.strip().str.upper()
@@ -939,7 +1025,7 @@ if arquivo is not None:
                 "% Modulação Mínima", "% Modulação Máxima", "Modulação Mínima", "Modulação Máxima",
                 "Modulação Mínima CCEE", "Modulação Máxima CCEE", "Check Modulação Mínima",
                 "Check Modulação Máxima", "Modulação CCEE", "Check Modulação", "Vendedor", "Comprador",
-                "SITUAÇÃO PGTO", "Situação pagamento", "Pagamento"
+                "SITUAÇÃO PGTO", "Situação pagamento", "Pagamento", "Garantia"
             ]
             for col in colunas_texto:
                 if col in base_exibicao.columns:
@@ -965,6 +1051,25 @@ if arquivo is not None:
 
             styled = base_exibicao.style.apply(_highlight_tabela, axis=1)
             st.dataframe(styled, use_container_width=True, hide_index=True)
+
+            st.markdown("### ✏️ Correção Manual direta na tabela")
+            st.caption(
+                "Edite os campos Vendedor, Comprador e/ou Contrato CliqCCEE diretamente nas linhas abaixo "
+                "(respeita os filtros aplicados acima). Ao editar uma célula o app recalcula os checks "
+                "automaticamente e a linha corrigida passa a aparecer destacada em roxo na tabela acima."
+            )
+            _colunas_editor_principal = [
+                c for c in ["BOLETA", "Parte", "Contraparte", "Submercado", "Vendedor", "Comprador", "Contrato CliqCCEE"]
+                if c in base_exibicao.columns
+            ]
+            df_editor_base_principal = st.data_editor(
+                base_exibicao[_colunas_editor_principal],
+                use_container_width=True,
+                hide_index=True,
+                disabled=[c for c in _colunas_editor_principal if c not in ("Vendedor", "Comprador", "Contrato CliqCCEE")],
+                key="editor_base_principal",
+            )
+            st.session_state["_correcoes_editor_principal_dados"] = df_editor_base_principal.to_dict("records")
 
             base_download = base.copy()
             if flag_ocultar_zerados: base_download = base_download[base_download["Volume (MWh)"] != 0.0]
