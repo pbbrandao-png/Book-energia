@@ -26,13 +26,93 @@ BOLETAS_ACR = {
 }
 
 
+from html.parser import HTMLParser
+
+
+class _TabelaHTMLParser(HTMLParser):
+    """Parser de tabela HTML usando apenas a biblioteca padrão do Python (sem depender de lxml,
+    html5lib ou bs4), para extrair arquivos .xls que na verdade são tabelas HTML."""
+
+    def __init__(self):
+        super().__init__()
+        self.tabelas = []
+        self._tabela_atual = None
+        self._linha_atual = None
+        self._celula_atual = None
+        self._em_celula = False
+        self._profundidade_tabela = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "table":
+            self._profundidade_tabela += 1
+            if self._profundidade_tabela == 1:
+                self._tabela_atual = []
+        elif tag == "tr" and self._profundidade_tabela == 1:
+            self._linha_atual = []
+        elif tag in ("td", "th") and self._profundidade_tabela == 1:
+            self._em_celula = True
+            self._celula_atual = []
+
+    def handle_endtag(self, tag):
+        if tag == "table":
+            if self._profundidade_tabela == 1 and self._tabela_atual is not None:
+                self.tabelas.append(self._tabela_atual)
+            self._profundidade_tabela = max(0, self._profundidade_tabela - 1)
+        elif tag == "tr" and self._profundidade_tabela == 1 and self._linha_atual is not None:
+            self._tabela_atual.append(self._linha_atual)
+            self._linha_atual = None
+        elif tag in ("td", "th") and self._em_celula:
+            texto = "".join(self._celula_atual).strip()
+            if self._linha_atual is not None:
+                self._linha_atual.append(texto)
+            self._em_celula = False
+            self._celula_atual = None
+
+    def handle_data(self, data):
+        if self._em_celula and self._celula_atual is not None:
+            self._celula_atual.append(data)
+
+
+def _parsear_tabela_html(conteudo, header=0, nrows=None):
+    """Extrai a primeira tabela de um HTML (bytes ou str) usando apenas a biblioteca padrão do
+    Python e devolve um DataFrame, sem depender de lxml/html5lib/bs4."""
+    if isinstance(conteudo, bytes):
+        try:
+            texto_html = conteudo.decode("utf-8")
+        except UnicodeDecodeError:
+            texto_html = conteudo.decode("latin-1", errors="ignore")
+    else:
+        texto_html = conteudo
+
+    parser = _TabelaHTMLParser()
+    parser.feed(texto_html)
+    if not parser.tabelas:
+        return None
+
+    linhas = parser.tabelas[0]
+    idx_cabecalho = header if isinstance(header, int) else 0
+    if len(linhas) <= idx_cabecalho:
+        return None
+
+    cabecalho = linhas[idx_cabecalho]
+    dados = linhas[idx_cabecalho + 1:]
+    largura = len(cabecalho)
+    dados_ajustados = [(l + [""] * largura)[:largura] for l in dados]
+    df_html = pd.DataFrame(dados_ajustados, columns=cabecalho)
+
+    if nrows is not None:
+        df_html = df_html.head(nrows)
+
+    return df_html
+
+
 def _ler_excel_flex(arquivo, **kwargs):
     """Lê um arquivo Excel (.xlsx/.xls) de forma tolerante a diferentes formatos, para evitar o erro
     '`Import xlrd` failed' quando o xlrd não está instalado no ambiente e/ou quando o arquivo .xls
     exportado por algum sistema é, na prática, uma tabela HTML salva com extensão .xls (formato comum
     em exportações de relatórios). Tenta, nesta ordem: openpyxl (xlsx/xlsm), xlrd (xls binário de
-    verdade) e, por fim, leitura como HTML (xls "falso"). Repassa kwargs (header, usecols, nrows, etc.)
-    para pd.read_excel quando aplicável."""
+    verdade) e, por fim, leitura como HTML (xls "falso") usando um parser próprio, sem depender de
+    lxml/html5lib/bs4. Repassa kwargs (header, usecols, nrows, etc.) para pd.read_excel quando aplicável."""
     nome = (getattr(arquivo, "name", "") or "").lower()
     erros = []
 
@@ -56,21 +136,18 @@ def _ler_excel_flex(arquivo, **kwargs):
         erros.append(e)
 
     # Última tentativa: o arquivo .xls é, na verdade, uma tabela HTML (comum em relatórios exportados
-    # de sistemas como CCEE/ERP que salvam HTML com extensão .xls).
+    # de sistemas como CCEE/ERP que salvam HTML com extensão .xls). Usa parser próprio (stdlib), sem
+    # depender de lxml/html5lib/bs4.
     try:
         arquivo.seek(0)
         conteudo = arquivo.read()
         header_kw = kwargs.get("header", 0)
-        tabelas = pd.read_html(BytesIO(conteudo), header=header_kw if isinstance(header_kw, int) else 0)
-        if tabelas:
-            df_html = tabelas[0]
-            nrows_kw = kwargs.get("nrows")
-            if nrows_kw is not None:
-                df_html = df_html.head(nrows_kw)
+        df_html = _parsear_tabela_html(conteudo, header=header_kw, nrows=kwargs.get("nrows"))
+        if df_html is not None:
             usecols_kw = kwargs.get("usecols")
-            if usecols_kw is not None:
+            if usecols_kw is not None and not isinstance(usecols_kw, str):
                 try:
-                    df_html = df_html.loc[:, usecols_kw] if not isinstance(usecols_kw, str) else df_html
+                    df_html = df_html.loc[:, usecols_kw]
                 except Exception:
                     pass
             return df_html
