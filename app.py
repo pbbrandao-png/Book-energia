@@ -7,6 +7,10 @@
 # V20: + Otimização massiva de performance + Regra de ignorar Intraportfólio/Zerados nas tabelas de erro
 # V21: + Remoção total de rateios (Auto-referência)
 # V22: + Identificação e Filtro de Varejistas (MATRIX VAR / BISMUT VAR) + Correção de Escopo de 'nets' + Correção de Sintaxe no rename
+# V23: + Correção da lógica de remoção de rateios: a linha "mestre" (Codigo_WBC == Numero_referencia_contrato,
+#       Rateio == "Sim") só é removida quando existir pelo menos 1 linha "filha" (outra boleta apontando para
+#       o mesmo Numero_referencia_contrato). Antes, boletas auto-referenciadas SEM nenhuma filha (ex: 96115)
+#       eram removidas indevidamente e simplesmente desapareciam da tabela, sem nada para substituí-las.
 
 import streamlit as st
 import pandas as pd
@@ -501,10 +505,26 @@ if arquivo is not None:
             mask_rateio_interno = df["Parte_razao_social"].astype(str).str.strip().str.upper() == df["Contraparte_razao_social"].astype(str).str.strip().str.upper()
             df = df[~mask_rateio_interno].reset_index(drop=True)
 
-        # ── EXCLUSÃO DE RATEIOS COM Codigo_WBC == Numero_referencia_contrato E Rateio == "SIM" ──
+        # ── EXCLUSÃO DE RATEIOS "MESTRE" (Codigo_WBC == Numero_referencia_contrato E Rateio == "SIM") ──
+        # Regra corrigida (V23): a linha-mestre de um rateio só deve ser removida quando o rateio for
+        # de fato um rateio, isto é, quando existir pelo menos uma linha-filha (outra boleta, com
+        # Codigo_WBC diferente, apontando para o mesmo Numero_referencia_contrato). Se a boleta for a
+        # ÚNICA do "grupo" (tamanho do grupo == 1), ela não tem nenhuma filha para substituí-la na
+        # tabela — removê-la nesse caso faz o contrato sumir por completo, sem motivo (era o que
+        # acontecia com a boleta 96115, entre outras).
         if "Codigo_WBC" in df.columns and "Numero_referencia_contrato" in df.columns and "Rateio" in df.columns:
-            mask_rateio_duplicado = (df["Codigo_WBC"].astype(str).str.strip() == df["Numero_referencia_contrato"].astype(str).str.strip()) & (df["Rateio"].astype(str).str.strip().str.upper() == "SIM")
-            df = df[~mask_rateio_duplicado].reset_index(drop=True)
+            cod_wbc_str = df["Codigo_WBC"].astype(str).str.strip()
+            ref_contrato_str = df["Numero_referencia_contrato"].astype(str).str.strip()
+            rateio_str = df["Rateio"].astype(str).str.strip().str.upper()
+
+            tamanho_grupo_rateio = ref_contrato_str.map(ref_contrato_str.value_counts())
+
+            mask_rateio_mestre_com_filhas = (
+                (cod_wbc_str == ref_contrato_str)
+                & (rateio_str == "SIM")
+                & (tamanho_grupo_rateio > 1)
+            )
+            df = df[~mask_rateio_mestre_com_filhas].reset_index(drop=True)
 
         # ── INCLUSÃO: GARANTIR ORDENAÇÃO CRESCENTE E REMOVER BOLETAS DUPLICADAS ──
         if "Codigo_WBC" in df.columns:
