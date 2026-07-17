@@ -1,4 +1,4 @@
-# APP_BOOK_ENERGIA_V22 - VERSÃO DE ALTA PERFORMANCE (OTIMIZADA)
+# APP_BOOK_ENERGIA_V24 - VERSÃO DE ALTA PERFORMANCE (OTIMIZADA)
 # Coluna "Contrato CliqCCEE" via CSVs extraídos dos ZIPs Matrix e Bismut
 # Boletas ACR (lista fixa) → ccear_q (extraído do ZIP Matrix)
 # Matrix (não-Bismut, não-ACR) → cceal_firme + cbr_mercado_proprio (ZIP Matrix)
@@ -7,10 +7,9 @@
 # V20: + Otimização massiva de performance + Regra de ignorar Intraportfólio/Zerados nas tabelas de erro
 # V21: + Remoção total de rateios (Auto-referência)
 # V22: + Identificação e Filtro de Varejistas (MATRIX VAR / BISMUT VAR) + Correção de Escopo de 'nets' + Correção de Sintaxe no rename
-# V23: + Correção da lógica de remoção de rateios: a linha "mestre" (Codigo_WBC == Numero_referencia_contrato,
-#       Rateio == "Sim") só é removida quando existir pelo menos 1 linha "filha" (outra boleta apontando para
-#       o mesmo Numero_referencia_contrato). Antes, boletas auto-referenciadas SEM nenhuma filha (ex: 96115)
-#       eram removidas indevidamente e simplesmente desapareciam da tabela, sem nada para substituí-las.
+# V24: + Correção definitiva do filtro de rateios. Identifica contratos pais que possuem filhos vinculados
+#       através da coluna Nr_contrato_vinculado e remove as linhas mestre correspondentes da tabela,
+#       evitando duplicidade de dados e garantindo que apenas as filhas rateadas permaneçam.
 
 import streamlit as st
 import pandas as pd
@@ -19,7 +18,7 @@ import numpy as np
 import re
 from io import BytesIO
 
-# Configura o limite do Pandas Styler para avoid o erro de estouro de células devido ao aumento de colunas
+# Configura o limite do Pandas Styler para evitar o erro de estouro de células devido ao aumento de colunas
 pd.set_option("styler.render.max_elements", 2000000)
 
 # Boletas que devem buscar no CSV ccear_q em vez do cceal_firme
@@ -505,20 +504,20 @@ if arquivo is not None:
             mask_rateio_interno = df["Parte_razao_social"].astype(str).str.strip().str.upper() == df["Contraparte_razao_social"].astype(str).str.strip().str.upper()
             df = df[~mask_rateio_interno].reset_index(drop=True)
 
-        # ── EXCLUSÃO DE RATEIOS "MESTRE" ──
-        if "Codigo_WBC" in df.columns and "Nr_contrato_vinculado" in df.columns and "Rateio" in df.columns:
-            cod_wbc_str = df["Codigo_WBC"].astype(str).str.strip()
-            vinc_contrato_str = df["Nr_contrato_vinculado"].fillna("").astype(str).str.strip()
-            rateio_str = df["Rateio"].astype(str).str.strip().str.upper()
-
-            filhos_existentes = set(vinc_contrato_str[vinc_contrato_str != ""])
-
-            mask_rateio_mestre_com_filhas = (
-                (vinc_contrato_str == "")
-                & (rateio_str == "SIM")
-                & (cod_wbc_str.isin(filhos_existentes))
+        # ── EXCLUSÃO DE RATEIOS "MESTRE" VIA VINCULAÇÃO DE CONTRATOS (Nova Lógica Otimizada) ──
+        if "Codigo_WBC" in df.columns and "Nr_contrato_vinculado" in df.columns:
+            # Identifica todas as boletas apontadas como 'pais' pelas filhas na coluna Nr_contrato_vinculado
+            pais_com_filhas = set(
+                pd.to_numeric(df["Nr_contrato_vinculado"], errors="coerce")
+                .dropna()
+                .astype(int)
+                .astype(str)
             )
-            df = df[~mask_rateio_mestre_com_filhas].reset_index(drop=True)
+            cod_wbc_str = df["Codigo_WBC"].astype(str).str.strip()
+            
+            # Remove apenas as linhas que são 'mestre' e possuem filhas vinculadas na base
+            mask_remover_mestre = cod_wbc_str.isin(pais_com_filhas)
+            df = df[~mask_remover_mestre].reset_index(drop=True)
 
         # ── INCLUSÃO: GARANTIR ORDENAÇÃO CRESCENTE E REMOVER BOLETAS DUPLICADAS ──
         if "Codigo_WBC" in df.columns:
@@ -1160,8 +1159,8 @@ if arquivo is not None:
                 ]
 
                 _hdr = st.columns([0.5, 2, 2, 1.2, 1.5, 1.2, 1.2, 1.2, 1.5, 1.5, 1.5, 1.5, 1.5])
-                for _wi, _ch in zip(_hdr, _col_headers):
-                    _wi.markdown(f"**{_ch}**")
+                for _ci, _ch in zip(_hdr, _col_headers):
+                    _ci.markdown(f"**{_ch}**")
 
                 st.markdown("---")
 
