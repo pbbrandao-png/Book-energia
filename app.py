@@ -19,7 +19,7 @@ import numpy as np
 import re
 from io import BytesIO
 
-# Configura o limite do Pandas Styler para evitar o erro de estouro de células devido ao aumento de colunas
+# Configura o limite do Pandas Styler para avoid o erro de estouro de células devido ao aumento de colunas
 pd.set_option("styler.render.max_elements", 2000000)
 
 # Boletas que devem buscar no CSV ccear_q em vez do cceal_firme
@@ -219,7 +219,7 @@ def _ler_planilha_modelagem_ativo(arquivo):
             linha_cabecalho = i
             break
 
-    if linha_cabecalho is None:
+    if línea_cabecalho is None:
         linha_cabecalho = 0
 
     arquivo.seek(0)
@@ -505,24 +505,18 @@ if arquivo is not None:
             mask_rateio_interno = df["Parte_razao_social"].astype(str).str.strip().str.upper() == df["Contraparte_razao_social"].astype(str).str.strip().str.upper()
             df = df[~mask_rateio_interno].reset_index(drop=True)
 
-        # ── EXCLUSÃO DE RATEIOS "MESTRE" (Codigo_WBC == Numero_referencia_contrato E Rateio == "SIM") ──
-        # Regra corrigida (V23): a linha-mestre de um rateio só deve ser removida quando o rateio for
-        # de fato um rateio, isto é, quando existir pelo menos uma linha-filha (outra boleta, com
-        # Codigo_WBC diferente, apontando para o mesmo Numero_referencia_contrato). Se a boleta for a
-        # ÚNICA do "grupo" (tamanho do grupo == 1), ela não tem nenhuma filha para substituí-la na
-        # tabela — removê-la nesse caso faz o contrato sumir por completo, sem motivo (era o que
-        # acontecia com a boleta 96115, entre outras).
-        if "Codigo_WBC" in df.columns and "Numero_referencia_contrato" in df.columns and "Rateio" in df.columns:
+        # ── EXCLUSÃO DE RATEIOS "MESTRE" ──
+        if "Codigo_WBC" in df.columns and "Nr_contrato_vinculado" in df.columns and "Rateio" in df.columns:
             cod_wbc_str = df["Codigo_WBC"].astype(str).str.strip()
-            ref_contrato_str = df["Numero_referencia_contrato"].astype(str).str.strip()
+            vinc_contrato_str = df["Nr_contrato_vinculado"].fillna("").astype(str).str.strip()
             rateio_str = df["Rateio"].astype(str).str.strip().str.upper()
 
-            tamanho_grupo_rateio = ref_contrato_str.map(ref_contrato_str.value_counts())
+            filhos_existentes = set(vinc_contrato_str[vinc_contrato_str != ""])
 
             mask_rateio_mestre_com_filhas = (
-                (cod_wbc_str == ref_contrato_str)
+                (vinc_contrato_str == "")
                 & (rateio_str == "SIM")
-                & (tamanho_grupo_rateio > 1)
+                & (cod_wbc_str.isin(filhos_existentes))
             )
             df = df[~mask_rateio_mestre_com_filhas].reset_index(drop=True)
 
@@ -1166,8 +1160,8 @@ if arquivo is not None:
                 ]
 
                 _hdr = st.columns([0.5, 2, 2, 1.2, 1.5, 1.2, 1.2, 1.2, 1.5, 1.5, 1.5, 1.5, 1.5])
-                for _ci, _ch in zip(_hdr, _col_headers):
-                    _ci.markdown(f"**{_ch}**")
+                for _wi, _ch in zip(_hdr, _col_headers):
+                    _wi.markdown(f"**{_ch}**")
 
                 st.markdown("---")
 
