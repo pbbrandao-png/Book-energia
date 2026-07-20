@@ -490,6 +490,9 @@ if pagina != "CHECK":
         hide_index=True,
         key="editor_correcoes",
     )
+    # st.session_state["editor_correcoes"] guarda o dict de edições (não o DataFrame),
+    # então cacheamos o DataFrame resultante à parte para poder reaproveitar na aba CHECK.
+    st.session_state["_df_editor_correcoes_cache"] = df_editor_correcoes
 
     correcoes_manuais = carregar_correcoes_manuais(arquivo_correcoes, df_editor_correcoes)
     if correcoes_manuais:
@@ -515,7 +518,7 @@ else:
 
     arquivo_correcoes = st.session_state.get("upload_correcoes")
     df_editor_correcoes = st.session_state.get(
-        "editor_correcoes",
+        "_df_editor_correcoes_cache",
         pd.DataFrame(columns=["BOLETA", "Contrato CliqCCEE", "Comprador", "Vendedor"]),
     )
 
