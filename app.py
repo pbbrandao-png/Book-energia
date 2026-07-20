@@ -446,54 +446,83 @@ st.set_page_config(page_title="Book Energia", layout="wide")
 
 pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético", "CHECK"])
 
-st.title("📊 Book Energia")
+if pagina != "CHECK":
+    st.title("📊 Book Energia")
 
-st.markdown("### ⚙️ Flags")
-col_flag1, col_flag2, col_flag3 = st.columns(3)
-with col_flag1:
-    flag_ocultar_intraportfolio = st.toggle("🟡 Ocultar IntraPortifólio (Parte = Contraparte)", value=True)
-with col_flag2:
-    flag_ocultar_zerados = st.toggle("🚫 Ocultar contratos zerados (Volume MWh = 0)", value=False)
-with col_flag3:
-    flag_zerar_intercompany = st.toggle("🏢 Zerar InterCompany", value=False)
-st.markdown("---")
+    st.markdown("### ⚙️ Flags")
+    col_flag1, col_flag2, col_flag3 = st.columns(3)
+    with col_flag1:
+        flag_ocultar_intraportfolio = st.toggle("🟡 Ocultar IntraPortifólio (Parte = Contraparte)", value=True, key="flag_intra")
+    with col_flag2:
+        flag_ocultar_zerados = st.toggle("🚫 Ocultar contratos zerados (Volume MWh = 0)", value=False, key="flag_zerados")
+    with col_flag3:
+        flag_zerar_intercompany = st.toggle("🏢 Zerar InterCompany", value=False, key="flag_intercompany")
+    st.markdown("---")
 
-arquivo = st.file_uploader("Selecione a RelPers", type=["xlsx"])
-arquivo_mes_anterior = st.file_uploader("Selecione a planilha Mês Anterior", type=["xlsx"])
-zip_matrix = st.file_uploader("Selecione o ZIP Matrix", type=["zip"])
-zip_bismut = st.file_uploader("Selecione o ZIP Bismut", type=["zip"])
-arquivo_ponto_medicao = st.file_uploader("Selecione a planilha Ponto de Medição - MATRIX", type=["xlsx", "xls"])
-arquivo_boletas = st.file_uploader("Selecione a planilha Boletas", type=["xlsx", "xls"])
-arquivo_modelagem_ativo = st.file_uploader("Selecione a planilha Exportação Solicitação Modelagem Ativo", type=["xlsx", "xls"])
-arquivo_faturamento_aberto = st.file_uploader("Selecione a planilha Faturamento em Aberto", type=["xlsx", "xls"])
-zip_relpers_301 = st.file_uploader("Selecione o ZIP RelPers 301 (Mapa Financeiro)", type=["zip"])
+    arquivo = st.file_uploader("Selecione a RelPers", type=["xlsx"], key="upload_relpers")
+    arquivo_mes_anterior = st.file_uploader("Selecione a planilha Mês Anterior", type=["xlsx"], key="upload_mes_anterior")
+    zip_matrix = st.file_uploader("Selecione o ZIP Matrix", type=["zip"], key="upload_zip_matrix")
+    zip_bismut = st.file_uploader("Selecione o ZIP Bismut", type=["zip"], key="upload_zip_bismut")
+    arquivo_ponto_medicao = st.file_uploader("Selecione a planilha Ponto de Medição - MATRIX", type=["xlsx", "xls"], key="upload_ponto_medicao")
+    arquivo_boletas = st.file_uploader("Selecione a planilha Boletas", type=["xlsx", "xls"], key="upload_boletas")
+    arquivo_modelagem_ativo = st.file_uploader("Selecione a planilha Exportação Solicitação Modelagem Ativo", type=["xlsx", "xls"], key="upload_modelagem_ativo")
+    arquivo_faturamento_aberto = st.file_uploader("Selecione a planilha Faturamento em Aberto", type=["xlsx", "xls"], key="upload_faturamento_aberto")
+    zip_relpers_301 = st.file_uploader("Selecione o ZIP RelPers 301 (Mapa Financeiro)", type=["zip"], key="upload_relpers_301")
 
-st.markdown("### ✏️ Correções Manuais (Contrato CliqCCEE / Comprador / Vendedor)")
-st.caption(
-    "Preencha aqui pontualmente (linhas na tabela abaixo) ou suba uma planilha com as colunas "
-    "BOLETA, Contrato CliqCCEE, Comprador e Vendedor — preencha só o que precisar corrigir, não precisa "
-    "preencher as 3 colunas. O sistema refaz todos os checks usando o valor que você informou, e as "
-    "linhas corrigidas aparecem destacadas em roxo na Base Conferência."
-)
+    st.markdown("### ✏️ Correções Manuais (Contrato CliqCCEE / Comprador / Vendedor)")
+    st.caption(
+        "Preencha aqui pontualmente (linhas na tabela abaixo) ou suba uma planilha com as colunas "
+        "BOLETA, Contrato CliqCCEE, Comprador e Vendedor — preencha só o que precisar corrigir, não precisa "
+        "preencher as 3 colunas. O sistema refaz todos os checks usando o valor que você informou, e as "
+        "linhas corrigidas aparecem destacadas em roxo na Base Conferência."
+    )
 
-arquivo_correcoes = st.file_uploader(
-    "Planilha de Correções (colunas: BOLETA, Contrato CliqCCEE, Comprador, Vendedor)",
-    type=["xlsx", "xls"],
-    key="upload_correcoes",
-)
+    arquivo_correcoes = st.file_uploader(
+        "Planilha de Correções (colunas: BOLETA, Contrato CliqCCEE, Comprador, Vendedor)",
+        type=["xlsx", "xls"],
+        key="upload_correcoes",
+    )
 
-df_editor_correcoes = st.data_editor(
-    pd.DataFrame(columns=["BOLETA", "Contrato CliqCCEE", "Comprador", "Vendedor"]),
-    num_rows="dynamic",
-    use_container_width=True,
-    hide_index=True,
-    key="editor_correcoes",
-)
+    df_editor_correcoes = st.data_editor(
+        pd.DataFrame(columns=["BOLETA", "Contrato CliqCCEE", "Comprador", "Vendedor"]),
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=True,
+        key="editor_correcoes",
+    )
 
-correcoes_manuais = carregar_correcoes_manuais(arquivo_correcoes, df_editor_correcoes)
-if correcoes_manuais:
-    st.success(f"✅ {len(correcoes_manuais)} boleta(s) com correção manual identificada(s).")
-st.markdown("---")
+    correcoes_manuais = carregar_correcoes_manuais(arquivo_correcoes, df_editor_correcoes)
+    if correcoes_manuais:
+        st.success(f"✅ {len(correcoes_manuais)} boleta(s) com correção manual identificada(s).")
+    st.markdown("---")
+else:
+    # ── Aba CHECK: não exibe título/flags/uploaders/correções, apenas reaproveita
+    # (via session_state) os valores já preenchidos nas outras abas, para montar
+    # a mesma "base" usada no cálculo do CHECK, sem poluir a tela com esses controles.
+    flag_ocultar_intraportfolio = st.session_state.get("flag_intra", True)
+    flag_ocultar_zerados = st.session_state.get("flag_zerados", False)
+    flag_zerar_intercompany = st.session_state.get("flag_intercompany", False)
+
+    arquivo = st.session_state.get("upload_relpers")
+    arquivo_mes_anterior = st.session_state.get("upload_mes_anterior")
+    zip_matrix = st.session_state.get("upload_zip_matrix")
+    zip_bismut = st.session_state.get("upload_zip_bismut")
+    arquivo_ponto_medicao = st.session_state.get("upload_ponto_medicao")
+    arquivo_boletas = st.session_state.get("upload_boletas")
+    arquivo_modelagem_ativo = st.session_state.get("upload_modelagem_ativo")
+    arquivo_faturamento_aberto = st.session_state.get("upload_faturamento_aberto")
+    zip_relpers_301 = st.session_state.get("upload_relpers_301")
+
+    arquivo_correcoes = st.session_state.get("upload_correcoes")
+    df_editor_correcoes = st.session_state.get(
+        "editor_correcoes",
+        pd.DataFrame(columns=["BOLETA", "Contrato CliqCCEE", "Comprador", "Vendedor"]),
+    )
+
+    correcoes_manuais = carregar_correcoes_manuais(arquivo_correcoes, df_editor_correcoes)
+
+    if arquivo is None:
+        st.info("⚠️ Nenhum arquivo RelPers carregado ainda. Vá até a aba **Base Conferência** e faça o upload dos arquivos antes de ver o CHECK.")
 
 if arquivo is not None:
     try:
