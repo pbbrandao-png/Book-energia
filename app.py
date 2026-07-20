@@ -444,7 +444,7 @@ def aplicar_zerar_intercompany(base: pd.DataFrame):
 # ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Book Energia", layout="wide")
 
-pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético"])
+pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético", "CHECK"])
 
 st.title("📊 Book Energia")
 
@@ -1362,6 +1362,135 @@ if arquivo is not None:
             c1, c2 = st.columns(2)
             with c1: st.metric("Quem Ajusta", ajuste)
             with c2: st.metric("Volume a Ajustar (MWm)", f"{abs(saldo_mwm):.6f}")
+
+        elif pagina == "CHECK":
+            # ── CHECK (reprodução da aba "Check" do Book, colunas A a M) ──────────────
+            # Lógica original da planilha, por Parte de cada Book:
+            #   Compras CliqCCEE = SUMIF(sigla comprador == Parte, MWmedio)   [col C]
+            #   Vendas  CliqCCEE = SUMIF(sigla vendedor  == Parte, MWmedio)   [col D]
+            #   NET CliqCCEE     = Compras - Vendas                          [col E]
+            #   Compras Book     = SUMIF(Comprador == Parte, Volume MWm)     [col J]
+            #   Vendas  Book     = SUMIF(Vendedor  == Parte, Volume MWm)     [col K]
+            #   NET Book         = Compras - Vendas                          [col L]
+            #   Diferença        = NET CliqCCEE - NET Book                  [col M]
+            # BISMUT usa a base CliqCCEE do ZIP Bismut (CLIQCCEE_BISMUT); os demais
+            # Books usam a base CliqCCEE do ZIP Matrix (CLIQCCEE). Todos comparam contra
+            # a mesma Base Conferência (equivalente à aba "Conferência").
+            st.subheader("✅ CHECK")
+            st.caption(
+                "Reproduz a aba **Check** da planilha: para cada Parte de cada Book, compara o NET "
+                "(Compras − Vendas) apurado no CliqCCEE com o NET apurado na Base Conferência. A coluna "
+                "**Diferença** equivale à coluna M da aba Check e deve ficar em torno de zero."
+            )
+
+            submercados_disponiveis = ["-"] + sorted(base["Submercado"].dropna().astype(str).unique().tolist())
+            submercado_check = st.selectbox("SUBMERCADO:", submercados_disponiveis, index=0, key="check_submercado")
+
+            BOOKS_CHECK = {
+                "BISMUT": {
+                    "ccee": df_ccee_bismut,
+                    "partes": ["BISMUT COM I5", "BISMUT COM I0", "BISMUT COM I1", "BISMUT COM"],
+                },
+                "GET": {
+                    "ccee": df_ccee_matrix,
+                    "partes": [
+                        "GET ENERGY TRADING", "GET ENERGY TRADING I5", "GET ENERGY TRADING I0",
+                        "GET ENERGY TRADING I1", "GET ENERGY TRADING CQ5",
+                    ],
+                },
+                "MATRIX": {
+                    "ccee": df_ccee_matrix,
+                    "partes": ["MATRIX COM I5", "MATRIX COM", "MATRIX COM I1", "MATRIX COM I0", "MATRIX COM CQ5"],
+                },
+                "CINERGY": {
+                    "ccee": df_ccee_matrix,
+                    "partes": [
+                        "CINERGY COM", "CINERGY COM I1", "CINERGY COM I5", "CINERGY COM I0", "CINERGY COM I8",
+                        "CINERGY COM I5 2", "CINERGY COM I1 2", "CINERGY COM I0 2", "CINERGY COM I8 2",
+                    ],
+                },
+                "MATRIX CAMANDUCAIA": {
+                    "ccee": df_ccee_matrix,
+                    "partes": ["MTX CAMANDUCAIA"],
+                },
+                "ARGENTUM": {
+                    "ccee": df_ccee_matrix,
+                    "partes": ["ARGENTUM COM I5", "ARGENTUM COM", "ARGENTUM COM I0"],
+                },
+            }
+
+            def _check_net_ccee(df_ccee_book, parte, submercado):
+                if df_ccee_book is None or df_ccee_book.empty:
+                    return 0.0, 0.0
+                d = df_ccee_book
+                if submercado != "-":
+                    d = d[d["SUBMERCADO_ENTREGA"].astype(str).str.strip() == submercado]
+                compras = pd.to_numeric(
+                    d.loc[d["SIGLA_PERFIL_COMPRADOR"].astype(str).str.strip() == parte, "MWmedio"], errors="coerce"
+                ).sum()
+                vendas = pd.to_numeric(
+                    d.loc[d["SIGLA_PERFIL_VENDEDOR"].astype(str).str.strip() == parte, "MWmedio"], errors="coerce"
+                ).sum()
+                return compras, vendas
+
+            def _check_net_book(base_df, parte, submercado):
+                d = base_df
+                if submercado != "-":
+                    d = d[d["Submercado"].astype(str).str.strip() == submercado]
+                compras = pd.to_numeric(
+                    d.loc[d["Comprador"].astype(str).str.strip() == parte, "Volume MWm"], errors="coerce"
+                ).sum()
+                vendas = pd.to_numeric(
+                    d.loc[d["Vendedor"].astype(str).str.strip() == parte, "Volume MWm"], errors="coerce"
+                ).sum()
+                return compras, vendas
+
+            TOLERANCIA_CHECK = 1e-4
+            tabelas_check = {}
+
+            for nome_book, config in BOOKS_CHECK.items():
+                linhas = []
+                for parte in config["partes"]:
+                    compras_ccee, vendas_ccee = _check_net_ccee(config["ccee"], parte, submercado_check)
+                    net_ccee = compras_ccee - vendas_ccee
+                    compras_book, vendas_book = _check_net_book(base, parte, submercado_check)
+                    net_book = compras_book - vendas_book
+                    diferenca = net_ccee - net_book
+                    linhas.append({
+                        "PARTE": parte,
+                        "COMPRAS CliqCCEE (MWm)": round(compras_ccee, 6),
+                        "VENDAS CliqCCEE (MWm)": round(vendas_ccee, 6),
+                        "NET CliqCCEE (MWm)": round(net_ccee, 6),
+                        "COMPRAS Book (MWm)": round(compras_book, 6),
+                        "VENDAS Book (MWm)": round(vendas_book, 6),
+                        "NET Book (MWm)": round(net_book, 6),
+                        "Diferença (Check)": round(diferenca, 6),
+                    })
+                tabelas_check[nome_book] = pd.DataFrame(linhas)
+
+            def _destacar_diferenca_check(row):
+                cor = "background-color: #FFCDD2" if abs(row["Diferença (Check)"]) > TOLERANCIA_CHECK else ""
+                return [cor] * len(row)
+
+            for nome_book, df_check_book in tabelas_check.items():
+                st.markdown(f"### {nome_book}")
+                st.dataframe(
+                    df_check_book.style.apply(_destacar_diferenca_check, axis=1),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+            st.markdown("---")
+            output_check = BytesIO()
+            with pd.ExcelWriter(output_check, engine="openpyxl") as writer:
+                for nome_book, df_check_book in tabelas_check.items():
+                    df_check_book.to_excel(writer, sheet_name=nome_book[:31], index=False)
+            st.download_button(
+                "📥 Download CHECK (.xlsx)",
+                data=output_check.getvalue(),
+                file_name="Check.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
 
     except Exception as erro:
         st.error("Erro ao processar a planilha")
