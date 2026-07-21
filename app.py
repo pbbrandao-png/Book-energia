@@ -1,16 +1,3 @@
-# APP_BOOK_ENERGIA_V24 - VERSÃO DE ALTA PERFORMANCE (OTIMIZADA)
-# Coluna "Contrato CliqCCEE" via CSVs extraídos dos ZIPs Matrix e Bismut
-# Boletas ACR (lista fixa) → ccear_q (extraído do ZIP Matrix)
-# Matrix (não-Bismut, não-ACR) → cceal_firme + cbr_mercado_proprio (ZIP Matrix)
-# Bismut → cceal_firme (ZIP Bismut)
-# V17: + Contraparte Razão Social | highlight amarelo Parte==Contraparte | flag ocultar zerados
-# V20: + Otimização massiva de performance + Regra de ignorar Intraportfólio/Zerados nas tabelas de erro
-# V21: + Remoção total de rateios (Auto-referência)
-# V22: + Identificação e Filtro de Varejistas (MATRIX VAR / BISMUT VAR) + Correção de Escopo de 'nets' + Correção de Sintaxe no rename
-# V24: + Correção definitiva do filtro de rateios. Identifica contratos pais que possuem filhos vinculados
-#       através da coluna Nr_contrato_vinculado e remove as linhas mestre correspondentes da tabela,
-#       evitando duplicidade de dados e garantindo que apenas as filhas rateadas permaneçam.
-
 import streamlit as st
 import pandas as pd
 import zipfile
