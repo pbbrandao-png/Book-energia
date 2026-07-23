@@ -3,7 +3,79 @@ import pandas as pd
 import zipfile
 import numpy as np
 import re
+import os
+import json
+import urllib.parse
+import matplotlib.pyplot as plt
 from io import BytesIO
+
+# ── PERSISTÊNCIA DAS FLAGS "NET EFETIVADO" ───────────────────
+# Guarda o dicionário em disco para que as marcações sobrevivam a
+# atualizações de página (F5), reinícios do app ou expiração de sessão.
+_NET_FLAGS_FILE = "net_efetivados.json"
+
+
+def _carregar_net_efetivados():
+    if os.path.exists(_NET_FLAGS_FILE):
+        try:
+            with open(_NET_FLAGS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _salvar_net_efetivados(flags):
+    try:
+        with open(_NET_FLAGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(flags, f, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+def _gerar_imagem_resumo_encontro(
+    parte, contraparte, submercado, tipo_energia,
+    total_compra, total_venda, saldo,
+    total_compra_mwm, total_venda_mwm, saldo_mwm, ajuste,
+):
+    """Gera um 'print' (imagem PNG) do resumo do Encontro Energético,
+    para o usuário colar no corpo do e-mail."""
+    linhas = [
+        ["Tipo", "MWh", "MWm"],
+        ["Compras", f"{total_compra:.3f}", f"{total_compra_mwm:.6f}"],
+        ["Vendas", f"{total_venda:.3f}", f"{total_venda_mwm:.6f}"],
+        ["Saldo", f"{saldo:.3f}", f"{saldo_mwm:.6f}"],
+    ]
+
+    fig, ax = plt.subplots(figsize=(7, 3.3))
+    ax.axis("off")
+    ax.set_title(
+        f"Encontro Energético — {parte} x {contraparte}\n"
+        f"Submercado: {submercado}   |   Tipo de Energia: {tipo_energia}",
+        fontsize=11, fontweight="bold", loc="left", pad=20,
+    )
+
+    tabela = ax.table(cellText=linhas, loc="upper center", cellLoc="center")
+    tabela.auto_set_font_size(False)
+    tabela.set_fontsize(10)
+    tabela.scale(1, 1.7)
+    for (row, _col), cell in tabela.get_celld().items():
+        if row == 0:
+            cell.set_facecolor("#1f2c56")
+            cell.get_text().set_color("white")
+            cell.get_text().set_fontweight("bold")
+
+    ax.text(
+        0.0, -0.30,
+        f"Quem Ajusta: {ajuste}          Volume a Ajustar (MWm): {abs(saldo_mwm):.6f}",
+        transform=ax.transAxes, fontsize=10, fontweight="bold",
+    )
+
+    buf = BytesIO()
+    fig.savefig(buf, format="png", dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.getvalue()
 
 # Configura o limite do Pandas Styler para evitar o erro de estouro de células devido ao aumento de colunas
 pd.set_option("styler.render.max_elements", 2000000)
@@ -1137,7 +1209,7 @@ if arquivo is not None:
                 _nets_resumo["_venda_cliq"]  = _cliq_results[1]
 
                 if "net_efetivados" not in st.session_state:
-                    st.session_state["net_efetivados"] = {}
+                    st.session_state["net_efetivados"] = _carregar_net_efetivados()
 
                 boletas_efetivadas = set()
                 _tol_cliq = 1e-6
@@ -1212,6 +1284,7 @@ if arquivo is not None:
                     _novo_ef = _cols[0].checkbox("", value=_efetivado, key=f"net_ef_{_net_key}")
                     if _novo_ef != _efetivado:
                         st.session_state["net_efetivados"][_net_key] = _novo_ef
+                        _salvar_net_efetivados(st.session_state["net_efetivados"])
                         st.rerun()
 
                     _cols[1].write(_row["Parte"])
@@ -1237,6 +1310,32 @@ if arquivo is not None:
                         boletas_efetivadas.update(base[_mask_ef]["BOLETA"].astype(str).tolist())
 
                 st.session_state["boletas_efetivadas"] = boletas_efetivadas
+
+                st.markdown("---")
+
+                # ── BACKUP / RESTAURAÇÃO MANUAL DAS FLAGS ──
+                # Além do arquivo salvo automaticamente em disco, permite ao usuário
+                # baixar/carregar as flags manualmente — útil se o servidor não
+                # mantém o disco entre deploys (ex.: Streamlit Community Cloud).
+                _bkp_cols = st.columns(2)
+                _bkp_cols[0].download_button(
+                    label="💾 Baixar backup das flags de NET",
+                    data=json.dumps(st.session_state["net_efetivados"], ensure_ascii=False, indent=2),
+                    file_name="net_efetivados_backup.json",
+                    mime="application/json",
+                )
+                _arquivo_bkp = _bkp_cols[1].file_uploader(
+                    "📤 Restaurar backup das flags", type=["json"], key="upload_net_flags_bkp"
+                )
+                if _arquivo_bkp is not None:
+                    try:
+                        _flags_restauradas = json.load(_arquivo_bkp)
+                        st.session_state["net_efetivados"] = _flags_restauradas
+                        _salvar_net_efetivados(_flags_restauradas)
+                        st.success("Flags restauradas com sucesso!")
+                        st.rerun()
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        st.error("Arquivo de backup inválido.")
 
                 st.markdown("---")
                 output_nets = BytesIO()
@@ -1381,6 +1480,54 @@ if arquivo is not None:
             c1, c2 = st.columns(2)
             with c1: st.metric("Quem Ajusta", ajuste)
             with c2: st.metric("Volume a Ajustar (MWm)", f"{abs(saldo_mwm):.6f}")
+
+            # ── ENVIO DE E-MAIL (novo Outlook) ───────────────────
+            st.markdown("---")
+            st.markdown("### 📧 Enviar por e-mail")
+
+            _cc_fixo = "backmatrix@matrixenergia.com"
+            _assunto = f"NET ENERGÉTICO {parte} - {contraparte}"
+            _corpo_email = (
+                f"Prezados(as),\n\n"
+                f"A {parte} propõe o encontro de energético à {contraparte}, conforme tabela abaixo:\n\n"
+                f"Tipo       MWh              MWm\n"
+                f"Compras    {total_compra:.3f}    {total_compra_mwm:.6f}\n"
+                f"Vendas     {total_venda:.3f}    {total_venda_mwm:.6f}\n"
+                f"Saldo      {saldo:.3f}    {saldo_mwm:.6f}\n\n"
+                f"Quem Ajusta: {ajuste}\n"
+                f"Volume a Ajustar (MWm): {abs(saldo_mwm):.6f}\n"
+            )
+
+            _mailto_link = (
+                "mailto:?cc=" + urllib.parse.quote(_cc_fixo)
+                + "&subject=" + urllib.parse.quote(_assunto)
+                + "&body=" + urllib.parse.quote(_corpo_email)
+            )
+
+            _img_resumo = _gerar_imagem_resumo_encontro(
+                parte, contraparte, submercado, tipo_energia,
+                total_compra, total_venda, saldo,
+                total_compra_mwm, total_venda_mwm, saldo_mwm, ajuste,
+            )
+
+            st.caption(
+                "O botão abaixo abre o novo Outlook já com o CC, o título e o texto preenchidos "
+                "(o campo Para fica em branco para você preencher). Links de e-mail não permitem "
+                "inserir uma imagem automaticamente no corpo — por isso, baixe o print do resumo "
+                "logo abaixo e cole (Ctrl+V) dentro do e-mail, no lugar da tabela em texto."
+            )
+
+            _col_email1, _col_email2 = st.columns(2)
+            with _col_email1:
+                st.link_button("📧 Enviar E-mail", url=_mailto_link, use_container_width=True)
+            with _col_email2:
+                st.download_button(
+                    "🖼️ Baixar print do resumo",
+                    data=_img_resumo,
+                    file_name=f"resumo_{parte}_{contraparte}.png",
+                    mime="image/png",
+                    use_container_width=True,
+                )
 
         elif pagina == "CHECK":
             # ── CHECK (reprodução da aba "Check" do Book, colunas A a M) ──────────────
