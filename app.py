@@ -505,7 +505,7 @@ st.set_page_config(page_title="Book Energia", layout="wide")
 
 pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético", "CHECK"])
 
-if pagina != "CHECK":
+if pagina == "Base Conferência":
     st.title("📊 Book Energia")
 
     st.markdown("### ⚙️ Flags")
@@ -558,9 +558,10 @@ if pagina != "CHECK":
         st.success(f"✅ {len(correcoes_manuais)} boleta(s) com correção manual identificada(s).")
     st.markdown("---")
 else:
-    # ── Aba CHECK: não exibe título/flags/uploaders/correções, apenas reaproveita
-    # (via session_state) os valores já preenchidos nas outras abas, para montar
-    # a mesma "base" usada no cálculo do CHECK, sem poluir a tela com esses controles.
+    # ── Abas "Encontro Energético" e "CHECK": não exibem título/flags/uploaders/
+    # correções, apenas reaproveitam (via session_state) os valores já preenchidos
+    # na aba Base Conferência, para montar a mesma "base" usada nos cálculos,
+    # sem poluir a tela com esses controles.
     flag_ocultar_intraportfolio = st.session_state.get("flag_intra", True)
     flag_ocultar_zerados = st.session_state.get("flag_zerados", False)
     flag_zerar_intercompany = st.session_state.get("flag_intercompany", False)
