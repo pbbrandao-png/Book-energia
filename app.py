@@ -503,6 +503,18 @@ def aplicar_zerar_intercompany(base: pd.DataFrame):
 # ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Book Energia", layout="wide")
 
+
+def _persistir_upload(valor_widget, chave_cofre):
+    """Guarda o arquivo enviado em uma 'gaveta' própria do session_state
+    (chave_cofre), que NÃO é apagada quando o widget de upload deixa de ser
+    desenhado (ex.: ao trocar de aba). Sem isso, o Streamlit apaga sozinho o
+    valor de qualquer widget que não aparece na rodada atual, e o arquivo
+    "some" assim que o usuário interage com outro campo em outra aba."""
+    if valor_widget is not None:
+        st.session_state[chave_cofre] = valor_widget
+    return st.session_state.get(chave_cofre)
+
+
 pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético", "CHECK"])
 
 if pagina == "Base Conferência":
@@ -511,22 +523,22 @@ if pagina == "Base Conferência":
     st.markdown("### ⚙️ Flags")
     col_flag1, col_flag2, col_flag3 = st.columns(3)
     with col_flag1:
-        flag_ocultar_intraportfolio = st.toggle("🟡 Ocultar IntraPortifólio (Parte = Contraparte)", value=True, key="flag_intra")
+        flag_ocultar_intraportfolio = _persistir_upload(st.toggle("🟡 Ocultar IntraPortifólio (Parte = Contraparte)", value=st.session_state.get("_cofre_flag_intra", True), key="flag_intra"), "_cofre_flag_intra")
     with col_flag2:
-        flag_ocultar_zerados = st.toggle("🚫 Ocultar contratos zerados (Volume MWh = 0)", value=False, key="flag_zerados")
+        flag_ocultar_zerados = _persistir_upload(st.toggle("🚫 Ocultar contratos zerados (Volume MWh = 0)", value=st.session_state.get("_cofre_flag_zerados", False), key="flag_zerados"), "_cofre_flag_zerados")
     with col_flag3:
-        flag_zerar_intercompany = st.toggle("🏢 Zerar InterCompany", value=False, key="flag_intercompany")
+        flag_zerar_intercompany = _persistir_upload(st.toggle("🏢 Zerar InterCompany", value=st.session_state.get("_cofre_flag_intercompany", False), key="flag_intercompany"), "_cofre_flag_intercompany")
     st.markdown("---")
 
-    arquivo = st.file_uploader("Selecione a RelPers", type=["xlsx"], key="upload_relpers")
-    arquivo_mes_anterior = st.file_uploader("Selecione a planilha Mês Anterior", type=["xlsx"], key="upload_mes_anterior")
-    zip_matrix = st.file_uploader("Selecione o ZIP Matrix", type=["zip"], key="upload_zip_matrix")
-    zip_bismut = st.file_uploader("Selecione o ZIP Bismut", type=["zip"], key="upload_zip_bismut")
-    arquivo_ponto_medicao = st.file_uploader("Selecione a planilha Ponto de Medição - MATRIX", type=["xlsx", "xls"], key="upload_ponto_medicao")
-    arquivo_boletas = st.file_uploader("Selecione a planilha Boletas", type=["xlsx", "xls"], key="upload_boletas")
-    arquivo_modelagem_ativo = st.file_uploader("Selecione a planilha Exportação Solicitação Modelagem Ativo", type=["xlsx", "xls"], key="upload_modelagem_ativo")
-    arquivo_faturamento_aberto = st.file_uploader("Selecione a planilha Faturamento em Aberto", type=["xlsx", "xls"], key="upload_faturamento_aberto")
-    zip_relpers_301 = st.file_uploader("Selecione o ZIP RelPers 301 (Mapa Financeiro)", type=["zip"], key="upload_relpers_301")
+    arquivo = _persistir_upload(st.file_uploader("Selecione a RelPers", type=["xlsx"], key="upload_relpers"), "_cofre_relpers")
+    arquivo_mes_anterior = _persistir_upload(st.file_uploader("Selecione a planilha Mês Anterior", type=["xlsx"], key="upload_mes_anterior"), "_cofre_mes_anterior")
+    zip_matrix = _persistir_upload(st.file_uploader("Selecione o ZIP Matrix", type=["zip"], key="upload_zip_matrix"), "_cofre_zip_matrix")
+    zip_bismut = _persistir_upload(st.file_uploader("Selecione o ZIP Bismut", type=["zip"], key="upload_zip_bismut"), "_cofre_zip_bismut")
+    arquivo_ponto_medicao = _persistir_upload(st.file_uploader("Selecione a planilha Ponto de Medição - MATRIX", type=["xlsx", "xls"], key="upload_ponto_medicao"), "_cofre_ponto_medicao")
+    arquivo_boletas = _persistir_upload(st.file_uploader("Selecione a planilha Boletas", type=["xlsx", "xls"], key="upload_boletas"), "_cofre_boletas")
+    arquivo_modelagem_ativo = _persistir_upload(st.file_uploader("Selecione a planilha Exportação Solicitação Modelagem Ativo", type=["xlsx", "xls"], key="upload_modelagem_ativo"), "_cofre_modelagem_ativo")
+    arquivo_faturamento_aberto = _persistir_upload(st.file_uploader("Selecione a planilha Faturamento em Aberto", type=["xlsx", "xls"], key="upload_faturamento_aberto"), "_cofre_faturamento_aberto")
+    zip_relpers_301 = _persistir_upload(st.file_uploader("Selecione o ZIP RelPers 301 (Mapa Financeiro)", type=["zip"], key="upload_relpers_301"), "_cofre_relpers_301")
 
     st.markdown("### ✏️ Correções Manuais (Contrato CliqCCEE / Comprador / Vendedor)")
     st.caption(
@@ -536,10 +548,13 @@ if pagina == "Base Conferência":
         "linhas corrigidas aparecem destacadas em roxo na Base Conferência."
     )
 
-    arquivo_correcoes = st.file_uploader(
-        "Planilha de Correções (colunas: BOLETA, Contrato CliqCCEE, Comprador, Vendedor)",
-        type=["xlsx", "xls"],
-        key="upload_correcoes",
+    arquivo_correcoes = _persistir_upload(
+        st.file_uploader(
+            "Planilha de Correções (colunas: BOLETA, Contrato CliqCCEE, Comprador, Vendedor)",
+            type=["xlsx", "xls"],
+            key="upload_correcoes",
+        ),
+        "_cofre_correcoes",
     )
 
     df_editor_correcoes = st.data_editor(
@@ -562,21 +577,21 @@ else:
     # correções, apenas reaproveitam (via session_state) os valores já preenchidos
     # na aba Base Conferência, para montar a mesma "base" usada nos cálculos,
     # sem poluir a tela com esses controles.
-    flag_ocultar_intraportfolio = st.session_state.get("flag_intra", True)
-    flag_ocultar_zerados = st.session_state.get("flag_zerados", False)
-    flag_zerar_intercompany = st.session_state.get("flag_intercompany", False)
+    flag_ocultar_intraportfolio = st.session_state.get("_cofre_flag_intra", True)
+    flag_ocultar_zerados = st.session_state.get("_cofre_flag_zerados", False)
+    flag_zerar_intercompany = st.session_state.get("_cofre_flag_intercompany", False)
 
-    arquivo = st.session_state.get("upload_relpers")
-    arquivo_mes_anterior = st.session_state.get("upload_mes_anterior")
-    zip_matrix = st.session_state.get("upload_zip_matrix")
-    zip_bismut = st.session_state.get("upload_zip_bismut")
-    arquivo_ponto_medicao = st.session_state.get("upload_ponto_medicao")
-    arquivo_boletas = st.session_state.get("upload_boletas")
-    arquivo_modelagem_ativo = st.session_state.get("upload_modelagem_ativo")
-    arquivo_faturamento_aberto = st.session_state.get("upload_faturamento_aberto")
-    zip_relpers_301 = st.session_state.get("upload_relpers_301")
+    arquivo = st.session_state.get("_cofre_relpers")
+    arquivo_mes_anterior = st.session_state.get("_cofre_mes_anterior")
+    zip_matrix = st.session_state.get("_cofre_zip_matrix")
+    zip_bismut = st.session_state.get("_cofre_zip_bismut")
+    arquivo_ponto_medicao = st.session_state.get("_cofre_ponto_medicao")
+    arquivo_boletas = st.session_state.get("_cofre_boletas")
+    arquivo_modelagem_ativo = st.session_state.get("_cofre_modelagem_ativo")
+    arquivo_faturamento_aberto = st.session_state.get("_cofre_faturamento_aberto")
+    zip_relpers_301 = st.session_state.get("_cofre_relpers_301")
 
-    arquivo_correcoes = st.session_state.get("upload_correcoes")
+    arquivo_correcoes = st.session_state.get("_cofre_correcoes")
     df_editor_correcoes = st.session_state.get(
         "_df_editor_correcoes_cache",
         pd.DataFrame(columns=["BOLETA", "Contrato CliqCCEE", "Comprador", "Vendedor"]),
