@@ -6,6 +6,8 @@ import re
 import os
 import json
 import urllib.parse
+import datetime
+import calendar
 import matplotlib.pyplot as plt
 from io import BytesIO
 
@@ -33,43 +35,95 @@ def _salvar_net_efetivados(flags):
         pass
 
 
+def _estilizar_tabela_resumo(tabela, fontsize=9):
+    """Aplica o mesmo estilo visual (cabeçalho azul-marinho com texto branco) a
+    uma tabela do matplotlib, usada nas seções de Compras/Vendas/Resumo do print."""
+    tabela.auto_set_font_size(False)
+    tabela.set_fontsize(fontsize)
+    tabela.scale(1, 1.5)
+    for (row, _col), cell in tabela.get_celld().items():
+        cell.set_edgecolor("#DDDDDD")
+        if row == 0:
+            cell.set_facecolor("#1f2c56")
+            cell.get_text().set_color("white")
+            cell.get_text().set_fontweight("bold")
+        else:
+            cell.set_facecolor("white" if row % 2 else "#F5F6FA")
+
+
 def _gerar_imagem_resumo_encontro(
     parte, contraparte, submercado, tipo_energia,
+    df_compras, df_vendas,
     total_compra, total_venda, saldo,
     total_compra_mwm, total_venda_mwm, saldo_mwm, ajuste,
 ):
-    """Gera um 'print' (imagem PNG) do resumo do Encontro Energético,
-    para o usuário colar no corpo do e-mail."""
-    linhas = [
+    """Gera um 'print' (imagem PNG) do Encontro Energético reproduzindo o mesmo
+    layout da tela do app: cabeçalho (Parte/Contraparte/Submercado/Tipo de Energia),
+    tabelas de Compras e Vendas, Resumo e Quem Ajusta/Volume a Ajustar — para o
+    usuário colar no corpo do e-mail."""
+    from matplotlib.gridspec import GridSpec
+
+    n_compras = max(len(df_compras), 1)
+    n_vendas = max(len(df_vendas), 1)
+
+    altura_header = 1.1
+    altura_compras = 0.42 * (n_compras + 1) + 0.55
+    altura_vendas = 0.42 * (n_vendas + 1) + 0.55
+    altura_resumo = 0.42 * 4 + 1.1
+    altura_total = altura_header + altura_compras + altura_vendas + altura_resumo
+
+    fig = plt.figure(figsize=(8, altura_total))
+    gs = GridSpec(
+        4, 1, figure=fig,
+        height_ratios=[altura_header, altura_compras, altura_vendas, altura_resumo],
+        hspace=0.55,
+    )
+
+    # ── Cabeçalho ──
+    ax_header = fig.add_subplot(gs[0])
+    ax_header.axis("off")
+    ax_header.text(0, 1.0, "Encontro Energético", fontsize=15, fontweight="bold", va="top", transform=ax_header.transAxes)
+    ax_header.text(0, 0.55, f"Parte: {parte}          Contraparte: {contraparte}", fontsize=10, va="top", transform=ax_header.transAxes)
+    ax_header.text(0, 0.25, f"Submercado: {submercado}          Tipo de Energia: {tipo_energia}", fontsize=10, va="top", transform=ax_header.transAxes)
+
+    # ── Compras ──
+    ax_compras = fig.add_subplot(gs[1])
+    ax_compras.axis("off")
+    ax_compras.set_title("COMPRAS", fontsize=12, fontweight="bold", loc="left")
+    linhas_compras = [["BOLETA", "Volume (MWh)", "Volume MWm"]] + (
+        df_compras[["BOLETA", "Volume (MWh)", "Volume MWm"]].astype(str).values.tolist()
+        if len(df_compras) else [["-", "-", "-"]]
+    )
+    _estilizar_tabela_resumo(ax_compras.table(cellText=linhas_compras, loc="upper center", cellLoc="center"))
+
+    # ── Vendas ──
+    ax_vendas = fig.add_subplot(gs[2])
+    ax_vendas.axis("off")
+    ax_vendas.set_title("VENDAS", fontsize=12, fontweight="bold", loc="left")
+    linhas_vendas = [["BOLETA", "Volume (MWh)", "Volume MWm"]] + (
+        df_vendas[["BOLETA", "Volume (MWh)", "Volume MWm"]].astype(str).values.tolist()
+        if len(df_vendas) else [["-", "-", "-"]]
+    )
+    _estilizar_tabela_resumo(ax_vendas.table(cellText=linhas_vendas, loc="upper center", cellLoc="center"))
+
+    # ── Resumo + Quem Ajusta ──
+    ax_resumo = fig.add_subplot(gs[3])
+    ax_resumo.axis("off")
+    ax_resumo.set_title("RESUMO", fontsize=12, fontweight="bold", loc="left")
+    linhas_resumo = [
         ["Tipo", "MWh", "MWm"],
         ["Compras", f"{total_compra:.3f}", f"{total_compra_mwm:.6f}"],
         ["Vendas", f"{total_venda:.3f}", f"{total_venda_mwm:.6f}"],
         ["Saldo", f"{saldo:.3f}", f"{saldo_mwm:.6f}"],
     ]
-
-    fig, ax = plt.subplots(figsize=(7, 3.3))
-    ax.axis("off")
-    ax.set_title(
-        f"Encontro Energético — {parte} x {contraparte}\n"
-        f"Submercado: {submercado}   |   Tipo de Energia: {tipo_energia}",
-        fontsize=11, fontweight="bold", loc="left", pad=20,
+    _estilizar_tabela_resumo(
+        ax_resumo.table(cellText=linhas_resumo, loc="upper center", cellLoc="center", bbox=[0, 0.42, 1, 0.55])
     )
 
-    tabela = ax.table(cellText=linhas, loc="upper center", cellLoc="center")
-    tabela.auto_set_font_size(False)
-    tabela.set_fontsize(10)
-    tabela.scale(1, 1.7)
-    for (row, _col), cell in tabela.get_celld().items():
-        if row == 0:
-            cell.set_facecolor("#1f2c56")
-            cell.get_text().set_color("white")
-            cell.get_text().set_fontweight("bold")
-
-    ax.text(
-        0.0, -0.30,
-        f"Quem Ajusta: {ajuste}          Volume a Ajustar (MWm): {abs(saldo_mwm):.6f}",
-        transform=ax.transAxes, fontsize=10, fontweight="bold",
-    )
+    ax_resumo.text(0.0, 0.15, "Quem Ajusta", fontsize=9, color="#666666", transform=ax_resumo.transAxes)
+    ax_resumo.text(0.0, 0.0, ajuste, fontsize=13, fontweight="bold", transform=ax_resumo.transAxes)
+    ax_resumo.text(0.55, 0.15, "Volume a Ajustar (MWm)", fontsize=9, color="#666666", transform=ax_resumo.transAxes)
+    ax_resumo.text(0.55, 0.0, f"{abs(saldo_mwm):.6f}", fontsize=13, fontweight="bold", transform=ax_resumo.transAxes)
 
     buf = BytesIO()
     fig.savefig(buf, format="png", dpi=200, bbox_inches="tight")
@@ -503,18 +557,6 @@ def aplicar_zerar_intercompany(base: pd.DataFrame):
 # ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Book Energia", layout="wide")
 
-
-def _persistir_upload(valor_widget, chave_cofre):
-    """Guarda o arquivo enviado em uma 'gaveta' própria do session_state
-    (chave_cofre), que NÃO é apagada quando o widget de upload deixa de ser
-    desenhado (ex.: ao trocar de aba). Sem isso, o Streamlit apaga sozinho o
-    valor de qualquer widget que não aparece na rodada atual, e o arquivo
-    "some" assim que o usuário interage com outro campo em outra aba."""
-    if valor_widget is not None:
-        st.session_state[chave_cofre] = valor_widget
-    return st.session_state.get(chave_cofre)
-
-
 pagina = st.sidebar.radio("Menu", ["Base Conferência", "Encontro Energético", "CHECK"])
 
 if pagina == "Base Conferência":
@@ -523,22 +565,22 @@ if pagina == "Base Conferência":
     st.markdown("### ⚙️ Flags")
     col_flag1, col_flag2, col_flag3 = st.columns(3)
     with col_flag1:
-        flag_ocultar_intraportfolio = _persistir_upload(st.toggle("🟡 Ocultar IntraPortifólio (Parte = Contraparte)", value=st.session_state.get("_cofre_flag_intra", True), key="flag_intra"), "_cofre_flag_intra")
+        flag_ocultar_intraportfolio = st.toggle("🟡 Ocultar IntraPortifólio (Parte = Contraparte)", value=True, key="flag_intra")
     with col_flag2:
-        flag_ocultar_zerados = _persistir_upload(st.toggle("🚫 Ocultar contratos zerados (Volume MWh = 0)", value=st.session_state.get("_cofre_flag_zerados", False), key="flag_zerados"), "_cofre_flag_zerados")
+        flag_ocultar_zerados = st.toggle("🚫 Ocultar contratos zerados (Volume MWh = 0)", value=False, key="flag_zerados")
     with col_flag3:
-        flag_zerar_intercompany = _persistir_upload(st.toggle("🏢 Zerar InterCompany", value=st.session_state.get("_cofre_flag_intercompany", False), key="flag_intercompany"), "_cofre_flag_intercompany")
+        flag_zerar_intercompany = st.toggle("🏢 Zerar InterCompany", value=False, key="flag_intercompany")
     st.markdown("---")
 
-    arquivo = _persistir_upload(st.file_uploader("Selecione a RelPers", type=["xlsx"], key="upload_relpers"), "_cofre_relpers")
-    arquivo_mes_anterior = _persistir_upload(st.file_uploader("Selecione a planilha Mês Anterior", type=["xlsx"], key="upload_mes_anterior"), "_cofre_mes_anterior")
-    zip_matrix = _persistir_upload(st.file_uploader("Selecione o ZIP Matrix", type=["zip"], key="upload_zip_matrix"), "_cofre_zip_matrix")
-    zip_bismut = _persistir_upload(st.file_uploader("Selecione o ZIP Bismut", type=["zip"], key="upload_zip_bismut"), "_cofre_zip_bismut")
-    arquivo_ponto_medicao = _persistir_upload(st.file_uploader("Selecione a planilha Ponto de Medição - MATRIX", type=["xlsx", "xls"], key="upload_ponto_medicao"), "_cofre_ponto_medicao")
-    arquivo_boletas = _persistir_upload(st.file_uploader("Selecione a planilha Boletas", type=["xlsx", "xls"], key="upload_boletas"), "_cofre_boletas")
-    arquivo_modelagem_ativo = _persistir_upload(st.file_uploader("Selecione a planilha Exportação Solicitação Modelagem Ativo", type=["xlsx", "xls"], key="upload_modelagem_ativo"), "_cofre_modelagem_ativo")
-    arquivo_faturamento_aberto = _persistir_upload(st.file_uploader("Selecione a planilha Faturamento em Aberto", type=["xlsx", "xls"], key="upload_faturamento_aberto"), "_cofre_faturamento_aberto")
-    zip_relpers_301 = _persistir_upload(st.file_uploader("Selecione o ZIP RelPers 301 (Mapa Financeiro)", type=["zip"], key="upload_relpers_301"), "_cofre_relpers_301")
+    arquivo = st.file_uploader("Selecione a RelPers", type=["xlsx"], key="upload_relpers")
+    arquivo_mes_anterior = st.file_uploader("Selecione a planilha Mês Anterior", type=["xlsx"], key="upload_mes_anterior")
+    zip_matrix = st.file_uploader("Selecione o ZIP Matrix", type=["zip"], key="upload_zip_matrix")
+    zip_bismut = st.file_uploader("Selecione o ZIP Bismut", type=["zip"], key="upload_zip_bismut")
+    arquivo_ponto_medicao = st.file_uploader("Selecione a planilha Ponto de Medição - MATRIX", type=["xlsx", "xls"], key="upload_ponto_medicao")
+    arquivo_boletas = st.file_uploader("Selecione a planilha Boletas", type=["xlsx", "xls"], key="upload_boletas")
+    arquivo_modelagem_ativo = st.file_uploader("Selecione a planilha Exportação Solicitação Modelagem Ativo", type=["xlsx", "xls"], key="upload_modelagem_ativo")
+    arquivo_faturamento_aberto = st.file_uploader("Selecione a planilha Faturamento em Aberto", type=["xlsx", "xls"], key="upload_faturamento_aberto")
+    zip_relpers_301 = st.file_uploader("Selecione o ZIP RelPers 301 (Mapa Financeiro)", type=["zip"], key="upload_relpers_301")
 
     st.markdown("### ✏️ Correções Manuais (Contrato CliqCCEE / Comprador / Vendedor)")
     st.caption(
@@ -548,13 +590,10 @@ if pagina == "Base Conferência":
         "linhas corrigidas aparecem destacadas em roxo na Base Conferência."
     )
 
-    arquivo_correcoes = _persistir_upload(
-        st.file_uploader(
-            "Planilha de Correções (colunas: BOLETA, Contrato CliqCCEE, Comprador, Vendedor)",
-            type=["xlsx", "xls"],
-            key="upload_correcoes",
-        ),
-        "_cofre_correcoes",
+    arquivo_correcoes = st.file_uploader(
+        "Planilha de Correções (colunas: BOLETA, Contrato CliqCCEE, Comprador, Vendedor)",
+        type=["xlsx", "xls"],
+        key="upload_correcoes",
     )
 
     df_editor_correcoes = st.data_editor(
@@ -577,21 +616,21 @@ else:
     # correções, apenas reaproveitam (via session_state) os valores já preenchidos
     # na aba Base Conferência, para montar a mesma "base" usada nos cálculos,
     # sem poluir a tela com esses controles.
-    flag_ocultar_intraportfolio = st.session_state.get("_cofre_flag_intra", True)
-    flag_ocultar_zerados = st.session_state.get("_cofre_flag_zerados", False)
-    flag_zerar_intercompany = st.session_state.get("_cofre_flag_intercompany", False)
+    flag_ocultar_intraportfolio = st.session_state.get("flag_intra", True)
+    flag_ocultar_zerados = st.session_state.get("flag_zerados", False)
+    flag_zerar_intercompany = st.session_state.get("flag_intercompany", False)
 
-    arquivo = st.session_state.get("_cofre_relpers")
-    arquivo_mes_anterior = st.session_state.get("_cofre_mes_anterior")
-    zip_matrix = st.session_state.get("_cofre_zip_matrix")
-    zip_bismut = st.session_state.get("_cofre_zip_bismut")
-    arquivo_ponto_medicao = st.session_state.get("_cofre_ponto_medicao")
-    arquivo_boletas = st.session_state.get("_cofre_boletas")
-    arquivo_modelagem_ativo = st.session_state.get("_cofre_modelagem_ativo")
-    arquivo_faturamento_aberto = st.session_state.get("_cofre_faturamento_aberto")
-    zip_relpers_301 = st.session_state.get("_cofre_relpers_301")
+    arquivo = st.session_state.get("upload_relpers")
+    arquivo_mes_anterior = st.session_state.get("upload_mes_anterior")
+    zip_matrix = st.session_state.get("upload_zip_matrix")
+    zip_bismut = st.session_state.get("upload_zip_bismut")
+    arquivo_ponto_medicao = st.session_state.get("upload_ponto_medicao")
+    arquivo_boletas = st.session_state.get("upload_boletas")
+    arquivo_modelagem_ativo = st.session_state.get("upload_modelagem_ativo")
+    arquivo_faturamento_aberto = st.session_state.get("upload_faturamento_aberto")
+    zip_relpers_301 = st.session_state.get("upload_relpers_301")
 
-    arquivo_correcoes = st.session_state.get("_cofre_correcoes")
+    arquivo_correcoes = st.session_state.get("upload_correcoes")
     df_editor_correcoes = st.session_state.get(
         "_df_editor_correcoes_cache",
         pd.DataFrame(columns=["BOLETA", "Contrato CliqCCEE", "Comprador", "Vendedor"]),
@@ -1503,15 +1542,30 @@ if arquivo is not None:
 
             _cc_fixo = "backmatrix@matrixenergia.com"
             _assunto = f"NET ENERGÉTICO {parte} - {contraparte}"
+
+            # ── Seletor de data (mês ativo + mês seguinte) para o prazo de "de acordo" ──
+            _hoje = datetime.date.today()
+            _primeiro_dia_mes_atual = _hoje.replace(day=1)
+            if _hoje.month == 12:
+                _mes_seguinte, _ano_mes_seguinte = 1, _hoje.year + 1
+            else:
+                _mes_seguinte, _ano_mes_seguinte = _hoje.month + 1, _hoje.year
+            _ultimo_dia_mes_seguinte = calendar.monthrange(_ano_mes_seguinte, _mes_seguinte)[1]
+            _data_max_calendario = datetime.date(_ano_mes_seguinte, _mes_seguinte, _ultimo_dia_mes_seguinte)
+
+            _data_de_acordo = st.date_input(
+                "Prazo para de acordo (até às 12h do dia selecionado):",
+                value=_hoje,
+                min_value=_primeiro_dia_mes_atual,
+                max_value=_data_max_calendario,
+                format="DD/MM/YYYY",
+                key=f"data_de_acordo_{parte}_{contraparte}",
+            )
+
             _corpo_email = (
                 f"Prezados(as),\n\n"
-                f"A {parte} propõe o encontro de energético à {contraparte}, conforme tabela abaixo:\n\n"
-                f"Tipo       MWh              MWm\n"
-                f"Compras    {total_compra:.3f}    {total_compra_mwm:.6f}\n"
-                f"Vendas     {total_venda:.3f}    {total_venda_mwm:.6f}\n"
-                f"Saldo      {saldo:.3f}    {saldo_mwm:.6f}\n\n"
-                f"Quem Ajusta: {ajuste}\n"
-                f"Volume a Ajustar (MWm): {abs(saldo_mwm):.6f}\n"
+                f"A {parte} propõe o encontro de energético à {contraparte}, conforme resumo abaixo:\n\n"
+                f"Aguardo o seu de acordo até às 12h do dia {_data_de_acordo.strftime('%d/%m/%Y')}.\n"
             )
 
             _mailto_link = (
@@ -1522,6 +1576,8 @@ if arquivo is not None:
 
             _img_resumo = _gerar_imagem_resumo_encontro(
                 parte, contraparte, submercado, tipo_energia,
+                compras[["BOLETA", "Volume (MWh)", "Volume MWm"]],
+                vendas[["BOLETA", "Volume (MWh)", "Volume MWm"]],
                 total_compra, total_venda, saldo,
                 total_compra_mwm, total_venda_mwm, saldo_mwm, ajuste,
             )
@@ -1530,7 +1586,7 @@ if arquivo is not None:
                 "O botão abaixo abre o novo Outlook já com o CC, o título e o texto preenchidos "
                 "(o campo Para fica em branco para você preencher). Links de e-mail não permitem "
                 "inserir uma imagem automaticamente no corpo — por isso, baixe o print do resumo "
-                "logo abaixo e cole (Ctrl+V) dentro do e-mail, no lugar da tabela em texto."
+                "logo abaixo e cole (Ctrl+V) dentro do e-mail."
             )
 
             _col_email1, _col_email2 = st.columns(2)
